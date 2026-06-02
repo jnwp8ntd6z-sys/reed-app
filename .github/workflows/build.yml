@@ -1,63 +1,132 @@
-# Облачная сборка артефактов Reed VPN (APK / EXE / IPA).
-# Работает, когда появится проект в app/ (KMP/Compose, Gradle).
-# Артефакты скачиваются со вкладки Actions → Run → Artifacts.
+# Reed VPN — облачная сборка артефактов (Android APK / iOS IPA / Windows).
+# Основано на рабочем рецепте olcbox (release.yml): JDK21 + Go/gomobile + NDK + olcrtc.
+# БЕЗ подписи: debug APK, unsigned IPA (sideload), Windows portable zip.
+# Форк приложения лежит в app/. Артефакты — вкладка Actions → Run → Artifacts.
 name: build
 
 on:
   push:
     branches: [ main ]
-    paths: [ "app/**" ]   # запускается, когда появится код приложения
-  workflow_dispatch:        # и вручную из вкладки Actions
+    paths: [ "app/**", ".github/workflows/build.yml" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  OLCBOX_VERSION: "1.0.0"
+  OLCBOX_VERSION_CODE: "1"
+  OLCRTC_REF: "master"
+  ANDROID_NDK_VERSION: "28.2.13676358"
 
 jobs:
   android:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout olcrtc
+        uses: actions/checkout@v4
+        with:
+          repository: openlibrecommunity/olcrtc
+          ref: ${{ env.OLCRTC_REF }}
+          path: olcrtc
+          submodules: recursive
       - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: "17" }
-      - name: Build APK (debug, unsigned)
+        with: { distribution: temurin, java-version: "21" }
+      - uses: actions/setup-go@v5
+        with: { go-version: "stable", cache-dependency-path: olcrtc/go.sum }
+      - uses: android-actions/setup-android@v4
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;${ANDROID_NDK_VERSION}"
+      - name: Install gomobile
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install github.com/magefile/mage@latest
+      - name: gomobile init
+        working-directory: olcrtc
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+          gomobile init
+      - name: Build debug APK (unsigned)
         working-directory: app
-        run: ./gradlew :androidApp:assembleDebug --no-daemon
+        run: |
+          export OLCRTC_REPO="${GITHUB_WORKSPACE}/olcrtc"
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+          ./gradlew -Polcbox.version="${OLCBOX_VERSION}" -Polcbox.versionCode="${OLCBOX_VERSION_CODE}" :androidApp:assembleDebug --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: reed-android-apk
           path: app/androidApp/build/outputs/apk/**/*.apk
 
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout olcrtc
+        uses: actions/checkout@v4
+        with:
+          repository: openlibrecommunity/olcrtc
+          ref: ${{ env.OLCRTC_REF }}
+          path: olcrtc
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: "^26.0" }
+      - uses: actions/setup-go@v5
+        with: { go-version: "stable", cache-dependency-path: olcrtc/go.sum }
+      - name: Install gomobile
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install golang.org/x/mobile/cmd/gomobile@latest
+      - name: gomobile init
+        working-directory: olcrtc
+        run: gomobile init
+      - name: Build unsigned iOS app
+        working-directory: app
+        run: |
+          export OLCRTC_REPO="${GITHUB_WORKSPACE}/olcrtc"
+          xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphoneos \
+            -configuration Release -derivedDataPath build/ios-ipa/DerivedData \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+      - name: Package unsigned IPA
+        working-directory: app
+        run: |
+          app_path="build/ios-ipa/DerivedData/Build/Products/Release-iphoneos/iosApp.app"
+          [ -d "$app_path" ] || { echo "iOS .app not found at $app_path"; exit 1; }
+          rm -rf build/ios-ipa/package dist && mkdir -p build/ios-ipa/package/Payload dist
+          cp -R "$app_path" build/ios-ipa/package/Payload/
+          (cd build/ios-ipa/package && /usr/bin/zip -qry "${GITHUB_WORKSPACE}/app/dist/Reed-${OLCBOX_VERSION}-ios-unsigned.ipa" Payload)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reed-ios-unsigned-ipa
+          path: app/dist/Reed-*-ios-unsigned.ipa
+
   windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: "17" }
-      - name: Build Windows distributable
-        working-directory: app
-        run: ./gradlew :desktopApp:packageReleaseDistributionForCurrentOS --no-daemon
-      - uses: actions/upload-artifact@v4
+      - name: Checkout olcrtc
+        uses: actions/checkout@v4
         with:
-          name: reed-windows-exe
-          path: app/desktopApp/build/compose/binaries/**/*
-
-  ios:
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
+          repository: openlibrecommunity/olcrtc
+          ref: ${{ env.OLCRTC_REF }}
+          path: olcrtc
+          submodules: recursive
       - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: "17" }
-      # Сборка iOS-фреймворка из KMP + архив Xcode → IPA.
-      # Без подписи (для sideload через AltStore/Sideloadly на свой айфон).
-      # Для App Store/TestFlight — добавить сертификат/профиль Apple Developer.
-      - name: Build unsigned IPA
+        with: { distribution: temurin, java-version: "21" }
+      - uses: actions/setup-go@v5
+        with: { go-version: "stable", cache-dependency-path: olcrtc/go.sum }
+      - name: Build Windows portable (unsigned)
+        shell: pwsh
         working-directory: app
         run: |
-          ./gradlew :shared:linkReleaseFrameworkIosArm64 --no-daemon
-          xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp \
-            -configuration Release -sdk iphoneos -archivePath build/Reed.xcarchive \
-            CODE_SIGNING_ALLOWED=NO archive
-          mkdir -p build/Payload
-          cp -r build/Reed.xcarchive/Products/Applications/*.app build/Payload/
-          (cd build && zip -r Reed-unsigned.ipa Payload)
+          $env:OLCRTC_REPO="${{ github.workspace }}\olcrtc"
+          .\gradlew.bat "-Polcbox.version=$env:OLCBOX_VERSION" "-Polcbox.versionCode=$env:OLCBOX_VERSION_CODE" :desktopApp:packageReleasePortableZip --stacktrace
       - uses: actions/upload-artifact@v4
         with:
-          name: reed-ios-ipa
-          path: app/build/Reed-unsigned.ipa
+          name: reed-windows-portable
+          path: app/desktopApp/build/compose/binaries/main-release/portable/*.zip
