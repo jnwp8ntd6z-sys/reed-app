@@ -63,6 +63,7 @@ jobs:
 
   ios:
     runs-on: macos-latest
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v4
       - name: Checkout olcrtc
