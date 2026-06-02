@@ -6,8 +6,8 @@ name: build
 on:
   push:
     branches: [ main ]
-    paths: [ "app/**", ".github/workflows/build.yml" ]
-  workflow_dispatch:
+    paths: [ "app/**" ]   # запускается, когда появится код приложения
+  workflow_dispatch:        # и вручную из вкладки Actions
 
 jobs:
   android:
