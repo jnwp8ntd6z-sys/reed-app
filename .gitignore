@@ -1,0 +1,13 @@
+# Build
+app/build/
+**/build/
+.gradle/
+local.properties
+# Node (design prototype)
+design/node_modules/
+design/dist/
+# OS/IDE
+.DS_Store
+.idea/
+*.iml
+xcuserdata/
