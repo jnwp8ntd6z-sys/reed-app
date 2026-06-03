@@ -50,7 +50,14 @@ data class AuthPoll(
 )
 
 @Serializable
+data class Profile(
+    val name: String = "",
+    val username: String = "",
+)
+
+@Serializable
 data class SubscriptionResponse(
+    val profile: Profile? = null,
     val subscription: SubInfo,
     val traffic: Traffic,
     val lte: Lte,
@@ -66,6 +73,7 @@ data class SubInfo(
     val status: String,
     val plan_id: String? = null,
     val plan_type: String? = null,
+    val plan_label: String? = null,
     val expires_at: String? = null,
     val seconds_left: Long = 0,
     val days_left: Long = 0,

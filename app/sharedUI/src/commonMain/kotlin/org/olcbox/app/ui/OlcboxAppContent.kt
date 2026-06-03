@@ -58,7 +58,7 @@ fun OlcboxAppContent(
     var selectedTab by remember { mutableStateOf(0) }
     val tabs = listOf(
         "🏠" to "Главная",
-        "⚙️" to "Управление",
+        "⚙️" to "Настройки",
         "👤" to "Кабинет",
         "💬" to "Поддержка",
     )
@@ -97,7 +97,7 @@ fun OlcboxAppContent(
                     onAppSettingsClick = onAppSettingsClick,
                     onSplitTunnelingClick = onSplitTunnelingClick,
                 )
-                1 -> ReedControlScreen()
+                1 -> ReedSettingsScreen()
                 2 -> ReedAccountScreen()
                 else -> ReedSupportScreen()
             }
