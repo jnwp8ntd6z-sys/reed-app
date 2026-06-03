@@ -97,7 +97,7 @@ fun OlcboxAppContent(
                     onAppSettingsClick = onAppSettingsClick,
                     onSplitTunnelingClick = onSplitTunnelingClick,
                 )
-                1 -> ReedPlaceholder("Управление", "Трафик, устройства, смена оператора — в работе")
+                1 -> ReedControlScreen()
                 2 -> ReedAccountScreen()
                 else -> ReedSupportScreen()
             }
