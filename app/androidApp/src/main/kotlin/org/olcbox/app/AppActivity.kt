@@ -14,6 +14,7 @@ import org.olcbox.app.data.datasource.LocationsRepositoryImpl
 import org.olcbox.app.data.exporter.AndroidLogExporter
 import org.olcbox.app.data.identity.PersistentDeviceIdentityProvider
 import org.olcbox.app.data.importer.AndroidConfigImporter
+import org.olcbox.app.data.reed.reedStoreInitAndroid
 import org.olcbox.app.ui.activities.AndroidMainScreen
 import org.olcbox.app.ui.features.home.HomeScreenViewModel
 import org.olcbox.app.ui.features.locations.LocationViewModel
@@ -31,6 +32,9 @@ class AppActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Хранилище сессии Reed (токен/онбординг) — до обращения к ReedSession.
+        reedStoreInitAndroid(applicationContext)
 
         // Request notification permission for Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

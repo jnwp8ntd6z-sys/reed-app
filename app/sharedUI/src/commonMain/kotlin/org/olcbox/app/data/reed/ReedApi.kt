@@ -56,15 +56,32 @@ object ReedApi {
         }.body()
 }
 
-/** Простое хранилище токена в памяти (на старте — без персистентности). */
+/**
+ * Сессия Reed: токен входа и флаг онбординга. Сохраняются между запусками
+ * через платформенное хранилище (см. [reedStoreGet]/[reedStorePut]).
+ */
 object ReedSession {
-    var token: String? = null
+    private const val KEY_TOKEN = "reed_token"
+    private const val KEY_ONBOARDING = "reed_onboarding_done"
+
+    // Инициализаторы читают сохранённое значение напрямую в backing-поле
+    // (минуя сеттер), поэтому при старте лишней записи не происходит.
+    var token: String? = reedStoreGet(KEY_TOKEN)
+        set(value) {
+            field = value
+            reedStorePut(KEY_TOKEN, value)
+        }
+
+    // Показан ли экран онбординга (первый запуск).
+    var onboardingDone: Boolean = reedStoreGet(KEY_ONBOARDING) == "1"
+        set(value) {
+            field = value
+            reedStorePut(KEY_ONBOARDING, if (value) "1" else null)
+        }
 
     // Для какого токена уже импортирована подписка Reed (чтобы не импортировать повторно).
+    // Только в памяти — при перезапуске движок всё равно перечитывает локации с диска.
     var importedForToken: String? = null
-
-    // Показан ли экран онбординга (первый запуск). Пока в памяти, без персистентности.
-    var onboardingDone: Boolean = false
 }
 
 @Serializable
