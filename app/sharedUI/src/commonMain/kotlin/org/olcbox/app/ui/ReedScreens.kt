@@ -20,15 +20,22 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import org.olcbox.app.data.reed.ReedApi
+import org.olcbox.app.data.reed.ReedSession
+import org.olcbox.app.data.reed.SubscriptionResponse
 
 private const val BOT_URL = "https://t.me/ReedVPNbot"
 
@@ -134,7 +141,25 @@ fun ReedSupportScreen() {
 @Composable
 fun ReedAccountScreen() {
     val uri = LocalUriHandler.current
+    val scope = rememberCoroutineScope()
+    var token by remember { mutableStateOf(ReedSession.token) }
+    var data by remember { mutableStateOf<SubscriptionResponse?>(null) }
+    var statusMsg by remember { mutableStateOf("") }
     var friendCode by remember { mutableStateOf("") }
+
+    LaunchedEffect(token) {
+        val t = token
+        if (t != null) {
+            statusMsg = "Загрузка…"
+            data = try {
+                ReedApi.subscription(t)
+            } catch (e: Throwable) {
+                statusMsg = "Не удалось загрузить данные"
+                null
+            }
+            if (data != null) statusMsg = ""
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -145,17 +170,81 @@ fun ReedAccountScreen() {
         Text("Личный кабинет", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(16.dp))
 
+        if (token == null) {
+            // ── Не вошёл: кнопка входа через Telegram ──
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(
+                        "Войдите через Telegram, чтобы увидеть подписку, трафик и реферальный код.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                try {
+                                    val start = ReedApi.authStart()
+                                    uri.openUri(start.deeplink)
+                                    statusMsg = "Подтвердите вход в Telegram…"
+                                    repeat(60) {
+                                        delay(2000)
+                                        val poll = ReedApi.authPoll(start.nonce)
+                                        if (poll.status == "ok") {
+                                            ReedSession.token = poll.token
+                                            token = poll.token
+                                            return@launch
+                                        }
+                                    }
+                                    statusMsg = "Вход не завершён, попробуйте снова"
+                                } catch (e: Throwable) {
+                                    statusMsg = "Ошибка входа, попробуйте снова"
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Зарегистрироваться через Telegram")
+                    }
+                    if (statusMsg.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(statusMsg, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+            return@Column
+        }
+
+        val d = data
+        val sub = d?.subscription
+
         // Подписка
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text("Текущая подписка", style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(4.dp))
-                Text("—", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    sub?.let { "${it.plan_id ?: it.status} · осталось ${it.days_left} дн." }
+                        ?: statusMsg.ifEmpty { "—" },
+                    style = MaterialTheme.typography.titleMedium,
+                )
                 Spacer(Modifier.height(12.dp))
                 Button(onClick = { uri.openUri(BOT_URL) }, modifier = Modifier.fillMaxWidth()) {
                     Text("Продлить подписку")
                 }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+
+        // Трафик
+        Card(modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Трафик", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(4.dp))
+                Text("LTE: ${d?.lte?.used_gb ?: 0.0} из ${d?.lte?.total_gb ?: 40.0} ГБ",
+                    style = MaterialTheme.typography.bodyMedium)
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -165,8 +254,10 @@ fun ReedAccountScreen() {
             Column(Modifier.padding(16.dp)) {
                 Text("Реферальная программа", style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(4.dp))
+                Text("Ваш код: ${d?.referral?.code ?: "—"}",
+                    style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    "Делитесь своим кодом — получайте 30% от оплат друзей.",
+                    "Бонусы: ${d?.referral?.bonus_balance ?: 0} ₽ · ${d?.referral?.percent ?: 30}% с оплат друзей",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -181,7 +272,7 @@ fun ReedAccountScreen() {
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Вывод доступен от 3000 бонусов — через поддержку.",
+                    "Вывод доступен от ${d?.referral?.withdraw_min ?: 3000} бонусов — через поддержку.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
