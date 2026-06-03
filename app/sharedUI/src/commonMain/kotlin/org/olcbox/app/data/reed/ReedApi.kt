@@ -6,6 +6,9 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -40,6 +43,17 @@ object ReedApi {
     } catch (e: Throwable) {
         null
     }
+
+    // Список устройств подписки (активные + заблокированные, лимит).
+    suspend fun devices(token: String): DevicesResponse =
+        client.get("$BASE/app/devices") { parameter("token", token) }.body()
+
+    // Действие над устройством: action = "toggle_block" | "delete".
+    suspend fun deviceAction(token: String, deviceId: Int, action: String): DeviceActionResult =
+        client.post("$BASE/app/device/action") {
+            contentType(ContentType.Application.Json)
+            setBody(DeviceActionRequest(token, deviceId, action))
+        }.body()
 }
 
 /** Простое хранилище токена в памяти (на старте — без персистентности). */
@@ -110,6 +124,39 @@ data class Referral(
     val bonus_balance: Long = 0,
     val percent: Int = 30,
     val withdraw_min: Int = 3000,
+)
+
+@Serializable
+data class DeviceInfo(
+    val id: Int,
+    val name: String = "Устройство",
+    val os: String = "",
+    val type: String = "",
+    val last_seen: String = "",
+    val blocked: Boolean = false,
+)
+
+@Serializable
+data class DevicesResponse(
+    val devices: List<DeviceInfo> = emptyList(),
+    val blocked: List<DeviceInfo> = emptyList(),
+    val used: Int = 0,
+    val limit: Int = 0,
+)
+
+@Serializable
+data class DeviceActionRequest(
+    val token: String,
+    val device_id: Int,
+    val action: String,
+)
+
+@Serializable
+data class DeviceActionResult(
+    val ok: Boolean = false,
+    val action: String = "",
+    val blocked: Boolean? = null,
+    val error: String? = null,
 )
 
 @Serializable

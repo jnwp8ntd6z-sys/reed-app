@@ -75,6 +75,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.olcbox.app.data.reed.DeviceInfo
+import org.olcbox.app.data.reed.DevicesResponse
 import org.olcbox.app.data.reed.ReedApi
 import org.olcbox.app.data.reed.ReedSession
 import org.olcbox.app.data.reed.SubscriptionResponse
@@ -497,20 +499,86 @@ fun ReedHomeScreen(
 
 // ── Настройки ────────────────────────────────────────────────────────────────
 
-private data class MockDevice(val name: String, val os: String)
+@Composable
+private fun DeviceRow(
+    dev: DeviceInfo,
+    busy: Boolean,
+    onToggleBlock: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val statusLine = buildString {
+        if (dev.os.isNotBlank()) append(dev.os)
+        val seen = dev.last_seen.take(10)
+        if (seen.isNotBlank()) {
+            if (isNotEmpty()) append(" • ")
+            append("был $seen")
+        }
+        if (dev.blocked) {
+            if (isNotEmpty()) append(" • ")
+            append("Заблокирован")
+        } else if (isEmpty()) {
+            append("Активен")
+        }
+    }
+    Box(
+        Modifier.fillMaxWidth().padding(bottom = 10.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            .border(
+                1.dp,
+                if (dev.blocked) MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
+                else MaterialTheme.colorScheme.outlineVariant,
+                RoundedCornerShape(12.dp))
+            .padding(12.dp),
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Smartphone, contentDescription = null,
+                    tint = if (dev.blocked) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(dev.name, style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Black)
+                    MutedText(statusLine)
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = onToggleBlock, enabled = !busy,
+                    modifier = Modifier.weight(1f)) {
+                    Text(if (dev.blocked) "Разблокировать" else "Заблокировать",
+                        style = MaterialTheme.typography.labelMedium)
+                }
+                Spacer(Modifier.width(8.dp))
+                OutlinedButton(
+                    onClick = onDelete,
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error),
+                ) { Text("Удалить", style = MaterialTheme.typography.labelMedium) }
+            }
+        }
+    }
+}
 
 @Composable
 fun ReedSettingsScreen() {
+    val scope = rememberCoroutineScope()
     var operator by remember { mutableStateOf("МТС") }
     var splitRouting by remember { mutableStateOf(true) }
     var autostart by remember { mutableStateOf(false) }
     var data by remember { mutableStateOf<SubscriptionResponse?>(null) }
+    var devicesData by remember { mutableStateOf<DevicesResponse?>(null) }
+    var devicesBusy by remember { mutableStateOf(false) }
     LaunchedEffect(ReedSession.token) {
         val t = ReedSession.token
         if (t != null) {
             val r = try { ReedApi.subscription(t) } catch (e: Throwable) { null }
             data = r
             r?.current_operator?.let { operator = it }
+            devicesData = try { ReedApi.devices(t) } catch (e: Throwable) { null }
         }
     }
     val operators = data?.operators?.takeIf { it.isNotEmpty() } ?: OPERATORS
@@ -572,52 +640,39 @@ fun ReedSettingsScreen() {
         }
         Spacer(Modifier.height(12.dp))
 
-        // Устройства
-        ExpandablePlashka(Icons.Rounded.Smartphone, "Устройства", "Занято 3 из 10") {
-            Text("ПОДКЛЮЧЁННЫЕ УСТРОЙСТВА", style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(12.dp))
-            val devices = listOf(
-                MockDevice("iPhone 14 Pro Max", "iOS"),
-                MockDevice("Samsung S23", "Android"),
-                MockDevice("Windows ПК", "Windows"),
-            )
-            devices.forEach { dev ->
-                Box(
-                    Modifier.fillMaxWidth().padding(bottom = 10.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
-                        .padding(12.dp),
-                ) {
-                    Column(Modifier.fillMaxWidth()) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Rounded.Smartphone, contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(dev.name, style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Black)
-                                MutedText("${dev.os} • Активен")
-                            }
-                        }
-                        Spacer(Modifier.height(10.dp))
-                        Row(Modifier.fillMaxWidth()) {
-                            OutlinedButton(onClick = { }, modifier = Modifier.weight(1f)) {
-                                Text("Заблокировать", style = MaterialTheme.typography.labelMedium)
-                            }
-                            Spacer(Modifier.width(8.dp))
-                            OutlinedButton(
-                                onClick = { },
-                                modifier = Modifier.weight(1f),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = MaterialTheme.colorScheme.error),
-                            ) { Text("Удалить", style = MaterialTheme.typography.labelMedium) }
-                        }
-                    }
+        // Устройства — реальные данные из /app/devices
+        val dd = devicesData
+        val devSubtitle = if (dd != null) "Занято ${dd.used} из ${dd.limit}" else "—"
+        ExpandablePlashka(Icons.Rounded.Smartphone, "Устройства", devSubtitle) {
+            // действие над устройством + перезагрузка списка
+            fun act(deviceId: Int, action: String) {
+                val t = ReedSession.token ?: return
+                if (devicesBusy) return
+                devicesBusy = true
+                scope.launch {
+                    try { ReedApi.deviceAction(t, deviceId, action) } catch (e: Throwable) {}
+                    devicesData = try { ReedApi.devices(t) } catch (e: Throwable) { devicesData }
+                    devicesBusy = false
                 }
             }
-            MutedText("Управление устройствами появится после входа в аккаунт.")
+
+            if (dd == null) {
+                MutedText("Управление устройствами появится после входа в аккаунт.")
+            } else {
+                val all = dd.devices + dd.blocked
+                if (all.isEmpty()) {
+                    MutedText("Пока нет подключённых устройств.")
+                } else {
+                    Text("ПОДКЛЮЧЁННЫЕ УСТРОЙСТВА", style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(12.dp))
+                    all.forEach { dev ->
+                        DeviceRow(dev, devicesBusy, onToggleBlock = { act(dev.id, "toggle_block") },
+                            onDelete = { act(dev.id, "delete") })
+                    }
+                    MutedText("Заблокированное устройство не сможет подключиться. Удаление освобождает слот.")
+                }
+            }
         }
         Spacer(Modifier.height(12.dp))
 
