@@ -22,13 +22,29 @@ data class LocationConfig(
     @SerialName("bypass_provider")
     val bypassProvider: String = DEFAULT_BYPASS_PROVIDER,
     val transport: String = DEFAULT_TRANSPORT,
+    // Движок локации: olcrtc (WebRTC-туннель, родной для olcbox) либо vless (sing-box ядро
+    // через объединённую libgojni.so). Для vless поля используются так: id = tag сервера
+    // (= имя из /app/locations, для селектора `proxy`), key = sub_token (для /app/singbox).
+    @SerialName("engine")
+    val engine: String = ENGINE_OLCRTC,
     @SerialName("vp8_fps")
     val vp8Fps: Int = DEFAULT_VP8_FPS,
     @SerialName("vp8_batch")
     val vp8Batch: Int = DEFAULT_VP8_BATCH
 ) {
     fun normalized(): LocationConfig {
+        val normalizedEngine = normalizeEngine(engine)
         val provider = normalizeProvider(bypassProvider)
+        // У vless нет webrtc-провайдера/транспорта — оставляем сырые значения (id=tag,
+        // key=token), нормализуем только тип движка и тримминг строк.
+        if (normalizedEngine == ENGINE_VLESS) {
+            return copy(
+                name = name.trim(),
+                id = id.trim(),
+                key = key.trim(),
+                engine = normalizedEngine
+            )
+        }
         val normalizedTransport = normalizeTransport(transport, provider)
         return copy(
             name = name.trim(),
@@ -36,10 +52,13 @@ data class LocationConfig(
             key = key.trim(),
             bypassProvider = provider,
             transport = normalizedTransport,
+            engine = normalizedEngine,
             vp8Fps = sanitizeVp8Fps(vp8Fps),
             vp8Batch = sanitizeVp8Batch(vp8Batch)
         )
     }
+
+    fun isVless(): Boolean = normalizeEngine(engine) == ENGINE_VLESS
 
     fun isComplete(): Boolean = id.isNotBlank() && key.isNotBlank()
 
@@ -60,6 +79,16 @@ data class LocationConfig(
         const val TRANSPORT_VP8CHANNEL = "vp8channel"
         const val TRANSPORT_SEICHANNEL = "seichannel"
         const val DEFAULT_TRANSPORT = TRANSPORT_VP8CHANNEL
+
+        const val ENGINE_OLCRTC = "olcrtc"
+        const val ENGINE_VLESS = "vless"
+
+        fun normalizeEngine(value: String): String {
+            return when (value.trim().lowercase()) {
+                ENGINE_VLESS, "singbox", "sing-box", "vless-reality" -> ENGINE_VLESS
+                else -> ENGINE_OLCRTC
+            }
+        }
 
         const val DEFAULT_VP8_FPS = 60
         const val DEFAULT_VP8_BATCH = 64
@@ -338,6 +367,8 @@ data class LocationEntry(
     val endpoint: LocationEndpointConfig? = null,
     @SerialName("auth_provider")
     val authProvider: String? = null,
+    @SerialName("engine")
+    val engine: String? = null,
     @SerialName("carrier")
     val legacyCarrier: String? = null,
     val transport: LocationTransportConfig? = null,
@@ -390,6 +421,7 @@ data class LocationEntry(
                 key = firstNotBlank(endpoint?.key, legacyKey, legacyPassword),
                 bypassProvider = provider,
                 transport = transportConfig.type,
+                engine = LocationConfig.normalizeEngine(engine ?: LocationConfig.ENGINE_OLCRTC),
                 vp8Fps = vp8Options?.fps
                     ?: legacyVp8Fps
                     ?: legacyVp8FpsCamel
@@ -415,6 +447,7 @@ data class LocationEntry(
                 key = config.key
             ),
             authProvider = config.bypassProvider,
+            engine = config.engine,
             transport = LocationTransportConfig.from(config),
             metadata = metadata
                 ?.normalized()
@@ -439,6 +472,7 @@ data class LocationEntry(
                     key = config.key
                 ),
                 authProvider = config.bypassProvider,
+                engine = config.engine,
                 transport = LocationTransportConfig.from(config),
                 metadata = metadata
             ).normalized()

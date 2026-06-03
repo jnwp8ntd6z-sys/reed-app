@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -585,6 +586,11 @@ class LocationsRepositoryImpl(
             json.parseToJsonElement(text).jsonObject
         }.getOrNull() ?: return null
 
+        // Ответ /app/locations (VLESS-локации Reed): {locations:[...], configs:{vless,olcrtc}}.
+        parseReedLocations(root, subscriptionUrl)?.let {
+            return ParsedImport(it, ImportMode.Additive)
+        }
+
         parseBundle(root, subscriptionUrl, updateIntervalHours)?.let {
             return ParsedImport(it, ImportMode.Restore)
         }
@@ -602,6 +608,52 @@ class LocationsRepositoryImpl(
                 ImportMode.Additive
             )
         }
+    }
+
+    /**
+     * Парсит ответ сервера /app/locations и создаёт VLESS-локации (transport=="vless").
+     * Каждая VLESS-локация в LocationConfig: engine=vless, id=tag (для селектора), key=token
+     * (для /app/singbox). olcRTC-записи отсюда ИГНОРИРУЮТСЯ — они импортируются отдельно из
+     * /app/olcconf (там их ключи). Токен берём из configs.vless ("/app/singbox?token=XXX").
+     */
+    private fun parseReedLocations(root: JsonObject, subscriptionUrl: String?): LocationBundleV4? {
+        val locations = root["locations"]?.let { runCatching { it.jsonArray }.getOrNull() }
+            ?: return null
+        val configs = root["configs"]?.jsonObjectOrNull() ?: return null
+        val vlessConfigUrl = configs.string("vless") ?: return null
+        val token = extractQueryParam(vlessConfigUrl, "token") ?: return null
+
+        val used = mutableSetOf<String>()
+        val entries = locations.mapNotNull { element ->
+            val obj = element.jsonObjectOrNull() ?: return@mapNotNull null
+            if (obj.string("transport") != LocationConfig.ENGINE_VLESS) return@mapNotNull null
+            val tag = firstNotBlank(obj.string("tag"), obj.string("name")).ifBlank { return@mapNotNull null }
+            val name = obj.string("name")?.ifBlank { tag } ?: tag
+            val config = LocationConfig(
+                name = name,
+                id = tag,
+                key = token,
+                engine = LocationConfig.ENGINE_VLESS
+            ).normalized()
+            if (!config.isComplete()) return@mapNotNull null
+            LocationEntry.from(
+                storageId = uniqueStorageId("vless_$tag", used),
+                location = config,
+                subscriptionUrl = subscriptionUrl
+            )
+        }
+        if (entries.isEmpty()) return null
+        return LocationBundleV4(activeLocationId = null, locations = entries).normalized()
+    }
+
+    /** Достаёт значение query-параметра из URL-строки (без полноценного парсинга URL). */
+    private fun extractQueryParam(url: String, name: String): String? {
+        val query = url.substringAfter('?', "")
+        if (query.isEmpty()) return null
+        return query.split('&')
+            .firstOrNull { it.startsWith("$name=") }
+            ?.substringAfter('=')
+            ?.takeIf { it.isNotBlank() }
     }
 
     private fun mergeImportedBundle(

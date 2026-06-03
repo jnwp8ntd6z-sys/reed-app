@@ -92,6 +92,7 @@ private const val SUPPORT_URL = "https://t.me/reedvps"
 // olcRTC-подписка Reed (формат olcbox, отдаётся text/plain). Это рабочий транспорт
 // приложения. VLESS-серверы потребуют отдельного ядра (sing-box) — в работе.
 private const val REED_OLCCONF_BASE = "https://reed-vpn.duckdns.org/app/olcconf?token="
+private const val REED_LOCATIONS_BASE = "https://reed-vpn.duckdns.org/app/locations?token="
 
 private val OPERATORS = listOf("МТС", "Мегафон", "Yota", "Билайн", "Т2", "Т-Мобайл", "Ростелеком")
 
@@ -450,9 +451,16 @@ fun ReedHomeScreen(
         val t = ReedSession.token
         if (t != null && locations.isEmpty() && ReedSession.importedForToken != t) {
             ReedSession.importedForToken = t
+            // olcRTC-локации (родной транспорт). После — VLESS-локации из /app/locations.
             homeViewModel.onImportFullConfig(
                 rawText = "$REED_OLCCONF_BASE$t",
-                onComplete = { locationViewModel.loadLocations { } },
+                onComplete = {
+                    homeViewModel.onImportFullConfig(
+                        rawText = "$REED_LOCATIONS_BASE$t",
+                        onComplete = { locationViewModel.loadLocations { } },
+                        onError = { locationViewModel.loadLocations { } },
+                    )
+                },
                 onError = { ReedSession.importedForToken = null },
             )
         }

@@ -43,6 +43,7 @@ import org.olcbox.app.data.identity.PersistentDeviceIdentityProvider
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.repository.LocationsRepository
 import org.olcbox.app.vpn.AndroidConnectionMode
+import org.olcbox.app.vpn.SingBoxTunnel
 import org.olcbox.app.vpn.AndroidSocksProxySettings
 import org.olcbox.app.vpn.AndroidSplitTunnelMode
 import org.olcbox.app.vpn.UpstreamCandidate
@@ -61,9 +62,12 @@ import org.olcbox.app.vpn.data.vpnPrefDataStore
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.File
+import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.URL
+import java.net.URLEncoder
 import kotlin.concurrent.thread
 import kotlin.coroutines.coroutineContext
 
@@ -104,6 +108,10 @@ class OlcboxVpnService : VpnService() {
     private var lastMobileProvider: String? = null
     @Volatile
     private var lastJitsiStopCompletedAtMs = 0L
+    // Активен ли VLESS-движок (sing-box) вместо olcRTC для текущей сессии. Транспортная
+    // абстракция: transportRunning()/stopTransport() ниже выбирают нужный движок.
+    @Volatile
+    private var vlessActive = false
 
     private var vpnInterface: ParcelFileDescriptor? = null
     private var tun2socksThread: Thread? = null
@@ -224,7 +232,7 @@ class OlcboxVpnService : VpnService() {
 
                 is VpnStatus.Reconnecting -> {
                     if (isBenignWifiRefresh(previousTransport, nextTransport) &&
-                        Mobile.isRunning() &&
+                        transportRunning() &&
                         canReconnectTransportInPlace()
                     ) {
                         setStatus(VpnStatus.Connected)
@@ -574,6 +582,9 @@ class OlcboxVpnService : VpnService() {
     ): Boolean {
         val keepProcessBound = shouldKeepProcessBound(upstream)
         val config = location.normalized()
+        if (config.engine == LocationConfig.ENGINE_VLESS) {
+            return startVless(config, upstream, requestedGeneration, setErrorOnFailure)
+        }
         return try {
             installMobileCallbacks()
             val targetSocksPort = socksListenPort
@@ -643,6 +654,110 @@ class OlcboxVpnService : VpnService() {
             }
         }
     }
+
+    /**
+     * Запуск VLESS-транспорта (sing-box) вместо olcRTC. Поднимает встроенное ядро на тот
+     * же ЛОКАЛЬНЫЙ SOCKS5 (socksListenPort), что потом использует tun2socks — дальнейший
+     * путь (establishSystemVpnTunnel + startTun2socks) идентичен olcRTC.
+     *
+     * Сокеты sing-box должны обходить TUN, иначе петля. Для этого ДЕРЖИМ процесс
+     * привязанным к upstream-сети на всю сессию (bindProcessToNetwork без unbind) —
+     * исходящие соединения ядра идут мимо туннеля. tun2socks ходит на 127.0.0.1, его это
+     * не касается.
+     */
+    private suspend fun startVless(
+        location: LocationConfig,
+        upstream: Network,
+        requestedGeneration: Long,
+        setErrorOnFailure: Boolean
+    ): Boolean {
+        val config = location.normalized()
+        return try {
+            val targetSocksPort = socksListenPort
+            resetRtcHealthState()
+
+            waitForSocksPortReleased(targetSocksPort, SOCKS_RELEASE_QUICK_TIMEOUT_MS)
+            if (isLocalSocksPortOpen(targetSocksPort)) {
+                throw IllegalStateException("SOCKS port $targetSocksPort is still in use")
+            }
+            // Привязка процесса к upstream — sing-box дозванивается до VLESS-сервера мимо TUN.
+            bindProcessToNetwork(upstream, "Bound VLESS to ${getNetName(upstream)}")
+
+            addLog("Fetching VLESS config server=${config.id}")
+            val singboxJson = fetchSingboxConfig(config, targetSocksPort)
+                ?: throw IllegalStateException("Failed to fetch VLESS config")
+
+            addLog("Starting VLESS (sing-box) on $socksListenHost:$targetSocksPort")
+            SingBoxTunnel.start(singboxJson)
+            vlessActive = true
+
+            // Ждём, пока локальный SOCKS5 ядра начнёт принимать соединения.
+            val deadline = System.currentTimeMillis() + MOBILE_READY_TIMEOUT_MS
+            var ready = false
+            while (System.currentTimeMillis() < deadline) {
+                coroutineContext.ensureActive()
+                if (requestedGeneration != generation) {
+                    addLog("VLESS start superseded")
+                    return false
+                }
+                if (isLocalSocksPortOpen(targetSocksPort)) { ready = true; break }
+                delay(SOCKS_RELEASE_POLL_MS)
+            }
+            if (!ready) throw IllegalStateException("VLESS SOCKS not ready")
+
+            markRtcConnected()
+            addLog("VLESS ready on $socksListenHost:$targetSocksPort")
+            true
+        } catch (e: CancellationException) {
+            withContext(NonCancellable) {
+                addLog("VLESS start canceled")
+                runCatching { SingBoxTunnel.stop() }
+                vlessActive = false
+                unbindProcessFromNetwork()
+            }
+            throw e
+        } catch (e: Exception) {
+            val staleRequest = requestedGeneration != generation
+            val message = e.message ?: "VLESS failed"
+            addLog(if (staleRequest) "VLESS start canceled: $message" else "VLESS start failed: $message")
+            runCatching { SingBoxTunnel.stop() }
+            vlessActive = false
+            unbindProcessFromNetwork()
+            if (!staleRequest && setErrorOnFailure) {
+                setStatus(VpnStatus.Error(message))
+                updateNotification("Connection failed")
+            }
+            false
+        }
+    }
+
+    /** Скачивает sing-box-конфиг с сервера: /app/singbox?token=&socks_port=&server=. */
+    private suspend fun fetchSingboxConfig(location: LocationConfig, socksPort: Int): String? =
+        withContext(Dispatchers.IO) {
+            val token = location.key
+            val server = URLEncoder.encode(location.id, "UTF-8")
+            val url = "$REED_API_BASE/app/singbox?token=$token&socks_port=$socksPort&server=$server"
+            runCatching {
+                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 10_000
+                    readTimeout = 15_000
+                    requestMethod = "GET"
+                }
+                try {
+                    if (conn.responseCode !in 200..299) {
+                        addLog("VLESS config HTTP ${conn.responseCode}")
+                        return@runCatching null
+                    }
+                    conn.inputStream.bufferedReader().use { it.readText() }
+                        .takeIf { it.isNotBlank() }
+                } finally {
+                    conn.disconnect()
+                }
+            }.getOrNull()
+        }
+
+    private fun transportRunning(): Boolean =
+        if (vlessActive) SingBoxTunnel.isRunning() else Mobile.isRunning()
 
     private suspend fun waitForJitsiRoomCleanup(provider: String) {
         if (LocationConfig.normalizeProvider(provider) != LocationConfig.PROVIDER_JITSI) return
@@ -843,9 +958,9 @@ class OlcboxVpnService : VpnService() {
             while (isActive && OlcboxVpnState.status.value is VpnStatus.Connected) {
                 delay(WATCHDOG_INTERVAL_MS)
                 when {
-                    !Mobile.isRunning() -> {
-                        addLog("Watchdog: olcRTC stopped")
-                        requestTransportRecovery("olcRTC stopped", fullRestart = false)
+                    !transportRunning() -> {
+                        addLog("Watchdog: transport stopped")
+                        requestTransportRecovery("transport stopped", fullRestart = false)
                         return@launch
                     }
 
@@ -1006,6 +1121,11 @@ class OlcboxVpnService : VpnService() {
     }
 
     private fun stopMobile() {
+        if (vlessActive) {
+            runCatching { SingBoxTunnel.stop() }
+            vlessActive = false
+            return
+        }
         val provider = lastMobileProvider
         val wasRunning = Mobile.isRunning()
         runCatching { Mobile.stop() }
@@ -1140,7 +1260,7 @@ class OlcboxVpnService : VpnService() {
 
         val txDelta = stats.txPackets - previous.txPackets
         val rxDelta = stats.rxPackets - previous.rxPackets
-        if (txDelta >= WATCHDOG_STALLED_TX_PACKET_DELTA && rxDelta <= 0L && Mobile.isRunning()) {
+        if (txDelta >= WATCHDOG_STALLED_TX_PACKET_DELTA && rxDelta <= 0L && transportRunning()) {
             watchdogStalledSamples++
         } else if (rxDelta > 0L || txDelta <= 0L) {
             watchdogStalledSamples = 0
@@ -1276,7 +1396,7 @@ class OlcboxVpnService : VpnService() {
     private fun canReconnectTransportInPlace(): Boolean {
         return when (connectionMode) {
             AndroidConnectionMode.Tun -> vpnInterface != null && tun2socksThread?.isAlive == true
-            AndroidConnectionMode.Proxy -> Mobile.isRunning()
+            AndroidConnectionMode.Proxy -> transportRunning()
         }
     }
 
@@ -1294,7 +1414,7 @@ class OlcboxVpnService : VpnService() {
             vpnInterface != null ||
             tun2socksThread != null ||
             socksProxy != null ||
-            Mobile.isRunning()
+            transportRunning()
     }
 
     private fun registerNetworkMonitor() {
@@ -1651,6 +1771,9 @@ class OlcboxVpnService : VpnService() {
 
         const val ACTION_START_VPN = OlcboxVpnActions.ACTION_START_VPN
         const val ACTION_STOP_VPN = OlcboxVpnActions.ACTION_STOP_VPN
+
+        // База серверного API Reed (для скачивания sing-box-конфига VLESS на лету).
+        private const val REED_API_BASE = "https://reed-vpn.duckdns.org"
 
         private const val LOCAL_SOCKS_PORT_BASE = 10818
         private const val LOCAL_SOCKS_PORT_MAX = 10858
