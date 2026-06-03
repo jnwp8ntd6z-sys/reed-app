@@ -98,8 +98,8 @@ fun OlcboxAppContent(
                     onSplitTunnelingClick = onSplitTunnelingClick,
                 )
                 1 -> ReedPlaceholder("Управление", "Трафик, устройства, смена оператора — в работе")
-                2 -> ReedPlaceholder("Личный кабинет", "Подписка, рефералка, продление — в работе")
-                else -> ReedPlaceholder("Поддержка", "Чат с поддержкой — в работе")
+                2 -> ReedAccountScreen()
+                else -> ReedSupportScreen()
             }
         }
     }
