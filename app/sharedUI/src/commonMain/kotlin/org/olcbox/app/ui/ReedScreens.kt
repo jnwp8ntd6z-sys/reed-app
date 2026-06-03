@@ -88,8 +88,6 @@ import org.olcbox.app.ui.features.locations.LocationViewModel
 import org.olcbox.app.ui.features.locations.PingsState
 
 private const val BOT_URL = "https://t.me/ReedVPNbot"
-private const val BOT_MANAGE = "https://t.me/ReedVPNbot?start=manage"
-private const val BOT_LTE = "https://t.me/ReedVPNbot?start=lte"
 private const val SUPPORT_URL = "https://t.me/reedvps"
 private const val REED_SUB_BASE = "https://reed-vpn.duckdns.org/sub/"
 
@@ -479,29 +477,18 @@ fun ReedHomeScreen(
         Spacer(Modifier.height(16.dp))
 
         if (!hasSubscription) {
-            // Большая оранжевая кнопка — открывает бота на управлении подпиской
-            Button(
-                onClick = { uri.openUri(BOT_MANAGE) },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                shape = RoundedCornerShape(20.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.secondary,
-                    contentColor = MaterialTheme.colorScheme.onSecondary,
-                ),
-            ) { Text("Получить подписку", fontWeight = FontWeight.Black) }
-            Spacer(Modifier.height(12.dp))
-            // Подчёркнутая текстовая ссылка — пробный период
-            Text(
-                "Получить 3 дня бесплатно",
-                modifier = Modifier.fillMaxWidth()
-                    .clickable { uri.openUri(BOT_URL) }
-                    .padding(vertical = 4.dp),
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textDecoration = TextDecoration.Underline,
-                textAlign = TextAlign.Center,
-            )
+            // Нейтральный блок без призыва к оплате (требование Apple App Store):
+            // всё управление подпиской — в Telegram-боте.
+            ReedCard {
+                Text("Подписка не активна", style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Black)
+                Spacer(Modifier.height(8.dp))
+                Text("Полное управление подпиской осуществляется в Telegram-Боте.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(16.dp))
+                ReedPrimaryButton("Telegram бот") { uri.openUri(BOT_URL) }
+            }
             Spacer(Modifier.height(20.dp))
         } else {
             ReedCard {
@@ -934,8 +921,14 @@ fun ReedAccountScreen() {
         }
         Spacer(Modifier.height(14.dp))
 
-        // Продлить подписку → открывает бота на управлении подпиской
-        ReedPrimaryButton("Продлить подписку") { uri.openUri(BOT_MANAGE) }
+        // Управление подпиской — только в Telegram-боте (требование Apple App Store:
+        // в приложении не должно быть переходов на оплату).
+        ReedCard {
+            Text("Полное управление подпиской осуществляется в Telegram-Боте.",
+                style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(14.dp))
+            ReedPrimaryButton("Telegram бот") { uri.openUri(BOT_URL) }
+        }
         Spacer(Modifier.height(14.dp))
 
         // Реферальная программа
@@ -975,13 +968,11 @@ fun ReedAccountScreen() {
         }
         Spacer(Modifier.height(14.dp))
 
-        // LTE-трафик
+        // LTE-трафик — только информация (управление и пакеты — в Telegram-боте)
         ExpandablePlashka(Icons.Rounded.Storage, "LTE-трафик") {
             MutedText("На вашем тарифе — ${d?.lte?.total_gb ?: 40.0} ГБ LTE в месяц. Потреблено ${d?.lte?.used_gb ?: 0.0} ГБ. Сброс 1 числа.")
             Spacer(Modifier.height(8.dp))
             MutedText("Пакеты переносятся на следующий месяц и суммируются с квотой.")
-            Spacer(Modifier.height(14.dp))
-            ReedPrimaryButton("Получить больше трафика") { uri.openUri(BOT_LTE) }
         }
         Spacer(Modifier.height(14.dp))
 
