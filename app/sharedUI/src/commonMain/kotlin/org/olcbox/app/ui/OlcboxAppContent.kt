@@ -79,23 +79,10 @@ fun OlcboxAppContent(
     ) { innerPadding ->
         Box(Modifier.fillMaxSize().padding(innerPadding)) {
             when (selectedTab) {
-                0 -> HomeTab(
+                0 -> ReedHomeScreen(
                     homeViewModel = homeViewModel,
                     locationViewModel = locationViewModel,
-                    currentScreen = currentScreen,
-                    onNavigate = onNavigate,
                     onToggleClick = onToggleClick,
-                    onImportFileRequested = onImportFileRequested,
-                    onImportFromClipboardRequested = onImportFromClipboardRequested,
-                    onScanQrRequested = onScanQrRequested,
-                    onCopyConfigRequested = onCopyConfigRequested,
-                    onShareLocationRequested = onShareLocationRequested,
-                    onSaveLogsRequested = onSaveLogsRequested,
-                    showAppSettingsButton = showAppSettingsButton,
-                    showSplitTunnelingButton = showSplitTunnelingButton,
-                    canScanQr = canScanQr,
-                    onAppSettingsClick = onAppSettingsClick,
-                    onSplitTunnelingClick = onSplitTunnelingClick,
                 )
                 1 -> ReedSettingsScreen()
                 2 -> ReedAccountScreen()
