@@ -46,6 +46,14 @@ private val OPERATORS = listOf("МТС", "Мегафон", "Yota", "Билайн
 fun ReedControlScreen() {
     val uri = LocalUriHandler.current
     var operator by remember { mutableStateOf("МТС") }
+    var data by remember { mutableStateOf<SubscriptionResponse?>(null) }
+    LaunchedEffect(ReedSession.token) {
+        val t = ReedSession.token
+        if (t != null) {
+            data = try { ReedApi.subscription(t) } catch (e: Throwable) { null }
+        }
+    }
+    val operators = data?.operators?.takeIf { it.isNotEmpty() } ?: OPERATORS
 
     Column(
         modifier = Modifier
@@ -65,7 +73,7 @@ fun ReedControlScreen() {
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(12.dp))
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
-                    OPERATORS.forEach { op ->
+                    operators.forEach { op ->
                         if (op == operator) {
                             Button(onClick = { operator = op }) { Text(op) }
                         } else {
@@ -83,8 +91,11 @@ fun ReedControlScreen() {
             Column(Modifier.padding(16.dp)) {
                 Text("Трафик", style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(8.dp))
-                Text("Обычный: — без ограничений", style = MaterialTheme.typography.bodyMedium)
-                Text("LTE: — из 40 ГБ", style = MaterialTheme.typography.bodyMedium)
+                Text("Обычный: без ограничений", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "LTE: ${data?.lte?.used_gb ?: 0.0} из ${data?.lte?.total_gb ?: 40.0} ГБ",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 Spacer(Modifier.height(12.dp))
                 OutlinedButton(onClick = { uri.openUri(BOT_URL) }, modifier = Modifier.fillMaxWidth()) {
                     Text("Купить LTE-трафик")
