@@ -155,7 +155,9 @@ kotlin {
             implementation(libs.ktor.client.okhttp)
             implementation(libs.kstore.file)
             implementation(libs.zxing.core)
-            implementation(project(":sharedUI:olcrtc-bin"))
+            // Единый модуль с olcRTC (mobile) + sing-box (singboxmobile) в одной libgojni.so.
+            // Заменяет olcrtc-bin: два gomobile-AAR в одном APK невозможны.
+            implementation(project(":sharedUI:reedmobile-bin"))
         }
 
         jvmMain.dependencies {

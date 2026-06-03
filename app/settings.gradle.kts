@@ -23,6 +23,7 @@ dependencyResolutionManagement {
 }
 include(":sharedUI")
 include(":sharedUI:olcrtc-bin")
+include(":sharedUI:reedmobile-bin")
 include(":androidApp")
 include(":desktopApp")
 
