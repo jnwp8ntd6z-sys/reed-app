@@ -45,6 +45,9 @@ object ReedApi {
 /** Простое хранилище токена в памяти (на старте — без персистентности). */
 object ReedSession {
     var token: String? = null
+
+    // Для какого токена уже импортирована подписка Reed (чтобы не импортировать повторно).
+    var importedForToken: String? = null
 }
 
 @Serializable

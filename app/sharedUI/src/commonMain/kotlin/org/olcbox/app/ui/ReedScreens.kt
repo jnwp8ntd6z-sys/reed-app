@@ -87,6 +87,7 @@ private const val BOT_URL = "https://t.me/ReedVPNbot"
 private const val BOT_MANAGE = "https://t.me/ReedVPNbot?start=manage"
 private const val BOT_LTE = "https://t.me/ReedVPNbot?start=lte"
 private const val SUPPORT_URL = "https://t.me/reedvps"
+private const val REED_SUB_BASE = "https://reed-vpn.duckdns.org/sub/"
 
 private val OPERATORS = listOf("МТС", "Мегафон", "Yota", "Билайн", "Т2", "Т-Мобайл", "Ростелеком")
 
@@ -327,6 +328,20 @@ fun ReedHomeScreen(
         data = try { ReedApi.subscription(t) } catch (e: Throwable) { data }
     }
     LaunchedEffect(ReedSession.token) { reloadSubscription() }
+
+    // Авто-импорт подписки Reed после входа: один раз на токен, если серверов ещё нет.
+    // Подтягивает все VLESS-серверы Reed в движок, чтобы кнопкой можно было подключиться.
+    LaunchedEffect(ReedSession.token, locations.size) {
+        val t = ReedSession.token
+        if (t != null && locations.isEmpty() && ReedSession.importedForToken != t) {
+            ReedSession.importedForToken = t
+            homeViewModel.onImportFullConfig(
+                rawText = "$REED_SUB_BASE$t",
+                onComplete = { locationViewModel.loadLocations { } },
+                onError = { ReedSession.importedForToken = null },
+            )
+        }
+    }
 
     // Локальный таймер сессии: считаем секунды, пока VPN подключён.
     var sessionSeconds by remember { mutableStateOf(0L) }
