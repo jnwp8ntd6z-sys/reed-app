@@ -32,9 +32,11 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           go install golang.org/x/mobile/cmd/gomobile@latest
           go install golang.org/x/mobile/cmd/gobind@latest
-      - name: go mod tidy
+      - name: go mod tidy + add gomobile dep
         working-directory: singbox-mobile
-        run: go mod tidy
+        run: |
+          go get golang.org/x/mobile/bind@latest
+          go mod tidy
       - name: gomobile init
         run: |
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
