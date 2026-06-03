@@ -52,3 +52,32 @@ jobs:
         with:
           name: singbox-mobile-aar
           path: singbox-mobile/singbox.aar
+
+  bind-ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: "^26.0" }
+      - uses: actions/setup-go@v5
+        with: { go-version: "stable" }
+      - name: Install gomobile
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+      - name: go mod tidy (keeps x/mobile via tools.go)
+        working-directory: singbox-mobile
+        run: |
+          go get golang.org/x/mobile/bind@latest
+          go mod tidy -compat=1.24
+      - name: gomobile init
+        run: gomobile init
+      - name: gomobile bind (iOS XCFramework)
+        working-directory: singbox-mobile
+        run: |
+          gomobile bind -target=ios -o SingBoxMobile.xcframework .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: singbox-mobile-xcframework
+          path: singbox-mobile/SingBoxMobile.xcframework
