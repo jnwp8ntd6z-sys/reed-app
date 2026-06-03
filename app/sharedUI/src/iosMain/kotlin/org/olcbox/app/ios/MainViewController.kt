@@ -43,24 +43,27 @@ import platform.UIKit.UIViewController
 class IosAppFactory {
     fun createSession(
         platformBridge: IosPlatformBridge,
-        olcRtcBridge: IosOlcRtcBridge
+        olcRtcBridge: IosOlcRtcBridge,
+        singBoxBridge: IosSingBoxBridge
     ): IosAppSession {
-        return IosAppSession(platformBridge, olcRtcBridge)
+        return IosAppSession(platformBridge, olcRtcBridge, singBoxBridge)
     }
 
     fun createViewController(
         platformBridge: IosPlatformBridge,
-        olcRtcBridge: IosOlcRtcBridge
+        olcRtcBridge: IosOlcRtcBridge,
+        singBoxBridge: IosSingBoxBridge
     ): UIViewController {
-        return createSession(platformBridge, olcRtcBridge).createViewController()
+        return createSession(platformBridge, olcRtcBridge, singBoxBridge).createViewController()
     }
 }
 
 class IosAppSession internal constructor(
     private val platformBridge: IosPlatformBridge,
-    olcRtcBridge: IosOlcRtcBridge
+    olcRtcBridge: IosOlcRtcBridge,
+    singBoxBridge: IosSingBoxBridge
 ) {
-    private val dependencies = IosAppDependencies(platformBridge, olcRtcBridge)
+    private val dependencies = IosAppDependencies(platformBridge, olcRtcBridge, singBoxBridge)
 
     fun createViewController(): UIViewController {
         return ComposeUIViewController {
@@ -75,11 +78,12 @@ class IosAppSession internal constructor(
 
 private class IosAppDependencies(
     platformBridge: IosPlatformBridge,
-    olcRtcBridge: IosOlcRtcBridge
+    olcRtcBridge: IosOlcRtcBridge,
+    singBoxBridge: IosSingBoxBridge
 ) {
     private val locationsDataSource = IosLocationsDataSourceImpl()
     val locationsRepository = LocationsRepositoryImpl(locationsDataSource)
-    val vpnManager = IosVpnManager(locationsRepository, olcRtcBridge)
+    val vpnManager = IosVpnManager(locationsRepository, olcRtcBridge, singBoxBridge)
     val updateService = AppUpdateService(
         deviceIdentityProvider = PersistentDeviceIdentityProvider(locationsDataSource)
     )

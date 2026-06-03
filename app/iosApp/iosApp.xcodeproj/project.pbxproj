@@ -10,6 +10,7 @@
 		9A0000010000000000000001 /* OlcboxIosApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0000010000000000000011 /* OlcboxIosApp.swift */; };
 		9A0000010000000000000002 /* SwiftPlatformBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0000010000000000000012 /* SwiftPlatformBridge.swift */; };
 		9A0000010000000000000003 /* SwiftOlcRtcManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0000010000000000000013 /* SwiftOlcRtcManager.swift */; };
+		9A0000010000000000000004 /* SwiftSingBoxManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A0000010000000000000015 /* SwiftSingBoxManager.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -17,6 +18,7 @@
 		9A0000010000000000000011 /* OlcboxIosApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OlcboxIosApp.swift; sourceTree = "<group>"; };
 		9A0000010000000000000012 /* SwiftPlatformBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftPlatformBridge.swift; sourceTree = "<group>"; };
 		9A0000010000000000000013 /* SwiftOlcRtcManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftOlcRtcManager.swift; sourceTree = "<group>"; };
+		9A0000010000000000000015 /* SwiftSingBoxManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftSingBoxManager.swift; sourceTree = "<group>"; };
 		9A0000010000000000000014 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -46,6 +48,7 @@
 				9A0000010000000000000011 /* OlcboxIosApp.swift */,
 				9A0000010000000000000012 /* SwiftPlatformBridge.swift */,
 				9A0000010000000000000013 /* SwiftOlcRtcManager.swift */,
+				9A0000010000000000000015 /* SwiftSingBoxManager.swift */,
 				9A0000010000000000000014 /* Info.plist */,
 			);
 			path = iosApp;
@@ -156,6 +159,7 @@
 				9A0000010000000000000001 /* OlcboxIosApp.swift in Sources */,
 				9A0000010000000000000002 /* SwiftPlatformBridge.swift in Sources */,
 				9A0000010000000000000003 /* SwiftOlcRtcManager.swift in Sources */,
+				9A0000010000000000000004 /* SwiftSingBoxManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -59,6 +59,19 @@ interface IosOlcRtcBridge {
     fun check(request: IosOlcRtcCheckRequest): IosLongResult
 }
 
+/**
+ * Мост к нативному ядру VLESS (sing-box) на iOS. Реализуется в Swift (SwiftSingBoxManager)
+ * поверх объединённой XCFramework (функции Singboxmobile*). Модель как у olcRTC: ядро
+ * поднимает ЛОКАЛЬНЫЙ SOCKS5 (его адрес задан в configJson через socks-inbound), на который
+ * указывают приложения/система. На iOS нет TUN — «VPN» это и есть локальный SOCKS-прокси.
+ */
+interface IosSingBoxBridge {
+    fun setLogWriter(writer: IosLogWriter?)
+    fun start(configJson: String): IosBridgeResult
+    fun stop()
+    fun isRunning(): Boolean
+}
+
 interface IosPlatformBridge {
     fun readClipboard(): String?
     fun writeClipboard(text: String)

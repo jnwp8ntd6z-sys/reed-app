@@ -15,6 +15,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.darwin.Darwin
+import io.ktor.client.request.get
+import io.ktor.client.request.url
+import io.ktor.client.statement.bodyAsText
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.repository.LocationsRepository
 import org.olcbox.app.ios.IosBridgeResult
@@ -22,13 +27,19 @@ import org.olcbox.app.ios.IosLogWriter
 import org.olcbox.app.ios.IosOlcRtcBridge
 import org.olcbox.app.ios.IosOlcRtcCheckRequest
 import org.olcbox.app.ios.IosOlcRtcStartRequest
+import org.olcbox.app.ios.IosSingBoxBridge
 import org.olcbox.app.ui.components.ApplicationSocksProxySettings
 import platform.Foundation.NSUserDefaults
 
 class IosVpnManager(
     private val locationsRepository: LocationsRepository,
-    private val olcRtcBridge: IosOlcRtcBridge
+    private val olcRtcBridge: IosOlcRtcBridge,
+    private val singBoxBridge: IosSingBoxBridge
 ) : VpnManager {
+
+    // Активен ли VLESS (sing-box) вместо olcRTC в текущей сессии.
+    private var vlessActive = false
+    private val httpClient by lazy { HttpClient(Darwin) }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val mutex = Mutex()
@@ -57,6 +68,14 @@ class IosVpnManager(
                     ?.let { addLog("rtc: $it") }
             }
         })
+        singBoxBridge.setLogWriter(object : IosLogWriter {
+            override fun writeLog(message: String) {
+                message
+                    .trim()
+                    .takeIf { it.isNotBlank() }
+                    ?.let { addLog("vless: $it") }
+            }
+        })
     }
 
     override fun needsPermission(): Boolean = false
@@ -70,16 +89,16 @@ class IosVpnManager(
                 val shouldRestart = _status.value is VpnStatus.Connected ||
                     _status.value is VpnStatus.Connecting ||
                     _status.value is VpnStatus.Reconnecting ||
-                    olcRtcBridge.isRunning()
+                    transportRunning()
 
                 if (shouldRestart) {
                     setStatus(VpnStatus.Reconnecting)
                     addLog("Restarting iOS SOCKS connection")
-                    stopOlcRtc()
+                    stopTransport()
                     if (requestedGeneration != generation) return@withLock
                 }
 
-                startOlcRtc(requestedGeneration, isRestart = shouldRestart)
+                startTransport(requestedGeneration, isRestart = shouldRestart)
             }
         }
     }
@@ -89,7 +108,7 @@ class IosVpnManager(
         operationJob = scope.launch {
             mutex.withLock {
                 setStatus(VpnStatus.Stopping)
-                stopOlcRtc()
+                stopTransport()
                 setStatus(VpnStatus.Disconnected)
                 addLog("iOS SOCKS stopped")
             }
@@ -127,10 +146,13 @@ class IosVpnManager(
         generation++
         runCatching { olcRtcBridge.setLogWriter(null) }
         runCatching { olcRtcBridge.stop() }
+        runCatching { singBoxBridge.setLogWriter(null) }
+        runCatching { singBoxBridge.stop() }
+        runCatching { httpClient.close() }
         scope.cancel()
     }
 
-    private suspend fun startOlcRtc(requestedGeneration: Long, isRestart: Boolean) {
+    private suspend fun startTransport(requestedGeneration: Long, isRestart: Boolean) {
         setStatus(if (isRestart) VpnStatus.Reconnecting else VpnStatus.Connecting)
 
         val active = locationsRepository.getActiveLocation()
@@ -142,17 +164,18 @@ class IosVpnManager(
             return
         }
 
-        val deviceId = locationsRepository.getDeviceIdentity()
         val socksSettings = _socksProxySettings.value
-        val request = location.startRequest(deviceId, socksSettings)
 
-        addLog(
-            "Starting iOS SOCKS provider=${location.bypassProvider}, " +
-                "transport=${location.transport}, room=${location.id}, port=${socksSettings.port}"
-        )
-
-        val result = withContext(Dispatchers.Default) {
-            olcRtcBridge.start(request)
+        val result = if (location.isVless()) {
+            startVless(location, socksSettings.port)
+        } else {
+            val deviceId = locationsRepository.getDeviceIdentity()
+            val request = location.startRequest(deviceId, socksSettings)
+            addLog(
+                "Starting iOS SOCKS provider=${location.bypassProvider}, " +
+                    "transport=${location.transport}, room=${location.id}, port=${socksSettings.port}"
+            )
+            withContext(Dispatchers.Default) { olcRtcBridge.start(request) }
         }
 
         if (requestedGeneration != generation) return
@@ -161,10 +184,52 @@ class IosVpnManager(
             setStatus(VpnStatus.Connected)
             addLog("iOS SOCKS ready on 127.0.0.1:${socksSettings.port}")
         } else {
-            val message = result.message ?: "olcRTC start failed"
+            val message = result.message ?: "transport start failed"
             setStatus(VpnStatus.Error(message))
             addLog("iOS SOCKS start failed: $message")
-            stopOlcRtc()
+            stopTransport()
+        }
+    }
+
+    /** Запуск VLESS на iOS: качаем sing-box-конфиг и поднимаем ядро на локальном SOCKS5. */
+    private suspend fun startVless(
+        location: LocationConfig,
+        socksPort: Int
+    ): IosBridgeResult {
+        addLog("Starting iOS VLESS server=${location.id}, port=$socksPort")
+        val configJson = fetchSingboxConfig(location.key, location.id, socksPort)
+            ?: return IosBridgeResult(success = false, message = "Failed to fetch VLESS config")
+        val result = withContext(Dispatchers.Default) { singBoxBridge.start(configJson) }
+        if (result.success) vlessActive = true
+        return result
+    }
+
+    private suspend fun fetchSingboxConfig(token: String, server: String, socksPort: Int): String? {
+        return runCatching {
+            withContext(Dispatchers.Default) {
+                httpClient.get("$REED_API_BASE/app/singbox") {
+                    url {
+                        parameters.append("token", token)
+                        parameters.append("socks_port", socksPort.toString())
+                        parameters.append("server", server)
+                    }
+                }.bodyAsText().takeIf { it.isNotBlank() }
+            }
+        }.getOrElse {
+            addLog("VLESS config fetch failed: ${it.message}")
+            null
+        }
+    }
+
+    private fun transportRunning(): Boolean =
+        if (vlessActive) singBoxBridge.isRunning() else olcRtcBridge.isRunning()
+
+    private fun stopTransport() {
+        if (vlessActive) {
+            runCatching { singBoxBridge.stop() }
+            vlessActive = false
+        } else {
+            runCatching { olcRtcBridge.stop() }
         }
     }
 
@@ -187,15 +252,6 @@ class IosVpnManager(
         )
         val result = block(request)
         if (result.success && result.valueMillis >= 0L) result.valueMillis else null
-    }
-
-    private fun stopOlcRtc(): IosBridgeResult {
-        return runCatching {
-            olcRtcBridge.stop()
-            IosBridgeResult(success = true, message = null)
-        }.getOrElse {
-            IosBridgeResult(success = false, message = it.message)
-        }
     }
 
     private fun setStatus(status: VpnStatus) {
@@ -277,5 +333,6 @@ class IosVpnManager(
         const val CHECK_TIMEOUT_MS = 8_000L
         const val HTTP_PING_URL = "https://www.google.com/generate_204"
         const val CREDENTIAL_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+        const val REED_API_BASE = "https://reed-vpn.duckdns.org"
     }
 }

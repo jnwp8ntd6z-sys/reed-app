@@ -28,6 +28,13 @@ val olcrtcAndroidAarFile = olcrtcAndroidAar.get().asFile
 val olcrtcIosXcframework = layout.buildDirectory.dir("generated/olcrtc/ios/OlcRtcMobile.xcframework")
 val olcrtcIosXcframeworkDir = olcrtcIosXcframework.get().asFile
 
+// Go-модуль singbox-mobile (в КОРНЕ репо) собирает СОВМЕЩЁННУЮ XCFramework: olcRTC (пакет
+// mobile) + sing-box (пакет singboxmobile) в ОДНУ libgojni. Две отдельные gomobile-
+// XCFramework конфликтуют (одинаковый go-рантайм/символы), как и AAR на Android.
+val singboxRepoPath = providers.environmentVariable("SINGBOX_REPO")
+    .orElse(rootProject.layout.projectDirectory.asFile.parentFile.resolve("singbox-mobile").absolutePath)
+val singboxRepoDir = rootProject.file(singboxRepoPath.get())
+
 abstract class GenerateAppInfoTask : DefaultTask() {
     @get:Input
     abstract val version: Property<String>
@@ -60,29 +67,36 @@ val generateAppInfo by tasks.registering(GenerateAppInfoTask::class) {
 
 val buildOlcrtcIosXcframework by tasks.registering(Exec::class) {
     group = "build"
-    description = "Builds olcrtc iOS XCFramework from OLCRTC_REPO using gomobile."
+    description = "Builds COMBINED olcRTC+sing-box iOS XCFramework (one libgojni) via gomobile."
 
-    inputs.dir(olcrtcRepoDir.resolve("mobile"))
-    inputs.dir(olcrtcRepoDir.resolve("internal"))
-    inputs.files(olcrtcRepoDir.resolve("go.mod"), olcrtcRepoDir.resolve("go.sum"))
+    inputs.files(
+        singboxRepoDir.resolve("mobile.go"),
+        singboxRepoDir.resolve("tools.go"),
+        singboxRepoDir.resolve("go.mod")
+    )
     outputs.dir(olcrtcIosXcframework)
 
-    workingDir = olcrtcRepoDir
+    workingDir = singboxRepoDir
 
     doFirst {
         delete(olcrtcIosXcframeworkDir)
         olcrtcIosXcframeworkDir.parentFile.mkdirs()
     }
 
+    val goBin = file("${System.getProperty("user.home")}/go/bin").absolutePath
+    val path = System.getenv("PATH") ?: ""
+    val mergedPath = if (path.contains(goBin)) path else "$goBin:$path"
+    // Имя выходной XCFramework = OlcRtcMobile (путь не меняем) → iosApp import OlcRtcMobile
+    // получает И Mobile* (olcRTC), И Singboxmobile* (sing-box) из одного модуля.
     commandLine(
-        "gomobile",
-        "bind",
-        "-target=ios",
-        "-ldflags",
-        "-s -w -checklinkname=0",
-        "-o",
-        olcrtcIosXcframeworkDir.absolutePath,
-        "./mobile"
+        "sh", "-c",
+        "set -e; export PATH=\"$mergedPath\"; " +
+            "go get github.com/openlibrecommunity/olcrtc@master; " +
+            "go get golang.org/x/mobile/bind@latest; " +
+            "go mod tidy; " +
+            "gomobile bind -target=ios -ldflags \"-s -w -checklinkname=0\" " +
+            "-o \"${olcrtcIosXcframeworkDir.absolutePath}\" " +
+            "github.com/openlibrecommunity/olcrtc/mobile ."
     )
 }
 
