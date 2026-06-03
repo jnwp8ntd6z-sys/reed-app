@@ -62,6 +62,9 @@ object ReedSession {
 
     // Для какого токена уже импортирована подписка Reed (чтобы не импортировать повторно).
     var importedForToken: String? = null
+
+    // Показан ли экран онбординга (первый запуск). Пока в памяти, без персистентности.
+    var onboardingDone: Boolean = false
 }
 
 @Serializable

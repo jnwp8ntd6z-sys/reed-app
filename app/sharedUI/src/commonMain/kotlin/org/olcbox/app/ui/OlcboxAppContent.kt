@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.reed.ReedSession
 import org.olcbox.app.ui.features.home.HomeScreen
 import org.olcbox.app.ui.features.home.HomeScreenViewModel
 import org.olcbox.app.ui.features.locations.LocationSettingsScreen
@@ -63,6 +64,13 @@ fun OlcboxAppContent(
     onAppSettingsClick: () -> Unit,
     onSplitTunnelingClick: () -> Unit = {}
 ) {
+    // Онбординг при первом запуске (до основного интерфейса).
+    var showOnboarding by remember { mutableStateOf(!ReedSession.onboardingDone) }
+    if (showOnboarding) {
+        ReedOnboardingScreen(onDone = { showOnboarding = false })
+        return
+    }
+
     // Нижняя навигация Reed: 4 вкладки с настоящими иконками (по дизайну).
     // Активный цвет чередуется лайм/оранжевый, как в макете. Переключение — плавное (Crossfade).
     var selectedTab by remember { mutableStateOf(0) }

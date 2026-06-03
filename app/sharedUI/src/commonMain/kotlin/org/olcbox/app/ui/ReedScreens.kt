@@ -34,8 +34,10 @@ import androidx.compose.material.icons.rounded.CardGiftcard
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PowerSettingsNew
+import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Router
+import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Wifi
@@ -102,6 +104,117 @@ private fun ScreenTitle(text: String) {
 private fun MutedText(text: String) {
     Text(text, style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+// ── Онбординг (первый запуск) ────────────────────────────────────────────────
+
+@Composable
+private fun OnboardFeature(icon: ImageVector, title: String, subtitle: String) {
+    Row(
+        Modifier.fillMaxWidth().padding(bottom = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp))
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black)
+            MutedText(subtitle)
+        }
+    }
+}
+
+@Composable
+fun ReedOnboardingScreen(onDone: () -> Unit) {
+    val uri = LocalUriHandler.current
+    val scope = rememberCoroutineScope()
+    var statusMsg by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+    ) {
+        Spacer(Modifier.height(24.dp))
+        // Логотип-герой: значок щита в круге + название
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(56.dp).clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Rounded.Shield, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(30.dp))
+            }
+            Spacer(Modifier.width(14.dp))
+            Column {
+                Text("REED VPN", style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Black)
+                MutedText("Свободный интернет без границ")
+            }
+        }
+        Spacer(Modifier.height(32.dp))
+
+        OnboardFeature(Icons.Rounded.Shield, "Обходит блокировки",
+            "Работает там, где другие VPN не справляются")
+        OnboardFeature(Icons.Rounded.Bolt, "Быстро и без рекламы",
+            "Свои серверы, высокая скорость, никакой рекламы")
+        OnboardFeature(Icons.Rounded.Public, "Серверы по всему миру",
+            "Нидерланды, Германия, Финляндия, Польша и другие")
+
+        Spacer(Modifier.height(20.dp))
+
+        ReedPrimaryButton(if (busy) "Подтвердите в Telegram…" else "Войти через Telegram") {
+            if (busy) return@ReedPrimaryButton
+            busy = true
+            statusMsg = ""
+            scope.launch {
+                try {
+                    val start = ReedApi.authStart()
+                    uri.openUri(start.deeplink)
+                    statusMsg = "Подтвердите вход в Telegram…"
+                    repeat(60) {
+                        delay(2000)
+                        val poll = ReedApi.authPoll(start.nonce)
+                        if (poll.status == "ok") {
+                            ReedSession.token = poll.token
+                            ReedSession.onboardingDone = true
+                            onDone()
+                            return@launch
+                        }
+                    }
+                    statusMsg = "Вход не завершён, попробуйте снова"
+                } catch (e: Throwable) {
+                    statusMsg = "Ошибка входа, попробуйте снова"
+                }
+                busy = false
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        ReedSecondaryButton("Пропустить — у меня нет аккаунта") {
+            ReedSession.onboardingDone = true
+            onDone()
+        }
+        if (statusMsg.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            MutedText(statusMsg)
+        }
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "Вход нужен, чтобы подтянуть вашу подписку и серверы. " +
+                "Без входа можно осмотреться, но подключение будет недоступно.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(24.dp))
+    }
 }
 
 // Раскрывающаяся плашка: иконка + заголовок + подзаголовок + поворачивающийся шеврон.
