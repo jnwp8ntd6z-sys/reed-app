@@ -32,6 +32,14 @@ object ReedApi {
 
     suspend fun subscription(token: String): SubscriptionResponse =
         client.get("$BASE/app/subscription") { parameter("token", token) }.body()
+
+    // Аватар пользователя (JPEG). Возвращает байты или null, если фото нет / ошибка.
+    suspend fun avatarBytes(token: String): ByteArray? = try {
+        val resp = client.get("$BASE/app/avatar") { parameter("token", token) }
+        if (resp.status.value == 200) resp.body<ByteArray>() else null
+    } catch (e: Throwable) {
+        null
+    }
 }
 
 /** Простое хранилище токена в памяти (на старте — без персистентности). */

@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,6 +32,7 @@ import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.CardGiftcard
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Router
@@ -59,12 +61,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -72,11 +78,15 @@ import kotlinx.coroutines.launch
 import org.olcbox.app.data.reed.ReedApi
 import org.olcbox.app.data.reed.ReedSession
 import org.olcbox.app.data.reed.SubscriptionResponse
+import org.olcbox.app.data.reed.decodeImageBitmap
 import org.olcbox.app.ui.features.home.HomeScreenViewModel
 import org.olcbox.app.ui.features.locations.LocationViewModel
 import org.olcbox.app.ui.features.locations.PingsState
 
 private const val BOT_URL = "https://t.me/ReedVPNbot"
+private const val BOT_MANAGE = "https://t.me/ReedVPNbot?start=manage"
+private const val BOT_LTE = "https://t.me/ReedVPNbot?start=lte"
+private const val SUPPORT_URL = "https://t.me/reedvps"
 
 private val OPERATORS = listOf("МТС", "Мегафон", "Yota", "Билайн", "Т2", "Т-Мобайл", "Ростелеком")
 
@@ -339,19 +349,29 @@ fun ReedHomeScreen(
         Spacer(Modifier.height(16.dp))
 
         if (!hasSubscription) {
+            // Большая оранжевая кнопка — открывает бота на управлении подпиской
             Button(
-                onClick = { uri.openUri(BOT_URL) },
+                onClick = { uri.openUri(BOT_MANAGE) },
                 modifier = Modifier.fillMaxWidth().height(56.dp),
                 shape = RoundedCornerShape(20.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.secondary,
                     contentColor = MaterialTheme.colorScheme.onSecondary,
                 ),
-            ) { Text("ПОЛУЧИТЬ 3 ДНЯ БЕСПЛАТНО", fontWeight = FontWeight.Black) }
-            Spacer(Modifier.height(8.dp))
-            Text("от 129 ₽/мес", modifier = Modifier.fillMaxWidth(),
-                style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            ) { Text("Получить подписку", fontWeight = FontWeight.Black) }
+            Spacer(Modifier.height(12.dp))
+            // Подчёркнутая текстовая ссылка — пробный период
+            Text(
+                "Получить 3 дня бесплатно",
+                modifier = Modifier.fillMaxWidth()
+                    .clickable { uri.openUri(BOT_URL) }
+                    .padding(vertical = 4.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textDecoration = TextDecoration.Underline,
+                textAlign = TextAlign.Center,
+            )
             Spacer(Modifier.height(20.dp))
         } else {
             ReedCard {
@@ -611,7 +631,7 @@ fun ReedSupportScreen() {
                 Spacer(Modifier.height(8.dp))
                 MutedText("Напишите нам в Telegram — поможем быстро.")
                 Spacer(Modifier.height(20.dp))
-                ReedPrimaryButton("Открыть чат в Telegram") { uri.openUri(BOT_URL) }
+                ReedPrimaryButton("Написать в поддержку") { uri.openUri(SUPPORT_URL) }
             }
         }
     }
@@ -627,6 +647,7 @@ fun ReedAccountScreen() {
     var statusMsg by remember { mutableStateOf("") }
     var friendCode by remember { mutableStateOf("") }
     var friendSaved by remember { mutableStateOf(false) }
+    var avatar by remember { mutableStateOf<ImageBitmap?>(null) }
 
     LaunchedEffect(token) {
         val t = token
@@ -636,6 +657,8 @@ fun ReedAccountScreen() {
                 statusMsg = "Не удалось загрузить данные"; null
             }
             if (data != null) statusMsg = ""
+            val bytes = ReedApi.avatarBytes(t)
+            if (bytes != null) avatar = decodeImageBitmap(bytes)
         }
     }
 
@@ -685,13 +708,23 @@ fun ReedAccountScreen() {
         // Профиль в стиле Telegram: круглый аватар + имя + @username
         ReedCard {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    Modifier.size(56.dp).clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(Icons.Rounded.Smartphone, contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(28.dp))
+                val av = avatar
+                if (av != null) {
+                    Image(
+                        bitmap = av,
+                        contentDescription = "Аватар",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(56.dp).clip(CircleShape),
+                    )
+                } else {
+                    Box(
+                        Modifier.size(56.dp).clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Rounded.Person, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(28.dp))
+                    }
                 }
                 Spacer(Modifier.width(14.dp))
                 Column {
@@ -718,8 +751,8 @@ fun ReedAccountScreen() {
         }
         Spacer(Modifier.height(14.dp))
 
-        // Продлить подписку
-        ReedPrimaryButton("Продлить подписку") { uri.openUri(BOT_URL) }
+        // Продлить подписку → открывает бота на управлении подпиской
+        ReedPrimaryButton("Продлить подписку") { uri.openUri(BOT_MANAGE) }
         Spacer(Modifier.height(14.dp))
 
         // Реферальная программа
@@ -765,7 +798,7 @@ fun ReedAccountScreen() {
             Spacer(Modifier.height(8.dp))
             MutedText("Пакеты переносятся на следующий месяц и суммируются с квотой.")
             Spacer(Modifier.height(14.dp))
-            ReedPrimaryButton("Получить больше трафика") { uri.openUri(BOT_URL) }
+            ReedPrimaryButton("Получить больше трафика") { uri.openUri(BOT_LTE) }
         }
         Spacer(Modifier.height(14.dp))
 
