@@ -1,6 +1,7 @@
 package org.olcbox.app.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -14,8 +15,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ChatBubble
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.rounded.Shield
+import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,7 +33,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.MaterialTheme
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.ui.features.home.HomeScreen
 import org.olcbox.app.ui.features.home.HomeScreenViewModel
@@ -52,15 +63,17 @@ fun OlcboxAppContent(
     onAppSettingsClick: () -> Unit,
     onSplitTunnelingClick: () -> Unit = {}
 ) {
-    // Нижняя навигация Reed: 4 вкладки (Главная / Управление / Кабинет / Поддержка).
-    // Вкладка 0 = существующий экран olcbox (подключение + серверы), 1-3 — пока заглушки
-    // под перенос дизайна. Иконки — эмодзи (чтобы не тянуть material-icons зависимость).
+    // Нижняя навигация Reed: 4 вкладки с настоящими иконками (по дизайну).
+    // Активный цвет чередуется лайм/оранжевый, как в макете. Переключение — плавное (Crossfade).
     var selectedTab by remember { mutableStateOf(0) }
+    val lime = MaterialTheme.colorScheme.primary
+    val orange = MaterialTheme.colorScheme.secondary
+    data class TabDef(val icon: ImageVector, val label: String, val color: Color)
     val tabs = listOf(
-        "🏠" to "Главная",
-        "⚙️" to "Настройки",
-        "👤" to "Кабинет",
-        "💬" to "Поддержка",
+        TabDef(Icons.Rounded.Shield, "Главная", lime),
+        TabDef(Icons.Rounded.Settings, "Настройки", orange),
+        TabDef(Icons.Rounded.Person, "Профиль", lime),
+        TabDef(Icons.Rounded.ChatBubble, "Помощь", orange),
     )
 
     Scaffold(
@@ -70,23 +83,30 @@ fun OlcboxAppContent(
                     NavigationBarItem(
                         selected = selectedTab == index,
                         onClick = { selectedTab = index },
-                        icon = { Text(tab.first) },
-                        label = { Text(tab.second) },
+                        icon = { Icon(tab.icon, contentDescription = tab.label) },
+                        label = { Text(tab.label) },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = tab.color,
+                            selectedTextColor = tab.color,
+                            indicatorColor = tab.color.copy(alpha = 0.16f),
+                        ),
                     )
                 }
             }
         }
     ) { innerPadding ->
         Box(Modifier.fillMaxSize().padding(innerPadding)) {
-            when (selectedTab) {
-                0 -> ReedHomeScreen(
-                    homeViewModel = homeViewModel,
-                    locationViewModel = locationViewModel,
-                    onToggleClick = onToggleClick,
-                )
-                1 -> ReedSettingsScreen()
-                2 -> ReedAccountScreen()
-                else -> ReedSupportScreen()
+            Crossfade(targetState = selectedTab, animationSpec = tween(280), label = "tab_switch") { tab ->
+                when (tab) {
+                    0 -> ReedHomeScreen(
+                        homeViewModel = homeViewModel,
+                        locationViewModel = locationViewModel,
+                        onToggleClick = onToggleClick,
+                    )
+                    1 -> ReedSettingsScreen()
+                    2 -> ReedAccountScreen()
+                    else -> ReedSupportScreen()
+                }
             }
         }
     }

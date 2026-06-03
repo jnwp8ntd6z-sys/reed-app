@@ -1,12 +1,18 @@
 package org.olcbox.app.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,8 +26,20 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Logout
+import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.CardGiftcard
+import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.PowerSettingsNew
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Router
+import androidx.compose.material.icons.rounded.Smartphone
+import androidx.compose.material.icons.rounded.Storage
+import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -38,10 +56,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -71,12 +91,81 @@ private fun MutedText(text: String) {
         color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
+// Раскрывающаяся плашка: иконка + заголовок + подзаголовок + поворачивающийся шеврон.
 @Composable
-private fun ReedToggleRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, modifier = Modifier.weight(1f),
+private fun ExpandablePlashka(
+    icon: ImageVector,
+    title: String,
+    subtitle: String? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val rot by animateFloatAsState(if (expanded) 90f else 0f, label = "chevron")
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().clip(ReedCardShape)
+                .background(MaterialTheme.colorScheme.surfaceContainer)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, ReedCardShape)
+                .clickable { expanded = !expanded }
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(22.dp))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black)
+                if (subtitle != null) { Spacer(Modifier.height(2.dp)); MutedText(subtitle) }
+            }
+            Icon(Icons.Rounded.ChevronRight, contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.rotate(rot))
+        }
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
+            Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                ReedCard { content() }
+            }
+        }
+    }
+}
+
+// Плашка-тумблер: иконка (лайм если вкл, оранжевая если выкл) + заголовок + Switch.
+@Composable
+private fun TogglePlashka(icon: ImageVector, label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(ReedCardShape)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, ReedCardShape)
+            .clickable { onChange(!checked) }
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null,
+            tint = if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
+            modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(12.dp))
+        Text(label.uppercase(), modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black)
         Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+// Маленькая кликабельная иконка-действие с подписью (для «Обновить» / «Тест»).
+@Composable
+private fun IconAction(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Row(
+        Modifier.clip(RoundedCornerShape(10.dp)).clickable(onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(4.dp))
+        Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Black,
+            color = MaterialTheme.colorScheme.primary)
     }
 }
 
@@ -100,6 +189,17 @@ private fun formatSession(seconds: Long): String {
     return "${p(h)}:${p(m)}:${p(s)}"
 }
 
+// Размер трафика: ГБ, а от 1000 ГБ — в ТБ.
+private fun formatSize(bytes: Long): String {
+    val gb = bytes / BYTES_IN_GB
+    return if (gb >= 1000) {
+        val tb = (gb / 1024.0 * 10).toLong() / 10.0
+        "$tb ТБ"
+    } else {
+        "${gb.toLong()} ГБ"
+    }
+}
+
 private fun pingFor(state: PingsState, id: String): Int? = when (state) {
     is PingsState.Success -> state.pings[id]
     is PingsState.Loading -> state.currentPings[id] ?: state.lastPings?.get(id)
@@ -107,7 +207,6 @@ private fun pingFor(state: PingsState, id: String): Int? = when (state) {
     PingsState.Idle -> null
 }
 
-// Цвет полоски/пинга по доле использования (зелёный → оранжевый → красный)
 @Composable
 private fun ratioColor(ratio: Double) = when {
     ratio < 0.7 -> MaterialTheme.colorScheme.primary
@@ -147,7 +246,7 @@ private fun ReedTrafficBar(label: String, valueGb: Double, maxGb: Double) {
     }
 }
 
-// Круглая кнопка подключения с кольцом таймера сессии и нарисованным значком питания
+// Круглая кнопка подключения: кольцо таймера сессии + значок питания + время сессии.
 @Composable
 private fun ReedConnectButton(
     isConnected: Boolean,
@@ -166,16 +265,16 @@ private fun ReedConnectButton(
             .size(196.dp)
             .clip(CircleShape)
             .background(if (isConnected) primary else MaterialTheme.colorScheme.surfaceContainer)
-            .border(if (isConnected) 0.dp else 5.dp, outline, CircleShape)
+            .border(if (isConnected) 0.dp else 6.dp, outline, CircleShape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(Modifier.size(196.dp)) {
-            val stroke = 5.dp.toPx()
-            val pad = 10.dp.toPx()
-            val arcSize = Size(size.width - pad * 2, size.height - pad * 2)
-            val topLeft = Offset(pad, pad)
-            if (isConnected) {
+        if (isConnected) {
+            Canvas(Modifier.size(196.dp)) {
+                val stroke = 5.dp.toPx()
+                val pad = 10.dp.toPx()
+                val arcSize = Size(size.width - pad * 2, size.height - pad * 2)
+                val topLeft = Offset(pad, pad)
                 drawArc(color = onPrimary.copy(alpha = 0.18f), startAngle = -90f,
                     sweepAngle = 360f, useCenter = false, topLeft = topLeft, size = arcSize,
                     style = Stroke(width = stroke, cap = StrokeCap.Round))
@@ -183,24 +282,18 @@ private fun ReedConnectButton(
                     useCenter = false, topLeft = topLeft, size = arcSize,
                     style = Stroke(width = stroke, cap = StrokeCap.Round))
             }
-            // значок питания: дуга с разрывом сверху + вертикальная чёрточка
-            val r = size.minDimension * 0.20f
-            val cx = size.width / 2f
-            val cy = size.height / 2f + (if (isConnected) -8.dp.toPx() else 0f)
-            val gstroke = 6.dp.toPx()
-            drawArc(color = glyphColor, startAngle = -55f, sweepAngle = 290f, useCenter = false,
-                topLeft = Offset(cx - r, cy - r), size = Size(r * 2, r * 2),
-                style = Stroke(width = gstroke, cap = StrokeCap.Round))
-            drawLine(color = glyphColor, start = Offset(cx, cy - r - gstroke * 0.2f),
-                end = Offset(cx, cy - r * 0.15f), strokeWidth = gstroke, cap = StrokeCap.Round)
         }
-        if (isConnected) {
-            Text(formatSession(sessionSeconds), color = onPrimary,
-                fontWeight = FontWeight.Black, fontSize = 16.sp,
-                modifier = Modifier.padding(top = 56.dp))
-        } else if (isLoading) {
-            Text("Подключаюсь…", color = primary, fontWeight = FontWeight.Black,
-                fontSize = 13.sp, modifier = Modifier.padding(top = 52.dp))
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Icons.Rounded.PowerSettingsNew, contentDescription = "Подключение",
+                tint = glyphColor, modifier = Modifier.size(60.dp))
+            if (isConnected) {
+                Spacer(Modifier.height(6.dp))
+                Text(formatSession(sessionSeconds), color = onPrimary,
+                    fontWeight = FontWeight.Black, fontSize = 16.sp)
+            } else if (isLoading) {
+                Spacer(Modifier.height(6.dp))
+                Text("Подключаюсь…", color = primary, fontWeight = FontWeight.Black, fontSize = 13.sp)
+            }
         }
     }
 }
@@ -212,18 +305,20 @@ fun ReedHomeScreen(
     onToggleClick: () -> Unit,
 ) {
     val uri = LocalUriHandler.current
+    val scope = rememberCoroutineScope()
     val state by homeViewModel.state.collectAsState()
     val locations = locationViewModel.locations.toList()
     val pingsState = locationViewModel.pingsState
     val selectedId = locationViewModel.selectedLocationId
 
     var data by remember { mutableStateOf<SubscriptionResponse?>(null) }
-    LaunchedEffect(ReedSession.token) {
-        val t = ReedSession.token
-        if (t != null) data = try { ReedApi.subscription(t) } catch (e: Throwable) { null }
+    suspend fun reloadSubscription() {
+        val t = ReedSession.token ?: return
+        data = try { ReedApi.subscription(t) } catch (e: Throwable) { data }
     }
+    LaunchedEffect(ReedSession.token) { reloadSubscription() }
 
-    // Локальный таймер сессии: считаем секунды, пока VPN подключён
+    // Локальный таймер сессии: считаем секунды, пока VPN подключён.
     var sessionSeconds by remember { mutableStateOf(0L) }
     LaunchedEffect(state.isVpnConnected) {
         if (state.isVpnConnected) {
@@ -244,7 +339,6 @@ fun ReedHomeScreen(
         Spacer(Modifier.height(16.dp))
 
         if (!hasSubscription) {
-            // Нет подписки — оранжевая кнопка покупки (как в дизайне)
             Button(
                 onClick = { uri.openUri(BOT_URL) },
                 modifier = Modifier.fillMaxWidth().height(56.dp),
@@ -260,7 +354,6 @@ fun ReedHomeScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(20.dp))
         } else {
-            // Карточка трафика + обратный отсчёт
             ReedCard {
                 val normalUsed = (data?.traffic?.used ?: 0L) / BYTES_IN_GB
                 val normalTotal = (data?.traffic?.total ?: 0L) / BYTES_IN_GB
@@ -282,7 +375,6 @@ fun ReedHomeScreen(
             Spacer(Modifier.height(24.dp))
         }
 
-        // Круглая кнопка подключения
         val canToggle = state.isVpnConnected || state.isVpnLoading || state.canStartVpn
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             ReedConnectButton(
@@ -294,18 +386,27 @@ fun ReedHomeScreen(
         }
         Spacer(Modifier.height(28.dp))
 
-        // Заголовок СЕРВЕРЫ + Обновить / Тест
+        // Заголовок СЕРВЕРЫ + Обновить (подписку) + Тест (пинг)
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("📍 СЕРВЕРЫ", modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
-            Text("Тест", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Black,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.clickable {
-                    locationViewModel.refreshPings(
-                        targetLocationIds = null,
-                        performPing = { config -> homeViewModel.performPingFor(config) },
-                    )
-                })
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Router, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("СЕРВЕРЫ", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
+            }
+            IconAction(Icons.Rounded.Refresh, "Обновить") {
+                scope.launch {
+                    reloadSubscription()
+                    homeViewModel.refreshSubscriptions { locationViewModel.loadLocations { } }
+                }
+            }
+            Spacer(Modifier.width(6.dp))
+            IconAction(Icons.Rounded.Bolt, "Тест") {
+                locationViewModel.refreshPings(
+                    targetLocationIds = null,
+                    performPing = { config -> homeViewModel.performPingFor(config) },
+                )
+            }
         }
         Spacer(Modifier.height(14.dp))
 
@@ -360,20 +461,24 @@ fun ReedHomeScreen(
 }
 
 // ── Настройки ────────────────────────────────────────────────────────────────
+
+private data class MockDevice(val name: String, val os: String)
+
 @Composable
 fun ReedSettingsScreen() {
-    val uri = LocalUriHandler.current
     var operator by remember { mutableStateOf("МТС") }
     var splitRouting by remember { mutableStateOf(true) }
     var autostart by remember { mutableStateOf(false) }
     var data by remember { mutableStateOf<SubscriptionResponse?>(null) }
     LaunchedEffect(ReedSession.token) {
         val t = ReedSession.token
-        if (t != null) data = try { ReedApi.subscription(t) } catch (e: Throwable) { null }
+        if (t != null) {
+            val r = try { ReedApi.subscription(t) } catch (e: Throwable) { null }
+            data = r
+            r?.current_operator?.let { operator = it }
+        }
     }
     val operators = data?.operators?.takeIf { it.isNotEmpty() } ?: OPERATORS
-    val lteUsed = data?.lte?.used_gb ?: 0.0
-    val lteTotal = data?.lte?.total_gb ?: 40.0
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -381,50 +486,109 @@ fun ReedSettingsScreen() {
         ScreenTitle("Настройки")
         Spacer(Modifier.height(20.dp))
 
-        ReedCard {
-            ReedSectionTitle("Сменить оператора")
-            Spacer(Modifier.height(4.dp))
-            MutedText("Текущий: $operator")
-            Spacer(Modifier.height(14.dp))
-            Row(Modifier.horizontalScroll(rememberScrollState())) {
-                operators.forEach { op ->
-                    if (op == operator) Button(onClick = { operator = op }) { Text(op) }
-                    else OutlinedButton(onClick = { operator = op }) { Text(op) }
-                    Spacer(Modifier.width(8.dp))
+        // Сменить оператора — раскрывающийся список
+        ExpandablePlashka(Icons.Rounded.Router, "Сменить оператора", "Текущий: $operator") {
+            operators.forEach { op ->
+                val sel = op == operator
+                Box(
+                    Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                        )
+                        .border(
+                            if (sel) 2.dp else 1.dp,
+                            if (sel) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outlineVariant,
+                            RoundedCornerShape(12.dp)
+                        )
+                        .clickable { operator = op }
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                ) {
+                    Text(op, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black,
+                        color = if (sel) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurface)
                 }
             }
         }
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(12.dp))
 
-        ReedCard {
-            ReedSectionTitle("Трафик")
+        // Трафик — с лимитами тарифа
+        ExpandablePlashka(Icons.Rounded.Storage, "Трафик") {
+            val totalBytes = data?.traffic?.total ?: 0L
+            val usedBytes = data?.traffic?.used ?: 0L
+            val lteUsed = data?.lte?.used_gb ?: 0.0
+            val lteTotal = data?.lte?.total_gb ?: 40.0
+            Text("Обычный трафик", style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(2.dp))
+            Text(
+                if (totalBytes > 0) "${formatSize(usedBytes)} из ${formatSize(totalBytes)}" else "—",
+                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
+            Spacer(Modifier.height(12.dp))
+            Text("LTE трафик", style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(2.dp))
+            Text("$lteUsed из $lteTotal ГБ", style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Black)
             Spacer(Modifier.height(10.dp))
-            Text("Обычный трафик: без ограничений", style = MaterialTheme.typography.bodyMedium)
-            Text("LTE трафик: $lteUsed из $lteTotal ГБ", style = MaterialTheme.typography.bodyMedium)
-            Spacer(Modifier.height(6.dp))
-            MutedText("Обновление трафика — 1 числа каждого месяца")
+            MutedText("Трафик обновляется 1 числа каждого месяца.")
         }
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(12.dp))
 
-        ReedCard {
-            ReedSectionTitle("Устройства")
-            Spacer(Modifier.height(6.dp))
-            MutedText("Список подключённых устройств и чёрный список появятся после входа.")
+        // Устройства
+        ExpandablePlashka(Icons.Rounded.Smartphone, "Устройства", "Занято 3 из 10") {
+            Text("ПОДКЛЮЧЁННЫЕ УСТРОЙСТВА", style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(12.dp))
+            val devices = listOf(
+                MockDevice("iPhone 14 Pro Max", "iOS"),
+                MockDevice("Samsung S23", "Android"),
+                MockDevice("Windows ПК", "Windows"),
+            )
+            devices.forEach { dev ->
+                Box(
+                    Modifier.fillMaxWidth().padding(bottom = 10.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp))
+                        .padding(12.dp),
+                ) {
+                    Column(Modifier.fillMaxWidth()) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.Smartphone, contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(dev.name, style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Black)
+                                MutedText("${dev.os} • Активен")
+                            }
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        Row(Modifier.fillMaxWidth()) {
+                            OutlinedButton(onClick = { }, modifier = Modifier.weight(1f)) {
+                                Text("Заблокировать", style = MaterialTheme.typography.labelMedium)
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            OutlinedButton(
+                                onClick = { },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.error),
+                            ) { Text("Удалить", style = MaterialTheme.typography.labelMedium) }
+                        }
+                    }
+                }
+            }
+            MutedText("Управление устройствами появится после входа в аккаунт.")
         }
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(12.dp))
 
-        ReedCard {
-            ReedToggleRow("Split-routing", splitRouting) { splitRouting = it }
-            Spacer(Modifier.height(6.dp))
-            MutedText("Российские сервисы идут напрямую, мимо VPN.")
-        }
-        Spacer(Modifier.height(14.dp))
-
-        ReedCard {
-            ReedToggleRow("Автозапуск", autostart) { autostart = it }
-            Spacer(Modifier.height(6.dp))
-            MutedText("Подключаться при старте системы.")
-        }
+        TogglePlashka(Icons.Rounded.Wifi, "Split-routing", splitRouting) { splitRouting = it }
+        Spacer(Modifier.height(12.dp))
+        TogglePlashka(Icons.Rounded.Bolt, "Автозапуск", autostart) { autostart = it }
         Spacer(Modifier.height(28.dp))
     }
 }
@@ -462,6 +626,7 @@ fun ReedAccountScreen() {
     var data by remember { mutableStateOf<SubscriptionResponse?>(null) }
     var statusMsg by remember { mutableStateOf("") }
     var friendCode by remember { mutableStateOf("") }
+    var friendSaved by remember { mutableStateOf(false) }
 
     LaunchedEffect(token) {
         val t = token
@@ -517,67 +682,90 @@ fun ReedAccountScreen() {
         val d = data
         val sub = d?.subscription
 
-        // Профиль
+        // Профиль в стиле Telegram: круглый аватар + имя + @username
         ReedCard {
-            Text(d?.profile?.name?.takeIf { it.isNotBlank() } ?: "Аккаунт",
-                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
-            val uname = d?.profile?.username?.takeIf { it.isNotBlank() }
-            if (uname != null) { Spacer(Modifier.height(2.dp)); MutedText("@$uname") }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(56.dp).clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Rounded.Smartphone, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(28.dp))
+                }
+                Spacer(Modifier.width(14.dp))
+                Column {
+                    Text(d?.profile?.name?.takeIf { it.isNotBlank() } ?: "Аккаунт",
+                        style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
+                    val uname = d?.profile?.username?.takeIf { it.isNotBlank() }
+                    if (uname != null) { Spacer(Modifier.height(2.dp)); MutedText("@$uname") }
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
+            Spacer(Modifier.height(14.dp))
+            Text("ТЕКУЩАЯ ПОДПИСКА", style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(4.dp))
+            Text(sub?.plan_label ?: sub?.plan_id ?: statusMsg.ifEmpty { "—" },
+                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            if (sub != null) {
+                Spacer(Modifier.height(2.dp))
+                Text("заканчивается через ${sub.days_left} дн.",
+                    style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary)
+            }
         }
         Spacer(Modifier.height(14.dp))
 
-        // Текущая подписка
-        ReedCard {
-            Text("Текущая подписка", style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(6.dp))
-            Text(sub?.plan_label ?: sub?.plan_id ?: statusMsg.ifEmpty { "—" },
-                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            if (sub != null) { Spacer(Modifier.height(2.dp)); MutedText("заканчивается через ${sub.days_left} дн.") }
-        }
+        // Продлить подписку
+        ReedPrimaryButton("Продлить подписку") { uri.openUri(BOT_URL) }
         Spacer(Modifier.height(14.dp))
 
         // Реферальная программа
-        ReedCard {
-            ReedSectionTitle("Реферальная программа")
-            Spacer(Modifier.height(10.dp))
+        ExpandablePlashka(Icons.Rounded.CardGiftcard, "Реферальная программа") {
             MutedText("Ваш реферальный код")
+            Spacer(Modifier.height(2.dp))
             Text(d?.referral?.code ?: "—", style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Black)
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = friendCode,
-                onValueChange = { friendCode = it },
-                label = { Text("Реферальный код друга") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            MutedText("Изменить код нельзя")
-            Spacer(Modifier.height(12.dp))
-            MutedText("Ваш бонусный баланс")
-            Text("${d?.referral?.bonus_balance ?: 0} ₽", style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Black)
+                fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+            MutedText("Делитесь кодом: получаете ${d?.referral?.percent ?: 30}% от оплат друзей.")
+            Spacer(Modifier.height(14.dp))
+            MutedText("Реферальный код друга")
             Spacer(Modifier.height(6.dp))
+            if (friendSaved) {
+                Text(friendCode, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
+                MutedText("Изменить код нельзя")
+            } else {
+                OutlinedTextField(
+                    value = friendCode,
+                    onValueChange = { friendCode = it },
+                    label = { Text("Введите код друга") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                ReedPrimaryButton("Применить") {
+                    if (friendCode.isNotBlank()) friendSaved = true
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            MutedText("Ваш бонусный баланс")
+            Spacer(Modifier.height(2.dp))
+            Text("${d?.referral?.bonus_balance ?: 0} ₽", style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(4.dp))
             MutedText("Вывод доступен от ${d?.referral?.withdraw_min ?: 3000} бонусов. Обращаться в поддержку.")
         }
         Spacer(Modifier.height(14.dp))
 
-        // Купить LTE-трафик
-        ReedCard {
-            ReedSectionTitle("Купить LTE-трафик")
-            Spacer(Modifier.height(8.dp))
+        // LTE-трафик
+        ExpandablePlashka(Icons.Rounded.Storage, "LTE-трафик") {
             MutedText("На вашем тарифе — ${d?.lte?.total_gb ?: 40.0} ГБ LTE в месяц. Потреблено ${d?.lte?.used_gb ?: 0.0} ГБ. Сброс 1 числа.")
+            Spacer(Modifier.height(8.dp))
+            MutedText("Пакеты переносятся на следующий месяц и суммируются с квотой.")
             Spacer(Modifier.height(14.dp))
-            ReedPrimaryButton("Купить пакет трафика") { uri.openUri(BOT_URL) }
-        }
-        Spacer(Modifier.height(14.dp))
-
-        // История покупок
-        ReedCard {
-            ReedSectionTitle("История покупок")
-            Spacer(Modifier.height(6.dp))
-            MutedText("История платежей доступна в боте.")
+            ReedPrimaryButton("Получить больше трафика") { uri.openUri(BOT_URL) }
         }
         Spacer(Modifier.height(14.dp))
 
@@ -590,10 +778,22 @@ fun ReedAccountScreen() {
         Spacer(Modifier.height(14.dp))
 
         // Выйти
-        ReedSecondaryButton("Выйти из аккаунта") {
-            ReedSession.token = null
-            token = null
-            data = null
+        Row(
+            Modifier.fillMaxWidth().clip(ReedCardShape)
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, ReedCardShape)
+                .clickable {
+                    ReedSession.token = null
+                    token = null
+                    data = null
+                }
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.AutoMirrored.Rounded.Logout, contentDescription = null,
+                tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(10.dp))
+            Text("Выйти из аккаунта", style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.error)
         }
         Spacer(Modifier.height(28.dp))
     }
