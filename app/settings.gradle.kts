@@ -23,6 +23,7 @@ dependencyResolutionManagement {
 }
 include(":sharedUI")
 include(":sharedUI:olcrtc-bin")
+include(":sharedUI:singbox-bin")
 include(":androidApp")
 include(":desktopApp")
 
