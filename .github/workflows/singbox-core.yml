@@ -1,0 +1,52 @@
+# Изолированная проверка сборки ядра VLESS (singbox-mobile) через gomobile.
+# НЕ трогает основные сборки приложения (build.yml). Цель — убедиться, что Go-обёртка
+# над sing-box компилируется и биндится gomobile, прежде чем подключать её в gradle/CI.
+name: singbox-core
+
+on:
+  push:
+    branches: [ main ]
+    paths: [ "singbox-mobile/**", ".github/workflows/singbox-core.yml" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ANDROID_NDK_VERSION: "28.2.13676358"
+
+jobs:
+  bind-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "stable" }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - uses: android-actions/setup-android@v4
+      - name: Install Android NDK
+        run: sdkmanager "ndk;${ANDROID_NDK_VERSION}"
+      - name: Install gomobile
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+      - name: go mod tidy
+        working-directory: singbox-mobile
+        run: go mod tidy
+      - name: gomobile init
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+          gomobile init
+      - name: gomobile bind (android AAR)
+        working-directory: singbox-mobile
+        run: |
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+          gomobile bind -target=android -androidapi 23 -o singbox.aar .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: singbox-mobile-aar
+          path: singbox-mobile/singbox.aar
