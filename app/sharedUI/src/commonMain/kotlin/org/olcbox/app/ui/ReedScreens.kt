@@ -89,7 +89,9 @@ import org.olcbox.app.ui.features.locations.PingsState
 
 private const val BOT_URL = "https://t.me/ReedVPNbot"
 private const val SUPPORT_URL = "https://t.me/reedvps"
-private const val REED_SUB_BASE = "https://reed-vpn.duckdns.org/sub/"
+// olcRTC-подписка Reed (формат olcbox, отдаётся text/plain). Это рабочий транспорт
+// приложения. VLESS-серверы потребуют отдельного ядра (sing-box) — в работе.
+private const val REED_OLCCONF_BASE = "https://reed-vpn.duckdns.org/app/olcconf?token="
 
 private val OPERATORS = listOf("МТС", "Мегафон", "Yota", "Билайн", "Т2", "Т-Мобайл", "Ростелеком")
 
@@ -442,14 +444,14 @@ fun ReedHomeScreen(
     }
     LaunchedEffect(ReedSession.token) { reloadSubscription() }
 
-    // Авто-импорт подписки Reed после входа: один раз на токен, если серверов ещё нет.
-    // Подтягивает все VLESS-серверы Reed в движок, чтобы кнопкой можно было подключиться.
+    // Авто-импорт серверов Reed после входа: один раз на токен, если серверов ещё нет.
+    // Тянем olcRTC-конфиги (родной транспорт движка) — кнопкой можно подключиться.
     LaunchedEffect(ReedSession.token, locations.size) {
         val t = ReedSession.token
         if (t != null && locations.isEmpty() && ReedSession.importedForToken != t) {
             ReedSession.importedForToken = t
             homeViewModel.onImportFullConfig(
-                rawText = "$REED_SUB_BASE$t",
+                rawText = "$REED_OLCCONF_BASE$t",
                 onComplete = { locationViewModel.loadLocations { } },
                 onError = { ReedSession.importedForToken = null },
             )
