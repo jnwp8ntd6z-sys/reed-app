@@ -11,7 +11,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
- * Клиент к серверному API приложения Reed (reed-vpn.duckdns.org/app/*).
+ * Клиент к серверному API приложения Reed (reed-vpn.duckdns.org, путь /app).
  * Контракт: reed-app/docs/API.md. Движок Ktor берётся из платформенного
  * (okhttp на Android/JVM, darwin на iOS) — он уже в зависимостях olcbox.
  */
