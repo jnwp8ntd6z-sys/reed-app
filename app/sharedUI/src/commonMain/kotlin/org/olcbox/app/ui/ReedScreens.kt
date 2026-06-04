@@ -557,6 +557,10 @@ fun ReedHomeScreen(
         }
         Spacer(Modifier.height(14.dp))
 
+        // Описания серверов из /app/subscription (имя → описание): "Быстрый. Без рекламы." и т.п.
+        val serverDescByName: Map<String, String> =
+            data?.servers?.associate { it.name to it.desc }.orEmpty()
+
         if (locations.isEmpty()) {
             ReedCard {
                 MutedText("Серверы появятся автоматически после входа и оформления подписки.")
@@ -587,10 +591,18 @@ fun ReedHomeScreen(
                         .padding(16.dp),
                 ) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text(loc.fullName, modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black,
-                            color = if (isSel) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurface)
+                        Column(Modifier.weight(1f)) {
+                            Text(loc.fullName,
+                                style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black,
+                                color = if (isSel) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface)
+                            val desc = serverDescByName[loc.fullName]
+                            if (!desc.isNullOrBlank()) {
+                                Text(desc,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
                         Text(if (ping != null) "$ping мс" else "—",
                             style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
