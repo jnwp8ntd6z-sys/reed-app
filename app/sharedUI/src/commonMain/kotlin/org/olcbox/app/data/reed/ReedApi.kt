@@ -65,6 +65,13 @@ object ReedApi {
     // Уведомления приложения (персональные + общие, новые сверху).
     suspend fun notifications(token: String): NotificationsResponse =
         client.get("$BASE/app/notifications") { parameter("token", token) }.body()
+
+    // Полное удаление аккаунта (из БД бота + VLESS-клиентов в панели).
+    suspend fun deleteAccount(token: String): DeleteAccountResult =
+        client.post("$BASE/app/account/delete") {
+            contentType(ContentType.Application.Json)
+            setBody(DeleteAccountRequest(token))
+        }.body()
 }
 
 /**
@@ -93,6 +100,28 @@ object ReedSession {
     // Для какого токена уже импортирована подписка Reed (чтобы не импортировать повторно).
     // Только в памяти — при перезапуске движок всё равно перечитывает локации с диска.
     var importedForToken: String? = null
+
+    // Split-routing: российские сайты идут напрямую мимо VPN. По умолчанию включён.
+    // Применяется при подключении (передаётся в /app/singbox как &split=1/0).
+    private const val KEY_SPLIT = "reed_split_routing"
+    var splitRouting: Boolean = reedStoreGet(KEY_SPLIT) != "0"
+        set(value) {
+            field = value
+            reedStorePut(KEY_SPLIT, if (value) "1" else "0")
+        }
+
+    // Принял ли пользователь политику конфиденциальности и условия использования.
+    private const val KEY_CONSENT = "reed_consent_accepted"
+    var consentAccepted: Boolean = reedStoreGet(KEY_CONSENT) == "1"
+        set(value) {
+            field = value
+            reedStorePut(KEY_CONSENT, if (value) "1" else null)
+        }
+}
+
+object ReedLinks {
+    const val PRIVACY_POLICY = "https://reedvpn.tilda.ws/privacy-policy"
+    const val TERMS_OF_SERVICE = "https://reedvpn.tilda.ws/terms-of-service"
 }
 
 @Serializable
@@ -200,6 +229,15 @@ data class SetOperatorRequest(
 data class SetOperatorResult(
     val ok: Boolean = false,
     val operator: String? = null,
+    val error: String? = null,
+)
+
+@Serializable
+data class DeleteAccountRequest(val token: String)
+
+@Serializable
+data class DeleteAccountResult(
+    val ok: Boolean = false,
     val error: String? = null,
 )
 

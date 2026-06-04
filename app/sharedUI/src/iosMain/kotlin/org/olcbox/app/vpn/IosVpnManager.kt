@@ -212,6 +212,7 @@ class IosVpnManager(
                         parameters.append("token", token)
                         parameters.append("socks_port", socksPort.toString())
                         parameters.append("server", server)
+                        parameters.append("split", if (org.olcbox.app.data.reed.ReedSession.splitRouting) "1" else "0")
                     }
                 }.bodyAsText().takeIf { it.isNotBlank() }
             }

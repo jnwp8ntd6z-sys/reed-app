@@ -32,6 +32,7 @@ import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.CardGiftcard
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PowerSettingsNew
@@ -44,6 +45,7 @@ import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -82,6 +84,7 @@ import org.olcbox.app.data.reed.AppNotification
 import org.olcbox.app.data.reed.DeviceInfo
 import org.olcbox.app.data.reed.DevicesResponse
 import org.olcbox.app.data.reed.ReedApi
+import org.olcbox.app.data.reed.ReedLinks
 import org.olcbox.app.data.reed.ReedSession
 import org.olcbox.app.data.reed.SubscriptionResponse
 import org.olcbox.app.data.reed.decodeImageBitmap
@@ -439,6 +442,7 @@ fun ReedHomeScreen(
     val locations = locationViewModel.locations.toList()
     val pingsState = locationViewModel.pingsState
     val selectedId = locationViewModel.selectedLocationId
+    var consent by remember { mutableStateOf(ReedSession.consentAccepted) }
 
     var data by remember { mutableStateOf<SubscriptionResponse?>(null) }
     suspend fun reloadSubscription() {
@@ -487,6 +491,51 @@ fun ReedHomeScreen(
     ) {
         Text("REED VPN", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
         Spacer(Modifier.height(16.dp))
+
+        // Политики и согласие пользователя (ссылки ведут на документы из бота).
+        if (!consent) {
+            ReedCard {
+                Row(verticalAlignment = Alignment.Top) {
+                    Checkbox(
+                        checked = consent,
+                        onCheckedChange = { consent = it; ReedSession.consentAccepted = it },
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Column {
+                        Text("Я принимаю условия:", fontWeight = FontWeight.Black,
+                            style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.height(4.dp))
+                        Text("Политика конфиденциальности",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            textDecoration = TextDecoration.Underline,
+                            modifier = Modifier.clickable { uri.openUri(ReedLinks.PRIVACY_POLICY) })
+                        Spacer(Modifier.height(4.dp))
+                        Text("Условия использования",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            textDecoration = TextDecoration.Underline,
+                            modifier = Modifier.clickable { uri.openUri(ReedLinks.TERMS_OF_SERVICE) })
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+        } else {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Политика конфиденциальности",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textDecoration = TextDecoration.Underline,
+                    modifier = Modifier.clickable { uri.openUri(ReedLinks.PRIVACY_POLICY) })
+                Spacer(Modifier.width(12.dp))
+                Text("Условия использования",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textDecoration = TextDecoration.Underline,
+                    modifier = Modifier.clickable { uri.openUri(ReedLinks.TERMS_OF_SERVICE) })
+            }
+            Spacer(Modifier.height(12.dp))
+        }
 
         if (!hasSubscription) {
             // Нейтральный блок без призыва к оплате (требование Apple App Store):
@@ -689,8 +738,7 @@ private fun DeviceRow(
 fun ReedSettingsScreen() {
     val scope = rememberCoroutineScope()
     var operator by remember { mutableStateOf("МТС") }
-    var splitRouting by remember { mutableStateOf(true) }
-    var autostart by remember { mutableStateOf(false) }
+    var splitRouting by remember { mutableStateOf(ReedSession.splitRouting) }
     var data by remember { mutableStateOf<SubscriptionResponse?>(null) }
     var devicesData by remember { mutableStateOf<DevicesResponse?>(null) }
     var devicesBusy by remember { mutableStateOf(false) }
@@ -805,9 +853,12 @@ fun ReedSettingsScreen() {
         }
         Spacer(Modifier.height(12.dp))
 
-        TogglePlashka(Icons.Rounded.Wifi, "Split-routing", splitRouting) { splitRouting = it }
-        Spacer(Modifier.height(12.dp))
-        TogglePlashka(Icons.Rounded.Bolt, "Автозапуск", autostart) { autostart = it }
+        TogglePlashka(Icons.Rounded.Wifi, "Split-routing", splitRouting) {
+            splitRouting = it
+            ReedSession.splitRouting = it
+        }
+        Spacer(Modifier.height(4.dp))
+        MutedText("Российские сайты идут напрямую, мимо VPN. Применяется при следующем подключении.")
         Spacer(Modifier.height(28.dp))
     }
 }
@@ -848,6 +899,8 @@ fun ReedAccountScreen() {
     var friendSaved by remember { mutableStateOf(false) }
     var avatar by remember { mutableStateOf<ImageBitmap?>(null) }
     var notifications by remember { mutableStateOf<List<AppNotification>>(emptyList()) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
 
     LaunchedEffect(token) {
         val t = token
@@ -1047,6 +1100,65 @@ fun ReedAccountScreen() {
             Spacer(Modifier.width(10.dp))
             Text("Выйти из аккаунта", style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.error)
+        }
+        Spacer(Modifier.height(14.dp))
+
+        // Удалить аккаунт — полное удаление данных (требование App Store / Google Play)
+        ReedCard {
+            ReedSectionTitle("Удалить аккаунт")
+            Spacer(Modifier.height(6.dp))
+            MutedText("Безвозвратно удаляет ваш аккаунт и все данные: подписку, устройства, реферальный код — из приложения, бота и наших серверов.")
+            Spacer(Modifier.height(12.dp))
+            if (!confirmDelete) {
+                Row(
+                    Modifier.fillMaxWidth().clip(ReedCardShape)
+                        .border(1.dp, MaterialTheme.colorScheme.error, ReedCardShape)
+                        .clickable(enabled = token != null) { confirmDelete = true }
+                        .padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(Icons.Rounded.DeleteForever, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text("Удалить аккаунт", style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.error)
+                }
+            } else {
+                Text("Точно удалить? Это действие необратимо.",
+                    style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Black)
+                Spacer(Modifier.height(10.dp))
+                Row(Modifier.fillMaxWidth()) {
+                    Box(
+                        Modifier.weight(1f).clip(ReedCardShape)
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, ReedCardShape)
+                            .clickable(enabled = !deleting) { confirmDelete = false }
+                            .padding(14.dp),
+                        contentAlignment = Alignment.Center,
+                    ) { Text("Отмена", fontWeight = FontWeight.Black) }
+                    Spacer(Modifier.width(10.dp))
+                    Box(
+                        Modifier.weight(1f).clip(ReedCardShape)
+                            .background(MaterialTheme.colorScheme.error)
+                            .clickable(enabled = !deleting) {
+                                val t = token ?: return@clickable
+                                deleting = true
+                                scope.launch {
+                                    try { ReedApi.deleteAccount(t) } catch (e: Throwable) {}
+                                    ReedSession.token = null
+                                    ReedSession.onboardingDone = false
+                                    token = null
+                                    data = null
+                                    deleting = false
+                                }
+                            }
+                            .padding(14.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(if (deleting) "Удаление…" else "Удалить",
+                            fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onError)
+                    }
+                }
+            }
         }
         Spacer(Modifier.height(28.dp))
     }

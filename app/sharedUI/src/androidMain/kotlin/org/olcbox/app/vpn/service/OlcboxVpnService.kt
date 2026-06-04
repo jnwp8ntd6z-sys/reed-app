@@ -736,7 +736,8 @@ class OlcboxVpnService : VpnService() {
         withContext(Dispatchers.IO) {
             val token = location.key
             val server = URLEncoder.encode(location.id, "UTF-8")
-            val url = "$REED_API_BASE/app/singbox?token=$token&socks_port=$socksPort&server=$server"
+            val split = if (org.olcbox.app.data.reed.ReedSession.splitRouting) "1" else "0"
+            val url = "$REED_API_BASE/app/singbox?token=$token&socks_port=$socksPort&server=$server&split=$split"
             runCatching {
                 val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                     connectTimeout = 10_000
