@@ -138,6 +138,7 @@ kotlin {
             implementation(libs.kermit)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.ktor.client.core)
+            implementation(libs.ktor.network)
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.client.serialization)
             implementation(libs.ktor.serialization.json)

@@ -30,7 +30,10 @@ data class LocationConfig(
     @SerialName("vp8_fps")
     val vp8Fps: Int = DEFAULT_VP8_FPS,
     @SerialName("vp8_batch")
-    val vp8Batch: Int = DEFAULT_VP8_BATCH
+    val vp8Batch: Int = DEFAULT_VP8_BATCH,
+    // Адрес VLESS-сервера для TCP-пинга («Тест»). Заполняется из metadata.ip ("host:port").
+    val host: String = "",
+    val port: Int = 0
 ) {
     fun normalized(): LocationConfig {
         val normalizedEngine = normalizeEngine(engine)
@@ -415,6 +418,10 @@ data class LocationEntry(
             )
             val transportConfig = transport ?: LocationTransportConfig()
             val vp8Options = transportConfig.vp8
+            // Адрес для TCP-пинга хранится в metadata.ip как "host:port".
+            val ipRaw = metadata?.ip
+            val pingHost = ipRaw?.substringBefore(':', "")?.trim().orEmpty()
+            val pingPort = ipRaw?.substringAfter(':', "")?.trim()?.toIntOrNull() ?: 0
             return LocationConfig(
                 name = name,
                 id = firstNotBlank(endpoint?.roomId, legacyId, legacyRoomId, legacyServer),
@@ -429,7 +436,9 @@ data class LocationEntry(
                 vp8Batch = vp8Options?.batch
                     ?: legacyVp8Batch
                     ?: legacyVp8BatchCamel
-                    ?: LocationConfig.DEFAULT_VP8_BATCH
+                    ?: LocationConfig.DEFAULT_VP8_BATCH,
+                host = pingHost,
+                port = pingPort
             ).normalized()
         }
 

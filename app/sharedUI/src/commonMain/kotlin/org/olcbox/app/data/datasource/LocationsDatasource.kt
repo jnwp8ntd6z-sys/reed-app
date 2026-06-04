@@ -629,6 +629,10 @@ class LocationsRepositoryImpl(
             if (obj.string("transport") != LocationConfig.ENGINE_VLESS) return@mapNotNull null
             val tag = firstNotBlank(obj.string("tag"), obj.string("name")).ifBlank { return@mapNotNull null }
             val name = obj.string("name")?.ifBlank { tag } ?: tag
+            // Адрес сервера для TCP-пинга («Тест») — сохраняем в metadata.ip как "host:port".
+            val host = obj.string("host").orEmpty()
+            val port = (obj["port"] as? JsonPrimitive)?.intOrNull
+                ?: obj.string("port")?.toIntOrNull() ?: 0
             val config = LocationConfig(
                 name = name,
                 id = tag,
@@ -639,7 +643,8 @@ class LocationsRepositoryImpl(
             LocationEntry.from(
                 storageId = uniqueStorageId("vless_$tag", used),
                 location = config,
-                subscriptionUrl = subscriptionUrl
+                subscriptionUrl = subscriptionUrl,
+                metadata = if (host.isNotBlank() && port > 0) LocationMetadata(ip = "$host:$port") else null
             )
         }
         if (entries.isEmpty()) return null

@@ -109,10 +109,18 @@ class HomeScreenViewModel(
     }
 
     suspend fun performPing(): Long? {
-        return vpnManager.ping(_state.value.configData)
+        val config = _state.value.configData
+        if (config.isVless()) {
+            return org.olcbox.app.data.tcpPingMs(config.host, config.port)
+        }
+        return vpnManager.ping(config)
     }
 
     suspend fun performPingFor(config: LocationConfig): Long? {
+        // VLESS-серверы: обычный TCP-пинг до host:port. olcRTC: проверка через движок.
+        if (config.isVless()) {
+            return org.olcbox.app.data.tcpPingMs(config.host, config.port)
+        }
         return vpnManager.ping(config)
     }
 
