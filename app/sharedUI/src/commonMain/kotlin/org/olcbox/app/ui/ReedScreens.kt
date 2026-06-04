@@ -32,6 +32,7 @@ import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.CardGiftcard
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Public
@@ -77,6 +78,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import org.olcbox.app.data.reed.AppNotification
 import org.olcbox.app.data.reed.DeviceInfo
 import org.olcbox.app.data.reed.DevicesResponse
 import org.olcbox.app.data.reed.ReedApi
@@ -504,9 +506,7 @@ fun ReedHomeScreen(
             ReedCard {
                 val normalUsed = (data?.traffic?.used ?: 0L) / BYTES_IN_GB
                 val normalTotal = (data?.traffic?.total ?: 0L) / BYTES_IN_GB
-                ReedTrafficBar("Обычный трафик", normalUsed, normalTotal)
-                Spacer(Modifier.height(14.dp))
-                ReedTrafficBar("LTE трафик", data?.lte?.used_gb ?: 0.0, data?.lte?.total_gb ?: 40.0)
+                ReedTrafficBar("Трафик", normalUsed, normalTotal)
                 Spacer(Modifier.height(16.dp))
                 Box(Modifier.fillMaxWidth().height(1.dp)
                     .background(MaterialTheme.colorScheme.outlineVariant))
@@ -728,7 +728,15 @@ fun ReedSettingsScreen() {
                             else MaterialTheme.colorScheme.outlineVariant,
                             RoundedCornerShape(12.dp)
                         )
-                        .clickable { operator = op }
+                        .clickable {
+                            operator = op
+                            val t = ReedSession.token
+                            if (t != null) {
+                                scope.launch {
+                                    try { ReedApi.setOperator(t, op) } catch (e: Throwable) {}
+                                }
+                            }
+                        }
                         .padding(horizontal = 14.dp, vertical = 12.dp),
                 ) {
                     Text(op, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black,
@@ -739,26 +747,25 @@ fun ReedSettingsScreen() {
         }
         Spacer(Modifier.height(12.dp))
 
-        // Трафик — с лимитами тарифа
+        // Трафик — обычный (LTE-серверы olcRTC без лимита)
         ExpandablePlashka(Icons.Rounded.Storage, "Трафик") {
             val totalBytes = data?.traffic?.total ?: 0L
             val usedBytes = data?.traffic?.used ?: 0L
-            val lteUsed = data?.lte?.used_gb ?: 0.0
-            val lteTotal = data?.lte?.total_gb ?: 40.0
-            Text("Обычный трафик", style = MaterialTheme.typography.labelSmall,
+            Text("Трафик", style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(2.dp))
             Text(
                 if (totalBytes > 0) "${formatSize(usedBytes)} из ${formatSize(totalBytes)}" else "—",
                 style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
-            Spacer(Modifier.height(12.dp))
-            Text("LTE трафик", style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(2.dp))
-            Text("$lteUsed из $lteTotal ГБ", style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Black)
             Spacer(Modifier.height(10.dp))
-            MutedText("Трафик обновляется 1 числа каждого месяца.")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Info, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                MutedText("LTE-серверы («когда глушат интернет») работают без ограничения трафика.")
+            }
+            Spacer(Modifier.height(6.dp))
+            MutedText("Обычный трафик обновляется 1 числа каждого месяца.")
         }
         Spacer(Modifier.height(12.dp))
 
@@ -840,6 +847,7 @@ fun ReedAccountScreen() {
     var friendCode by remember { mutableStateOf("") }
     var friendSaved by remember { mutableStateOf(false) }
     var avatar by remember { mutableStateOf<ImageBitmap?>(null) }
+    var notifications by remember { mutableStateOf<List<AppNotification>>(emptyList()) }
 
     LaunchedEffect(token) {
         val t = token
@@ -849,6 +857,7 @@ fun ReedAccountScreen() {
                 statusMsg = "Не удалось загрузить данные"; null
             }
             if (data != null) statusMsg = ""
+            notifications = try { ReedApi.notifications(t).notifications } catch (e: Throwable) { emptyList() }
             val bytes = ReedApi.avatarBytes(t)
             if (bytes != null) avatar = decodeImageBitmap(bytes)
         }
@@ -990,19 +999,34 @@ fun ReedAccountScreen() {
         }
         Spacer(Modifier.height(14.dp))
 
-        // LTE-трафик — только информация (управление и пакеты — в Telegram-боте)
-        ExpandablePlashka(Icons.Rounded.Storage, "LTE-трафик") {
-            MutedText("На вашем тарифе — ${d?.lte?.total_gb ?: 40.0} ГБ LTE в месяц. Потреблено ${d?.lte?.used_gb ?: 0.0} ГБ. Сброс 1 числа.")
-            Spacer(Modifier.height(8.dp))
-            MutedText("Пакеты переносятся на следующий месяц и суммируются с квотой.")
-        }
-        Spacer(Modifier.height(14.dp))
-
-        // Уведомления
+        // Уведомления — реальные, из /app/notifications
         ReedCard {
             ReedSectionTitle("Уведомления")
-            Spacer(Modifier.height(6.dp))
-            MutedText("Об окончании подписки, новых устройствах и бонусах.")
+            Spacer(Modifier.height(10.dp))
+            if (notifications.isEmpty()) {
+                MutedText("Новых уведомлений нет.")
+            } else {
+                notifications.forEachIndexed { idx, n ->
+                    if (idx > 0) {
+                        Spacer(Modifier.height(10.dp))
+                        Box(Modifier.fillMaxWidth().height(1.dp)
+                            .background(MaterialTheme.colorScheme.outlineVariant))
+                        Spacer(Modifier.height(10.dp))
+                    }
+                    if (n.title.isNotBlank()) {
+                        Text(n.title, style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Black)
+                        Spacer(Modifier.height(2.dp))
+                    }
+                    if (n.body.isNotBlank()) MutedText(n.body)
+                    if (n.created_at.isNotBlank()) {
+                        Spacer(Modifier.height(2.dp))
+                        Text(n.created_at.take(16),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
         }
         Spacer(Modifier.height(14.dp))
 

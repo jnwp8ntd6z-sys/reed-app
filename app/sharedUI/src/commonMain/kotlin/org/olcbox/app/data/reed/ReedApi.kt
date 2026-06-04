@@ -54,6 +54,17 @@ object ReedApi {
             contentType(ContentType.Application.Json)
             setBody(DeviceActionRequest(token, deviceId, action))
         }.body()
+
+    // Сохранить выбранного оператора связи.
+    suspend fun setOperator(token: String, operator: String): SetOperatorResult =
+        client.post("$BASE/app/operator/set") {
+            contentType(ContentType.Application.Json)
+            setBody(SetOperatorRequest(token, operator))
+        }.body()
+
+    // Уведомления приложения (персональные + общие, новые сверху).
+    suspend fun notifications(token: String): NotificationsResponse =
+        client.get("$BASE/app/notifications") { parameter("token", token) }.body()
 }
 
 /**
@@ -177,6 +188,32 @@ data class DeviceActionResult(
     val action: String = "",
     val blocked: Boolean? = null,
     val error: String? = null,
+)
+
+@Serializable
+data class SetOperatorRequest(
+    val token: String,
+    val operator: String,
+)
+
+@Serializable
+data class SetOperatorResult(
+    val ok: Boolean = false,
+    val operator: String? = null,
+    val error: String? = null,
+)
+
+@Serializable
+data class AppNotification(
+    val id: Int,
+    val title: String = "",
+    val body: String = "",
+    val created_at: String = "",
+)
+
+@Serializable
+data class NotificationsResponse(
+    val notifications: List<AppNotification> = emptyList(),
 )
 
 @Serializable
