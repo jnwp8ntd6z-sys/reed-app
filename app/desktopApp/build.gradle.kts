@@ -470,7 +470,7 @@ compose.desktop {
             }
             windows {
                 iconFile.set(project.file("appIcons/WindowsIcon.ico"))
-                menuGroup = "Olcbox"
+                menuGroup = "Reed VPN"
                 shortcut = true
                 dirChooser = true
                 upgradeUuid = "6f0aaf78-dbed-4745-9d95-9e63f10a30de"

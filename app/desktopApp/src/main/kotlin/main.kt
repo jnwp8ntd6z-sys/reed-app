@@ -186,7 +186,7 @@ fun main(args: Array<String>) = application {
                             updateMessage = "${info.channel.name} update found: ${info.version}"
                         } else {
                             updateOffer = null
-                            updateMessage = "Olcbox is up to date"
+                            updateMessage = "Reed VPN is up to date"
                         }
                     } else {
                         updateOffer = null
@@ -252,7 +252,7 @@ fun main(args: Array<String>) = application {
     Tray(
         state = trayState,
         icon = painterResource("LinuxIcon.png"),
-        tooltip = "Olcbox",
+        tooltip = "Reed VPN",
         menu = {
             Item("Open", onClick = { isWindowVisible = true })
             Item(
@@ -275,7 +275,7 @@ fun main(args: Array<String>) = application {
     )
 
     Window(
-        title = "olcbox",
+        title = "Reed VPN",
         visible = isWindowVisible,
         state = rememberWindowState(width = 430.dp, height = 780.dp),
         onCloseRequest = {
@@ -701,7 +701,7 @@ private fun chooseConfigFile(owner: Frame): File? {
 }
 
 private fun chooseSaveFile(owner: Frame, defaultName: String): File? {
-    val dialog = FileDialog(owner, "Save Olcbox Logs", FileDialog.SAVE)
+    val dialog = FileDialog(owner, "Save Reed VPN Logs", FileDialog.SAVE)
     dialog.file = defaultName
     dialog.isVisible = true
 

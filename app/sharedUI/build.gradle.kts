@@ -52,7 +52,7 @@ abstract class GenerateAppInfoTask : DefaultTask() {
             package org.olcbox.app
 
             internal object GeneratedAppInfo {
-                const val NAME: String = "olcbox"
+                const val NAME: String = "Reed VPN"
                 const val VERSION: String = "$escapedVersion"
             }
             """.trimIndent() + "\n"
