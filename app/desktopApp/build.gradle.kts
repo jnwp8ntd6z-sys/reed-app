@@ -118,6 +118,10 @@ val desktopPackageName = "ReedVPN"
 val desktopPackageVersion = providers.gradleProperty("olcbox.version").orElse("1.0.0").get()
 val tun2SocksVersion = "2.6.0"
 val wintunVersion = "0.14.1"
+// sing-box CLI: VLESS-Reality engine for desktop (same engine as the mobile binding).
+// If the server config schema ever mismatches this CLI, adjust this version to match
+// the version pinned by singbox-mobile/go.mod used for the Android/iOS binding.
+val singBoxVersion = "1.13.13"
 val currentBuildTargetFormats = when {
     currentBuildOs.isMacOsX -> arrayOf(TargetFormat.Dmg)
     currentBuildOs.isWindows -> arrayOf(TargetFormat.Exe, TargetFormat.Msi)
@@ -353,6 +357,21 @@ if (currentBuildOs.isWindows) {
         outputFile.set(tun2SocksWindowsOutput)
     }
 
+    val singBoxWindowsOutput = generatedNativeResources.map {
+        it.file("native/sing-box-windows-amd64.exe")
+    }
+
+    val downloadSingBoxWindowsAmd64 = tasks.register<DownloadFileTask>("downloadSingBoxWindowsAmd64") {
+        sourceUrl.set("https://github.com/SagerNet/sing-box/releases/download/v$singBoxVersion/sing-box-$singBoxVersion-windows-amd64.zip")
+        outputFile.set(layout.buildDirectory.file("tmp/sing-box/sing-box-windows-amd64-$singBoxVersion.zip"))
+    }
+
+    val extractSingBoxWindowsAmd64 = tasks.register<ExtractZipEntryTask>("extractSingBoxWindowsAmd64") {
+        zipFile.set(downloadSingBoxWindowsAmd64.flatMap { it.outputFile })
+        entrySuffix.set("sing-box.exe")
+        outputFile.set(singBoxWindowsOutput)
+    }
+
     val downloadWintunWindowsAmd64 = tasks.register<DownloadFileTask>("downloadWintunWindowsAmd64") {
         sourceUrl.set("https://www.wintun.net/builds/wintun-$wintunVersion.zip")
         outputFile.set(layout.buildDirectory.file("tmp/wintun/wintun-$wintunVersion.zip"))
@@ -364,8 +383,10 @@ if (currentBuildOs.isWindows) {
         outputFile.set(wintunWindowsOutput)
     }
 
+    desktopNativeAssetTasks.add(extractSingBoxWindowsAmd64)
     desktopNativeAssetTasks.add(extractTun2SocksWindowsAmd64)
     desktopNativeAssetTasks.add(extractWintunWindowsAmd64)
+    hostDesktopNativeAssetTasks.add(extractSingBoxWindowsAmd64)
     hostDesktopNativeAssetTasks.add(extractTun2SocksWindowsAmd64)
     hostDesktopNativeAssetTasks.add(extractWintunWindowsAmd64)
 }
@@ -381,6 +402,7 @@ fun requiredHostNativeResourcePaths(): List<String> = buildList {
         currentBuildOs.isWindows -> {
             add("native/olcrtc-windows-amd64.exe")
             add("native/olcrtc-windows-amd64.dll")
+            add("native/sing-box-windows-amd64.exe")
             add("native/tun2socks-windows-amd64.exe")
             add("native/wintun.dll")
         }

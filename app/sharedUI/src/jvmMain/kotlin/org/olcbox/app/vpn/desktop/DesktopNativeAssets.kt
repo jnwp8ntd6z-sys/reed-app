@@ -73,6 +73,24 @@ internal object DesktopNativeAssets {
         )
     }
 
+    fun singBoxFileName(): String {
+        return when (DesktopPaths.os) {
+            DesktopOs.Windows -> "sing-box-windows-amd64.exe"
+            DesktopOs.Linux -> "sing-box-linux-${desktopArch()}"
+            DesktopOs.MacOS -> "sing-box-darwin-${desktopArch()}"
+            DesktopOs.Other -> error("sing-box desktop binary is unsupported on this OS")
+        }
+    }
+
+    fun resolveSingBoxBinary(): Path {
+        val fileName = singBoxFileName()
+        return resolveBinary(
+            fileName = fileName,
+            resourceName = "native/$fileName",
+            candidates = desktopNativeResourceCandidates(fileName)
+        )
+    }
+
     fun resolveWindowsTun2SocksBinary(): Path {
         val fileName = windowsTun2SocksFileName()
         val binary = resolveBinary(

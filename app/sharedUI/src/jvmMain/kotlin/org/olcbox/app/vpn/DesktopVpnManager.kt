@@ -28,6 +28,7 @@ import org.olcbox.app.vpn.desktop.LinuxPrivilege
 import org.olcbox.app.vpn.desktop.LinuxTunController
 import org.olcbox.app.vpn.desktop.OlcRtcCommand
 import org.olcbox.app.vpn.desktop.PacServer
+import org.olcbox.app.vpn.desktop.SingBoxDesktopRunner
 import org.olcbox.app.vpn.desktop.WindowsTunController
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -191,8 +192,6 @@ class DesktopVpnManager private constructor(
         }
 
         try {
-            val ready = CompletableDeferred<Unit>()
-            val startupFailure = CompletableDeferred<String>()
             val desktopMode = DesktopMode.current()
             val socksSettings = _socksProxySettings.value.normalized()
 
@@ -200,22 +199,39 @@ class DesktopVpnManager private constructor(
                 windowsTunController.ensureAdministratorOrRequestRestart()
             }
 
-            process = startOlcRtcProcessWithFallback(
-                location = location,
-                socksSettings = socksSettings,
-                ready = ready,
-                startupFailure = startupFailure,
-                logOutput = true,
-                privileged = desktopMode == DesktopMode.LinuxTun
-            )
+            if (location.isVless()) {
+                // VLESS-Reality: локальный SOCKS поднимает sing-box (как на мобильных).
+                process = startSingBoxProcess(
+                    location = location,
+                    socksSettings = socksSettings
+                )
 
-            waitForOlcRtcReady(
-                process = process ?: error("olcRTC process is missing"),
-                ready = ready,
-                startupFailure = startupFailure,
-                socksPort = socksSettings.port,
-                requestGeneration = requestGeneration
-            )
+                waitForSocksReady(
+                    process = process ?: error("sing-box process is missing"),
+                    socksPort = socksSettings.port,
+                    requestGeneration = requestGeneration
+                )
+            } else {
+                val ready = CompletableDeferred<Unit>()
+                val startupFailure = CompletableDeferred<String>()
+
+                process = startOlcRtcProcessWithFallback(
+                    location = location,
+                    socksSettings = socksSettings,
+                    ready = ready,
+                    startupFailure = startupFailure,
+                    logOutput = true,
+                    privileged = desktopMode == DesktopMode.LinuxTun
+                )
+
+                waitForOlcRtcReady(
+                    process = process ?: error("olcRTC process is missing"),
+                    ready = ready,
+                    startupFailure = startupFailure,
+                    socksPort = socksSettings.port,
+                    requestGeneration = requestGeneration
+                )
+            }
 
             if (requestGeneration != generation) {
                 throw CancellationException("Desktop start superseded")
@@ -502,6 +518,82 @@ class DesktopVpnManager private constructor(
         }
 
         return startedProcess
+    }
+
+    private fun startSingBoxProcess(
+        location: LocationConfig,
+        socksSettings: DesktopSocksProxySettings
+    ): Process {
+        val binary = DesktopNativeAssets.resolveSingBoxBinary()
+        val configJson = SingBoxDesktopRunner.fetchConfig(location, socksSettings.port)
+        val configPath = writeSingBoxConfig(configJson)
+        val command = SingBoxDesktopRunner.command(binary, configPath)
+
+        addLog("Starting VLESS (sing-box) for ${location.id}, port=${socksSettings.port}")
+
+        val processBuilder = ProcessBuilder(command).redirectErrorStream(true)
+        processBuilder.environment()["NO_PROXY"] = "127.0.0.1,localhost"
+        processBuilder.environment()["no_proxy"] = "127.0.0.1,localhost"
+
+        val startedProcess = try {
+            processBuilder.start()
+        } catch (e: Exception) {
+            runCatching { Files.deleteIfExists(configPath) }
+            if (olcRtcConfigPath == configPath) {
+                olcRtcConfigPath = null
+            }
+            throw e
+        }
+
+        val readerJob = scope.launch {
+            startedProcess.inputStream.bufferedReader().useLines { lines ->
+                lines.forEach { line ->
+                    if (!isActive) return@forEach
+                    addLog("vless: $line")
+                }
+            }
+        }
+
+        logJob?.cancel()
+        logJob = readerJob
+
+        return startedProcess
+    }
+
+    private fun writeSingBoxConfig(json: String): Path {
+        val runtimeDir = DesktopPaths.appDataDir().resolve("runtime")
+        Files.createDirectories(runtimeDir)
+        val path = Files.createTempFile(runtimeDir, "singbox-client-", ".json")
+        Files.writeString(path, json, StandardCharsets.UTF_8)
+        deleteOlcRtcConfig()
+        olcRtcConfigPath = path
+        return path
+    }
+
+    private suspend fun waitForSocksReady(
+        process: Process,
+        socksPort: Int,
+        requestGeneration: Long
+    ) {
+        val deadline = System.currentTimeMillis() + OLC_READY_TIMEOUT_MS
+
+        while (System.currentTimeMillis() < deadline) {
+            if (requestGeneration != generation) {
+                throw CancellationException("Desktop start superseded")
+            }
+
+            if (canConnectToSocks(socksPort)) {
+                return
+            }
+
+            if (!process.isAlive) {
+                error("sing-box exited before SOCKS5 was ready")
+            }
+
+            delay(READY_POLL_INTERVAL_MS)
+        }
+
+        error("sing-box start timed out")
     }
 
     private fun writeOlcRtcClientConfig(command: OlcRtcCommand): Path {
