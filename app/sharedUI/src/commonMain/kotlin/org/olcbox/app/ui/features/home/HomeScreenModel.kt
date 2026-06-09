@@ -108,20 +108,39 @@ class HomeScreenViewModel(
         }
     }
 
-    suspend fun performPing(): Long? {
-        val config = _state.value.configData
+    suspend fun performPing(): Long? = pingConfig(_state.value.configData)
+
+    suspend fun performPingFor(config: LocationConfig): Long? = pingConfig(config)
+
+    private suspend fun pingConfig(config: LocationConfig): Long? {
+        // VLESS-серверы: обычный TCP-пинг до host:port.
         if (config.isVless()) {
             return org.olcbox.app.data.tcpPingMs(config.host, config.port)
         }
-        return vpnManager.ping(config)
+        // olcRTC (LTE): движковый ping ненадёжен/не доходит — меряем TCP-пинг до
+        // хоста комнаты (Jitsi-сигналинг), как у обычных серверов. Это даёт реальное
+        // число вместо «—». host берём из metadata, иначе из URL комнаты (config.id).
+        val (host, port) = olcRtcPingTarget(config) ?: return vpnManager.ping(config)
+        return org.olcbox.app.data.tcpPingMs(host, port)
     }
 
-    suspend fun performPingFor(config: LocationConfig): Long? {
-        // VLESS-серверы: обычный TCP-пинг до host:port. olcRTC: проверка через движок.
-        if (config.isVless()) {
-            return org.olcbox.app.data.tcpPingMs(config.host, config.port)
+    /** host:port для TCP-пинга olcRTC-локации: из metadata.ip либо из URL комнаты. */
+    private fun olcRtcPingTarget(config: LocationConfig): Pair<String, Int>? {
+        if (config.host.isNotBlank()) {
+            return config.host to (config.port.takeIf { it > 0 } ?: 443)
         }
-        return vpnManager.ping(config)
+        val room = config.id.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            ?: return null
+        val host = room
+            .substringAfter("://")
+            .substringBefore('/')
+            .substringBefore(':')
+            .takeIf { it.isNotBlank() }
+            ?: return null
+        val port = room.substringAfter("://").substringBefore('/')
+            .substringAfter(':', "").toIntOrNull()
+            ?: if (room.startsWith("https://")) 443 else 80
+        return host to port
     }
 
     suspend fun checkConnectionFor(config: LocationConfig): Long? {

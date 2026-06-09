@@ -648,7 +648,12 @@ class LocationsRepositoryImpl(
             )
         }
         if (entries.isEmpty()) return null
-        return LocationBundleV4(activeLocationId = null, locations = entries).normalized()
+        // Сервер по умолчанию — первый VLESS (быстрый прямой/мостовой), а не запасной
+        // LTE-olcRTC. Иначе подключение по умолчанию шло через WebRTC.
+        return LocationBundleV4(
+            activeLocationId = entries.firstOrNull()?.storageId,
+            locations = entries
+        ).normalized()
     }
 
     /** Достаёт значение query-параметра из URL-строки (без полноценного парсинга URL). */
@@ -689,10 +694,21 @@ class LocationsRepositoryImpl(
             }
             .toMutableList()
 
+        // Сигнатуры уже имеющихся локаций — чтобы повторный импорт тех же серверов
+        // (например, авто-импорт после перезапуска приложения) не плодил дубликаты.
+        val existingSignatures = mergedLocations
+            .mapTo(mutableSetOf()) { subscriptionSignature(it.location) }
+
         val importedIdMap = mutableMapOf<String, String>()
 
         imported.locations.forEach { entry ->
             if (replaceMatchingStorageIds && entry.storageId in replacedStorageIds) return@forEach
+
+            // В аддитивном режиме пропускаем локацию, идентичную уже добавленной,
+            // иначе повторный авто-импорт удваивает весь список серверов.
+            if (!replaceMatchingStorageIds &&
+                !existingSignatures.add(subscriptionSignature(entry.location))
+            ) return@forEach
 
             val storageId = uniqueStorageId(entry.storageId, existingStorageIds)
             importedIdMap[entry.storageId] = storageId

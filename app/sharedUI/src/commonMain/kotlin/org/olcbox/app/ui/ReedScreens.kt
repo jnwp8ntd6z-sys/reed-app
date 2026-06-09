@@ -445,9 +445,13 @@ fun ReedHomeScreen(
     var consent by remember { mutableStateOf(ReedSession.consentAccepted) }
 
     var data by remember { mutableStateOf<SubscriptionResponse?>(null) }
+    // Первая загрузка подписки ещё не завершилась — чтобы не мигать «Подписка не
+    // активна», пока идёт запрос (выглядело как «вылет из аккаунта» при перезаходе).
+    var subLoaded by remember { mutableStateOf(false) }
     suspend fun reloadSubscription() {
         val t = ReedSession.token ?: return
         data = try { ReedApi.subscription(t) } catch (e: Throwable) { data }
+        subLoaded = true
     }
     LaunchedEffect(ReedSession.token) { reloadSubscription() }
 
@@ -457,7 +461,10 @@ fun ReedHomeScreen(
         val t = ReedSession.token
         if (t != null && locations.isEmpty() && ReedSession.importedForToken != t) {
             ReedSession.importedForToken = t
-            // olcRTC-локации (родной транспорт). После — VLESS-локации из /app/locations.
+            // Сначала olcRTC-локации (родной транспорт движка), затем VLESS из
+            // /app/locations. VLESS импортируется последним → именно быстрый VLESS
+            // становится сервером по умолчанию (parseReedLocations выставляет активным
+            // первый VLESS), а не запасной LTE-olcRTC.
             homeViewModel.onImportFullConfig(
                 rawText = "$REED_OLCCONF_BASE$t",
                 onComplete = {
@@ -537,7 +544,17 @@ fun ReedHomeScreen(
             Spacer(Modifier.height(12.dp))
         }
 
-        if (!hasSubscription) {
+        if (ReedSession.token != null && !subLoaded && data == null) {
+            // Идёт первичная загрузка данных аккаунта — показываем нейтральный
+            // плейсхолдер, а не «Подписка не активна» (чтобы не выглядело как вылет).
+            ReedCard {
+                Text("Загрузка аккаунта…", style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Black)
+                Spacer(Modifier.height(8.dp))
+                MutedText("Подключаемся к серверу Reed VPN.")
+            }
+            Spacer(Modifier.height(20.dp))
+        } else if (!hasSubscription) {
             // Нейтральный блок без призыва к оплате (требование Apple App Store):
             // всё управление подпиской — в Telegram-боте.
             ReedCard {

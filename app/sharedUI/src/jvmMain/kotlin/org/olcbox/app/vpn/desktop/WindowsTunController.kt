@@ -173,7 +173,13 @@ internal class WindowsTunController(
             .redirectErrorStream(true)
             .start()
         val output = process.inputStream.bufferedReader().use { it.readText() }
-        val exitCode = process.waitFor()
+        // Жёсткий таймаут: без него зависший PowerShell-вызов держит подключение
+        // в состоянии «подключаюсь» бесконечно (на Windows наблюдалось у пользователя).
+        if (!process.waitFor(POWERSHELL_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            runCatching { process.destroyForcibly() }
+            error("PowerShell timed out after ${POWERSHELL_TIMEOUT_MS}ms")
+        }
+        val exitCode = process.exitValue()
         if (exitCode != 0) {
             error("PowerShell failed with code $exitCode: $output")
         }
@@ -199,6 +205,7 @@ internal class WindowsTunController(
         const val MAPDNS_ADDRESS = "1.1.1.1"
         const val TUN_READY_TIMEOUT_MS = 10_000L
         const val TUN_READY_POLL_MS = 100L
+        const val POWERSHELL_TIMEOUT_MS = 30_000L
         const val PROCESS_STOP_TIMEOUT_MS = 3_000L
         const val PROCESS_KILL_TIMEOUT_MS = 1_000L
         const val ELEVATED_START_ARGUMENT = "--olcbox-start-vpn-after-elevation"
