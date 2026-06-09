@@ -10,7 +10,10 @@ internal val LocalThemeIsDark = compositionLocalOf { mutableStateOf(true) }
 fun AppTheme(
     content: @Composable () -> Unit
 ) {
-    AppTheme(useDynamicColor = true, content = content)
+    // Reed VPN — фирменная ТЁМНАЯ тема (лайм/оранж на тёмном). Динамические цвета
+    // Android (Material You) выключены, чтобы приложение не подхватывало палитру
+    // обоев и не светлело в светлой системной теме.
+    AppTheme(useDynamicColor = false, content = content)
 }
 
 @Composable
