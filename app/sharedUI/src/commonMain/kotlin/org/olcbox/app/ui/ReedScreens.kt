@@ -30,6 +30,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.CardGiftcard
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.DeleteForever
@@ -619,6 +620,12 @@ fun ReedHomeScreen(
                     targetLocationIds = null,
                     performPing = { config -> homeViewModel.performPingFor(config) },
                 )
+            }
+            Spacer(Modifier.width(6.dp))
+            // Экспорт логов подключения (для диагностики проблем с VPN) — открывает
+            // системное «Поделиться»: можно отправить лог в Telegram-бот/поддержку.
+            IconAction(Icons.Rounded.BugReport, "Логи") {
+                homeViewModel.onShareLogs()
             }
         }
         Spacer(Modifier.height(14.dp))
