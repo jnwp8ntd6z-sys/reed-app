@@ -49,6 +49,7 @@ jobs:
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
           export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
           gomobile bind -target=android -androidapi 21 \
+            -tags with_utls \
             -ldflags "-s -w -checklinkname=0" \
             -o reedmobile.aar \
             github.com/openlibrecommunity/olcrtc/mobile .
@@ -82,6 +83,7 @@ jobs:
         working-directory: singbox-mobile
         run: |
           gomobile bind -target=ios \
+            -tags with_utls \
             -ldflags "-s -w -checklinkname=0" \
             -o ReedMobile.xcframework \
             github.com/openlibrecommunity/olcrtc/mobile .

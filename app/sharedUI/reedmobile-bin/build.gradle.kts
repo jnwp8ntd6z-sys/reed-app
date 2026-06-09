@@ -42,6 +42,9 @@ val buildReedmobileAar by tasks.registering(Exec::class) {
             "go mod tidy; " +
             "\"$gomobileExecutable\" bind " +
             "-target=android/arm,android/arm64,android/amd64 " +
+            // -tags with_utls ОБЯЗАТЕЛЕН: REALITY-клиент sing-box без него не работает
+            // (VLESS Reality сразу падает на старте → мгновенный сброс на Android).
+            "-tags with_utls " +
             "-androidapi 21 -ldflags \"-s -w -checklinkname=0\" " +
             "-o \"$aar\" github.com/openlibrecommunity/olcrtc/mobile ."
     )
