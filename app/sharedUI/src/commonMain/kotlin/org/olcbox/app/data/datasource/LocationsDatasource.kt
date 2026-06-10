@@ -637,7 +637,10 @@ class LocationsRepositoryImpl(
                 name = name,
                 id = tag,
                 key = token,
-                engine = LocationConfig.ENGINE_VLESS
+                engine = LocationConfig.ENGINE_VLESS,
+                // host/port нужны кнопке «Тест» (TCP-пинг VLESS). normalized() их сохраняет.
+                host = host,
+                port = port
             ).normalized()
             if (!config.isComplete()) return@mapNotNull null
             LocationEntry.from(
