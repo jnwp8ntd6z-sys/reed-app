@@ -35,7 +35,12 @@ internal object SingBoxDesktopRunner {
         val token = config.key
         val server = URLEncoder.encode(config.id, "UTF-8")
         val split = if (ReedSession.splitRouting) "1" else "0"
-        val url = "$REED_API_BASE/app/singbox?token=$token&socks_port=$socksPort&server=$server&split=$split"
+        // Временный VPN (id=reed-temp) — БЕЗ токена с /app/temp (работает до входа).
+        val url = if (config.id == "reed-temp") {
+            "$REED_API_BASE/app/temp?socks_port=$socksPort"
+        } else {
+            "$REED_API_BASE/app/singbox?token=$token&socks_port=$socksPort&server=$server&split=$split"
+        }
 
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = CONNECT_TIMEOUT_MS

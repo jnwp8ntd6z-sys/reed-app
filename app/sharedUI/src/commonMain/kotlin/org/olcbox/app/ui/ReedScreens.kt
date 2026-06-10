@@ -100,6 +100,7 @@ import org.olcbox.app.data.reed.ReedSession
 import org.olcbox.app.data.reed.SubscriptionResponse
 import org.olcbox.app.data.reed.decodeImageBitmap
 import org.olcbox.app.ui.features.home.HomeScreenViewModel
+import org.olcbox.app.ui.features.locations.LocationItem
 import org.olcbox.app.ui.features.locations.LocationViewModel
 import org.olcbox.app.ui.features.locations.PingsState
 
@@ -487,6 +488,80 @@ private fun ReedConnectButton(
     }
 }
 
+// Плашка одного сервера в списке. Временный сервер (для регистрации) — оранжевый акцент
+// и трафик «x/5 ГБ» прямо в названии; остальные — лаймовый акцент.
+@Composable
+private fun ReedServerRow(
+    loc: LocationItem,
+    isSelected: Boolean,
+    isConnectedHere: Boolean,
+    ping: Int?,
+    serversRefreshing: Boolean,
+    serversRefreshed: Boolean,
+    desc: String?,
+    onClick: () -> Unit,
+) {
+    val isTemp = ReedTempServer.isTemp(loc.storageId)
+    val accent = if (isTemp) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary
+    val bg = when {
+        isTemp -> MaterialTheme.colorScheme.secondary.copy(alpha = if (isSelected) 0.20f else 0.12f)
+        isSelected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+        else -> MaterialTheme.colorScheme.surfaceContainer
+    }
+    Box(
+        Modifier.fillMaxWidth().padding(bottom = 8.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(bg)
+            .border(
+                if (isSelected || isTemp) 2.dp else 1.dp,
+                if (isTemp) accent
+                else if (isSelected) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.outlineVariant,
+                RoundedCornerShape(16.dp)
+            )
+            .clickable(onClick = onClick)
+            .padding(16.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                // У временного — трафик «x/5 ГБ» прямо в названии.
+                val tempUsedGb = (ReedSession.tempUsedBytes.toDouble() /
+                    (1024.0 * 1024 * 1024) * 10).toLong() / 10.0
+                val title = if (isTemp) "${loc.fullName}  ·  $tempUsedGb/5 ГБ" else loc.fullName
+                Text(title,
+                    style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black,
+                    color = if (isTemp || isSelected) accent else MaterialTheme.colorScheme.onSurface)
+                if (!desc.isNullOrBlank()) {
+                    Text(desc,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            // Трейлинг: при обновлении — спиннер; после успеха — галочка (плавно гаснет); иначе — пинг.
+            if (serversRefreshing) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp), strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary)
+            } else {
+                AnimatedVisibility(visible = serversRefreshed, enter = fadeIn(), exit = fadeOut()) {
+                    Icon(Icons.Rounded.Check, contentDescription = "Обновлено",
+                        tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                }
+                if (!serversRefreshed) {
+                    Text(if (ping != null) "$ping мс" else "—",
+                        style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            if (isConnectedHere) {
+                Spacer(Modifier.width(8.dp))
+                Box(Modifier.size(10.dp).clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary))
+            }
+        }
+    }
+}
+
 @Composable
 fun ReedHomeScreen(
     homeViewModel: HomeScreenViewModel,
@@ -739,88 +814,89 @@ fun ReedHomeScreen(
         val serverDescByName: Map<String, String> =
             data?.servers?.associate { it.name to it.desc }.orEmpty()
 
+        // Список серверов с учётом подписки (главная фишка — временный сервер):
+        //  • нет активной подписки (не вошёл / кончилась) → в списке ТОЛЬКО временный;
+        //  • подписка активна → реальные серверы, а временный уезжает в конец и прячется
+        //    под сворачиваемую строку (оранжевый акцент, всегда доступен).
+        val realServers = locations.filter { !ReedTempServer.isTemp(it.storageId) }
+        val tempServer = locations.firstOrNull { ReedTempServer.isTemp(it.storageId) }
+
+        // Общий onClick для выбора сервера.
+        fun selectServer(loc: LocationItem) {
+            serversRefreshed = false  // выбор сервера → галочку убираем резко
+            locationViewModel.selectLocation(loc.storageId) {
+                homeViewModel.loadCurrentConfig()
+                homeViewModel.restartVpnIfRunning()
+            }
+        }
+
         if (locations.isEmpty()) {
             ReedCard {
                 MutedText("Серверы появятся автоматически после входа и оформления подписки.")
             }
-        } else {
-            locations.forEach { loc ->
-                val isSel = loc.storageId == selectedId
-                val isTemp = ReedTempServer.isTemp(loc.storageId)
-                val ping = pingFor(pingsState, loc.storageId)
-                // Временный сервер — оранжевая плашка (фишка для регистрации), остальные — лайм.
-                val accent = if (isTemp) MaterialTheme.colorScheme.secondary
-                    else MaterialTheme.colorScheme.primary
-                val bg = when {
-                    isTemp -> MaterialTheme.colorScheme.secondary.copy(alpha = if (isSel) 0.20f else 0.12f)
-                    isSel -> MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-                    else -> MaterialTheme.colorScheme.surfaceContainer
+        } else if (hasSubscription && realServers.isNotEmpty()) {
+            realServers.forEach { loc ->
+                ReedServerRow(
+                    loc = loc,
+                    isSelected = loc.storageId == selectedId,
+                    isConnectedHere = state.isVpnConnected && loc.storageId == selectedId,
+                    ping = pingFor(pingsState, loc.storageId),
+                    serversRefreshing = serversRefreshing,
+                    serversRefreshed = serversRefreshed,
+                    desc = serverDescByName[loc.fullName],
+                    onClick = { selectServer(loc) },
+                )
+            }
+            if (tempServer != null) {
+                // Временный сервер спрятан в конце; раскрыт, если он сейчас выбран/подключён.
+                var showTemp by remember {
+                    mutableStateOf(state.isVpnConnected && selectedId == tempServer.storageId)
                 }
-                Box(
-                    Modifier.fillMaxWidth().padding(bottom = 8.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(bg)
-                        .border(
-                            if (isSel || isTemp) 2.dp else 1.dp,
-                            if (isTemp) accent
-                            else if (isSel) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.outlineVariant,
-                            RoundedCornerShape(16.dp)
-                        )
-                        .clickable {
-                            serversRefreshed = false  // выбор сервера → галочку убираем резко
-                            locationViewModel.selectLocation(loc.storageId) {
-                                homeViewModel.loadCurrentConfig()
-                                homeViewModel.restartVpnIfRunning()
-                            }
-                        }
-                        .padding(16.dp),
+                val rot by animateFloatAsState(if (showTemp) 90f else 0f, label = "tempChevron")
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                        .clickable { showTemp = !showTemp }
+                        .padding(horizontal = 6.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            // У временного — трафик «x/5 ГБ» прямо в названии.
-                            val tempUsedGb = (ReedSession.tempUsedBytes.toDouble() /
-                                (1024.0 * 1024 * 1024) * 10).toLong() / 10.0
-                            val title = if (isTemp) "${loc.fullName}  ·  $tempUsedGb/5 ГБ"
-                                else loc.fullName
-                            Text(title,
-                                style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black,
-                                color = if (isTemp || isSel) accent
-                                else MaterialTheme.colorScheme.onSurface)
-                            val desc = if (isTemp) ReedTempServer.DESC else serverDescByName[loc.fullName]
-                            if (!desc.isNullOrBlank()) {
-                                Text(desc,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                        // Трейлинг: при обновлении — крутящийся спиннер; после успеха —
-                        // галочка (плавно гаснет); иначе — пинг.
-                        if (serversRefreshing) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp), strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.primary)
-                        } else {
-                            AnimatedVisibility(visible = serversRefreshed,
-                                enter = fadeIn(), exit = fadeOut()) {
-                                Icon(Icons.Rounded.Check, contentDescription = "Обновлено",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(18.dp))
-                            }
-                            if (!serversRefreshed) {
-                                Text(if (ping != null) "$ping мс" else "—",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                        if (state.isVpnConnected && isSel) {
-                            Spacer(Modifier.width(8.dp))
-                            Box(Modifier.size(10.dp).clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary))
-                        }
-                    }
+                    Icon(Icons.Rounded.ChevronRight, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.rotate(rot))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Временный сервер для регистрации",
+                        style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Black,
+                        color = MaterialTheme.colorScheme.secondary)
                 }
+                Spacer(Modifier.height(8.dp))
+                AnimatedVisibility(visible = showTemp,
+                    enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                    ReedServerRow(
+                        loc = tempServer,
+                        isSelected = tempServer.storageId == selectedId,
+                        isConnectedHere = state.isVpnConnected && tempServer.storageId == selectedId,
+                        ping = pingFor(pingsState, tempServer.storageId),
+                        serversRefreshing = serversRefreshing,
+                        serversRefreshed = serversRefreshed,
+                        desc = ReedTempServer.DESC,
+                        onClick = { selectServer(tempServer) },
+                    )
+                }
+            }
+        } else {
+            // Нет активной подписки → показываем ТОЛЬКО временный сервер (вместо всех).
+            val onlyTemp = tempServer ?: realServers.firstOrNull()
+            if (onlyTemp != null) {
+                ReedServerRow(
+                    loc = onlyTemp,
+                    isSelected = onlyTemp.storageId == selectedId,
+                    isConnectedHere = state.isVpnConnected && onlyTemp.storageId == selectedId,
+                    ping = pingFor(pingsState, onlyTemp.storageId),
+                    serversRefreshing = serversRefreshing,
+                    serversRefreshed = serversRefreshed,
+                    desc = if (ReedTempServer.isTemp(onlyTemp.storageId)) ReedTempServer.DESC
+                        else serverDescByName[onlyTemp.fullName],
+                    onClick = { selectServer(onlyTemp) },
+                )
             }
         }
         Spacer(Modifier.height(28.dp))

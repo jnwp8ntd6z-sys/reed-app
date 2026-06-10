@@ -207,14 +207,21 @@ class IosVpnManager(
     private suspend fun fetchSingboxConfig(token: String, server: String, socksPort: Int): String? {
         return runCatching {
             withContext(Dispatchers.Default) {
-                httpClient.get("$REED_API_BASE/app/singbox") {
-                    url {
-                        parameters.append("token", token)
-                        parameters.append("socks_port", socksPort.toString())
-                        parameters.append("server", server)
-                        parameters.append("split", if (org.olcbox.app.data.reed.ReedSession.splitRouting) "1" else "0")
-                    }
-                }.bodyAsText().takeIf { it.isNotBlank() }
+                // Временный VPN (id=reed-temp) — БЕЗ токена с /app/temp (работает до входа).
+                if (server == "reed-temp") {
+                    httpClient.get("$REED_API_BASE/app/temp") {
+                        url { parameters.append("socks_port", socksPort.toString()) }
+                    }.bodyAsText().takeIf { it.isNotBlank() }
+                } else {
+                    httpClient.get("$REED_API_BASE/app/singbox") {
+                        url {
+                            parameters.append("token", token)
+                            parameters.append("socks_port", socksPort.toString())
+                            parameters.append("server", server)
+                            parameters.append("split", if (org.olcbox.app.data.reed.ReedSession.splitRouting) "1" else "0")
+                        }
+                    }.bodyAsText().takeIf { it.isNotBlank() }
+                }
             }
         }.getOrElse {
             addLog("VLESS config fetch failed: ${it.message}")
