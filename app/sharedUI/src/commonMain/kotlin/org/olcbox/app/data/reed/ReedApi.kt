@@ -101,6 +101,10 @@ object ReedSession {
     // Только в памяти — при перезапуске движок всё равно перечитывает локации с диска.
     var importedForToken: String? = null
 
+    // Пользователь нажал «Подключить временный VPN» на экране входа → на главном экране
+    // автоматически выбрать и подключить временный сервер (полностью — в Сборке B).
+    var useTempVpnOnEntry: Boolean = false
+
     // Split-routing: российские сайты идут напрямую мимо VPN. По умолчанию включён.
     // Применяется при подключении (передаётся в /app/singbox как &split=1/0).
     private const val KEY_SPLIT = "reed_split_routing"

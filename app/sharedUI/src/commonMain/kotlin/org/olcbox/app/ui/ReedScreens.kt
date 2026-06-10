@@ -1,7 +1,10 @@
 package org.olcbox.app.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -33,6 +36,7 @@ import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.CardGiftcard
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.Info
@@ -49,6 +53,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -70,6 +75,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -147,115 +153,87 @@ fun ReedOnboardingScreen(onDone: () -> Unit) {
     var statusMsg by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
 
-    // Три обязательных согласия — кнопка регистрации активна только когда все отмечены.
-    var acceptTerms by remember { mutableStateOf(false) }
-    var acceptPrivacy by remember { mutableStateOf(false) }
-    var acceptConsent by remember { mutableStateOf(false) }
-    val allAccepted = acceptTerms && acceptPrivacy && acceptConsent
-
-    // Документ для модального окна (title -> body); null = окно закрыто.
-    var policyDialog by remember { mutableStateOf<Pair<String, String>?>(null) }
-    policyDialog?.let { (title, body) ->
-        PolicyDialog(title = title, body = body, onDismiss = { policyDialog = null })
-    }
-
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
-    ) {
-        Spacer(Modifier.height(24.dp))
-        // Логотип-герой: значок щита в круге + название
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(56.dp).clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(Icons.Rounded.Shield, contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(30.dp))
-            }
-            Spacer(Modifier.width(14.dp))
-            Column {
-                Text("REED VPN", style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Black)
-                MutedText("Свободный интернет без границ")
-            }
-        }
-        Spacer(Modifier.height(32.dp))
-
-        // Три согласия с открытием полного текста внутри приложения (иконка ℹ️).
-        Text("Перед регистрацией примите документы:",
-            style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black)
-        Spacer(Modifier.height(12.dp))
-        ConsentRow(
-            title = ReedPolicyTexts.TERMS_TITLE,
-            checked = acceptTerms,
-            onCheckedChange = { acceptTerms = it },
-            onInfo = { policyDialog = ReedPolicyTexts.TERMS_TITLE to ReedPolicyTexts.TERMS_BODY },
-        )
-        ConsentRow(
-            title = ReedPolicyTexts.PRIVACY_TITLE,
-            checked = acceptPrivacy,
-            onCheckedChange = { acceptPrivacy = it },
-            onInfo = { policyDialog = ReedPolicyTexts.PRIVACY_TITLE to ReedPolicyTexts.PRIVACY_BODY },
-        )
-        ConsentRow(
-            title = ReedPolicyTexts.CONSENT_TITLE,
-            checked = acceptConsent,
-            onCheckedChange = { acceptConsent = it },
-            onInfo = { policyDialog = ReedPolicyTexts.CONSENT_TITLE to ReedPolicyTexts.CONSENT_BODY },
-        )
-
-        Spacer(Modifier.height(20.dp))
-
-        ReedPrimaryButton(
-            text = if (busy) "Подтвердите в Telegram…" else "Зарегистрироваться через Telegram",
-            enabled = allAccepted && !busy,
+    // Тёмный брендовый фон Reed — экран входа показывается раньше основного интерфейса,
+    // поэтому фон задаём явно (иначе видно серое окно платформы).
+    Box(Modifier.fillMaxSize().background(Color(0xFF0A0A0A))) {
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         ) {
-            if (busy || !allAccepted) return@ReedPrimaryButton
-            busy = true
-            statusMsg = ""
-            scope.launch {
-                try {
-                    val start = ReedApi.authStart()
-                    uri.openUri(start.deeplink)
-                    statusMsg = "Подтвердите вход в Telegram…"
-                    repeat(60) {
-                        delay(2000)
-                        val poll = ReedApi.authPoll(start.nonce)
-                        if (poll.status == "ok") {
-                            ReedSession.token = poll.token
-                            ReedSession.onboardingDone = true
-                            onDone()
-                            return@launch
-                        }
-                    }
-                    statusMsg = "Вход не завершён, попробуйте снова"
-                } catch (e: Throwable) {
-                    statusMsg = "Ошибка входа, попробуйте снова"
-                }
-                busy = false
+            Spacer(Modifier.height(28.dp))
+            // Только надпись слева сверху — без логотипа и слогана.
+            Text("REED VPN", style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Black, color = Color.White)
+
+            Spacer(Modifier.height(40.dp))
+
+            // 1) Временный VPN — белая кнопка, ВЫШЕ регистрации. Нужен, чтобы дойти до
+            // Telegram и зарегистрироваться (полное подключение допиливается в Сборке B).
+            Text("VPN для регистрации через Telegram. Работает только приложение и Telegram — этого достаточно, чтобы войти и оформить подписку.",
+                style = MaterialTheme.typography.bodyMedium, color = Color.White)
+            Spacer(Modifier.height(10.dp))
+            Button(
+                onClick = {
+                    ReedSession.useTempVpnOnEntry = true
+                    ReedSession.onboardingDone = true
+                    onDone()
+                },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.White, contentColor = Color(0xFF0A0A0A)),
+            ) {
+                Text("Подключить временный VPN", fontWeight = FontWeight.Black)
             }
-        }
-        if (!allAccepted) {
-            Spacer(Modifier.height(8.dp))
-            Text("Отметьте все три пункта, чтобы продолжить.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-        }
 
-        Spacer(Modifier.height(12.dp))
-        // Временный VPN — только для того, чтобы дойти до Telegram и зарегистрироваться.
-        ReedSecondaryButton("Подключить временный VPN") {
-            ReedSession.onboardingDone = true
-            onDone()
-        }
+            Spacer(Modifier.height(20.dp))
 
-        if (statusMsg.isNotEmpty()) {
-            Spacer(Modifier.height(12.dp))
-            MutedText(statusMsg)
+            // 2) Регистрация через Telegram (лаймовая основная кнопка).
+            ReedPrimaryButton(
+                text = if (busy) "Подтвердите в Telegram…" else "Зарегистрироваться через Telegram",
+                enabled = !busy,
+            ) {
+                if (busy) return@ReedPrimaryButton
+                busy = true
+                statusMsg = ""
+                scope.launch {
+                    try {
+                        val start = ReedApi.authStart()
+                        uri.openUri(start.deeplink)
+                        statusMsg = "Подтвердите вход в Telegram…"
+                        repeat(60) {
+                            delay(2000)
+                            val poll = ReedApi.authPoll(start.nonce)
+                            if (poll.status == "ok") {
+                                ReedSession.token = poll.token
+                                ReedSession.onboardingDone = true
+                                onDone()
+                                return@launch
+                            }
+                        }
+                        statusMsg = "Вход не завершён, попробуйте снова"
+                    } catch (e: Throwable) {
+                        statusMsg = "Ошибка входа, попробуйте снова"
+                    }
+                    busy = false
+                }
+            }
+
+            if (statusMsg.isNotEmpty()) {
+                Spacer(Modifier.height(12.dp))
+                Text(statusMsg, style = MaterialTheme.typography.bodySmall, color = Color.White)
+            }
+
+            Spacer(Modifier.height(16.dp))
+            // 3) Текстовая кнопка без подложки — пропустить временный VPN.
+            TextButton(
+                onClick = { ReedSession.onboardingDone = true; onDone() },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Мне не нужен временный VPN", color = Color.White,
+                    fontWeight = FontWeight.SemiBold)
+            }
+            Spacer(Modifier.height(24.dp))
         }
-        Spacer(Modifier.height(24.dp))
     }
 }
 
@@ -458,7 +436,8 @@ private fun ReedTrafficBar(label: String, valueGb: Double, maxGb: Double) {
     }
 }
 
-// Круглая кнопка подключения: кольцо таймера сессии + значок питания + время сессии.
+// Круглая кнопка подключения: плавно загорается зелёным при подключении + таймер сессии.
+// Без кольца-прогресса (по просьбе владельца) — просто цвет + время.
 @Composable
 private fun ReedConnectButton(
     isConnected: Boolean,
@@ -469,32 +448,29 @@ private fun ReedConnectButton(
     val primary = MaterialTheme.colorScheme.primary
     val onPrimary = MaterialTheme.colorScheme.onPrimary
     val outline = MaterialTheme.colorScheme.outlineVariant
-    val glyphColor = if (isConnected) onPrimary else primary
-    val ringProgress = (sessionSeconds % 60L).toFloat() / 60f
+    val surface = MaterialTheme.colorScheme.surfaceContainer
+
+    // Плавный переход фона/значка: серый → зелёный (а не резкий скачок цвета).
+    val bg by animateColorAsState(
+        targetValue = if (isConnected) primary else surface,
+        animationSpec = tween(durationMillis = 650, easing = FastOutSlowInEasing),
+        label = "connectBg",
+    )
+    val glyphColor by animateColorAsState(
+        targetValue = if (isConnected) onPrimary else primary,
+        animationSpec = tween(durationMillis = 650, easing = FastOutSlowInEasing),
+        label = "connectGlyph",
+    )
 
     Box(
         modifier = Modifier
             .size(196.dp)
             .clip(CircleShape)
-            .background(if (isConnected) primary else MaterialTheme.colorScheme.surfaceContainer)
+            .background(bg)
             .border(if (isConnected) 0.dp else 6.dp, outline, CircleShape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        if (isConnected) {
-            Canvas(Modifier.size(196.dp)) {
-                val stroke = 5.dp.toPx()
-                val pad = 10.dp.toPx()
-                val arcSize = Size(size.width - pad * 2, size.height - pad * 2)
-                val topLeft = Offset(pad, pad)
-                drawArc(color = onPrimary.copy(alpha = 0.18f), startAngle = -90f,
-                    sweepAngle = 360f, useCenter = false, topLeft = topLeft, size = arcSize,
-                    style = Stroke(width = stroke, cap = StrokeCap.Round))
-                drawArc(color = onPrimary, startAngle = -90f, sweepAngle = 360f * ringProgress,
-                    useCenter = false, topLeft = topLeft, size = arcSize,
-                    style = Stroke(width = stroke, cap = StrokeCap.Round))
-            }
-        }
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(Icons.Rounded.PowerSettingsNew, contentDescription = "Подключение",
                 tint = glyphColor, modifier = Modifier.size(60.dp))
@@ -522,13 +498,15 @@ fun ReedHomeScreen(
     val locations = locationViewModel.locations.toList()
     val pingsState = locationViewModel.pingsState
     val selectedId = locationViewModel.selectedLocationId
-    var consent by remember { mutableStateOf(ReedSession.consentAccepted) }
 
     // Локальное зеркало токена — чтобы перерисовать экран после входа на главном экране.
     var token by remember { mutableStateOf(ReedSession.token) }
     var loginBusy by remember { mutableStateOf(false) }
     var loginMsg by remember { mutableStateOf("") }
     var logsMsg by remember { mutableStateOf("") }
+    // Индикация кнопки «Обновить»: крутящийся спиннер у серверов → галочка → плавно гаснет.
+    var serversRefreshing by remember { mutableStateOf(false) }
+    var serversRefreshed by remember { mutableStateOf(false) }
 
     var data by remember { mutableStateOf<SubscriptionResponse?>(null) }
     // Первая загрузка подписки ещё не завершилась — чтобы не мигать «Подписка не
@@ -585,50 +563,8 @@ fun ReedHomeScreen(
         Text("REED VPN", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
         Spacer(Modifier.height(16.dp))
 
-        // Политики и согласие пользователя (ссылки ведут на документы из бота).
-        if (!consent) {
-            ReedCard {
-                Row(verticalAlignment = Alignment.Top) {
-                    Checkbox(
-                        checked = consent,
-                        onCheckedChange = { consent = it; ReedSession.consentAccepted = it },
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Column {
-                        Text("Я принимаю условия:", fontWeight = FontWeight.Black,
-                            style = MaterialTheme.typography.bodyMedium)
-                        Spacer(Modifier.height(4.dp))
-                        Text("Политика конфиденциальности",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            textDecoration = TextDecoration.Underline,
-                            modifier = Modifier.clickable { uri.openUri(ReedLinks.PRIVACY_POLICY) })
-                        Spacer(Modifier.height(4.dp))
-                        Text("Условия использования",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            textDecoration = TextDecoration.Underline,
-                            modifier = Modifier.clickable { uri.openUri(ReedLinks.TERMS_OF_SERVICE) })
-                    }
-                }
-            }
-            Spacer(Modifier.height(16.dp))
-        } else {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Политика конфиденциальности",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textDecoration = TextDecoration.Underline,
-                    modifier = Modifier.clickable { uri.openUri(ReedLinks.PRIVACY_POLICY) })
-                Spacer(Modifier.width(12.dp))
-                Text("Условия использования",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textDecoration = TextDecoration.Underline,
-                    modifier = Modifier.clickable { uri.openUri(ReedLinks.TERMS_OF_SERVICE) })
-            }
-            Spacer(Modifier.height(12.dp))
-        }
+        // Согласие/политики убраны с главного экрана — все документы теперь внизу
+        // Личного кабинета (ReedAccountScreen).
 
         if (token == null) {
             // Не вошёл через Telegram — даём рабочую кнопку регистрации прямо на главном.
@@ -738,13 +674,26 @@ fun ReedHomeScreen(
                 Text("СЕРВЕРЫ", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
             }
             IconAction(Icons.Rounded.Refresh, "Обновить") {
+                if (serversRefreshing) return@IconAction
+                serversRefreshing = true
+                serversRefreshed = false
+                // Предохранитель: если колбэк не придёт — снять спиннер через 10с.
+                scope.launch { delay(10_000); if (serversRefreshing) serversRefreshing = false }
                 scope.launch {
                     reloadSubscription()
-                    homeViewModel.refreshSubscriptions { locationViewModel.loadLocations { } }
+                    homeViewModel.refreshSubscriptions {
+                        locationViewModel.loadLocations {
+                            serversRefreshing = false
+                            serversRefreshed = true
+                            // Галочка плавно гаснет сама через 2с.
+                            scope.launch { delay(2000); serversRefreshed = false }
+                        }
+                    }
                 }
             }
             Spacer(Modifier.width(6.dp))
             IconAction(Icons.Rounded.Bolt, "Тест") {
+                serversRefreshed = false  // юзер сразу что-то нажал → галочку убираем резко
                 locationViewModel.refreshPings(
                     targetLocationIds = null,
                     performPing = { config -> homeViewModel.performPingFor(config) },
@@ -794,6 +743,7 @@ fun ReedHomeScreen(
                             RoundedCornerShape(16.dp)
                         )
                         .clickable {
+                            serversRefreshed = false  // выбор сервера → галочку убираем резко
                             locationViewModel.selectLocation(loc.storageId) {
                                 homeViewModel.loadCurrentConfig()
                                 homeViewModel.restartVpnIfRunning()
@@ -814,9 +764,26 @@ fun ReedHomeScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
-                        Text(if (ping != null) "$ping мс" else "—",
-                            style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        // Трейлинг: при обновлении — крутящийся спиннер; после успеха —
+                        // галочка (плавно гаснет); иначе — пинг.
+                        if (serversRefreshing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp), strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary)
+                        } else {
+                            AnimatedVisibility(visible = serversRefreshed,
+                                enter = fadeIn(), exit = fadeOut()) {
+                                Icon(Icons.Rounded.Check, contentDescription = "Обновлено",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp))
+                            }
+                            if (!serversRefreshed) {
+                                Text(if (ping != null) "$ping мс" else "—",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
                         if (state.isVpnConnected && isSel) {
                             Spacer(Modifier.width(8.dp))
                             Box(Modifier.size(10.dp).clip(CircleShape)
@@ -1055,6 +1022,11 @@ fun ReedAccountScreen() {
     val uri = LocalUriHandler.current
     val scope = rememberCoroutineScope()
     var token by remember { mutableStateOf(ReedSession.token) }
+    // Документ для модального окна (внизу ЛК): title -> body; null = закрыто.
+    var policyDialog by remember { mutableStateOf<Pair<String, String>?>(null) }
+    policyDialog?.let { (title, body) ->
+        PolicyDialog(title = title, body = body, onDismiss = { policyDialog = null })
+    }
     var data by remember { mutableStateOf<SubscriptionResponse?>(null) }
     var statusMsg by remember { mutableStateOf("") }
     var friendCode by remember { mutableStateOf("") }
@@ -1322,6 +1294,36 @@ fun ReedAccountScreen() {
                 }
             }
         }
+
+        // Документы — открываются ВНУТРИ приложения модальным окном (требование Apple).
+        Spacer(Modifier.height(24.dp))
+        ReedSectionTitle("Документы")
+        Spacer(Modifier.height(8.dp))
+        PolicyLink(ReedPolicyTexts.TERMS_TITLE) {
+            policyDialog = ReedPolicyTexts.TERMS_TITLE to ReedPolicyTexts.TERMS_BODY
+        }
+        PolicyLink(ReedPolicyTexts.PRIVACY_TITLE) {
+            policyDialog = ReedPolicyTexts.PRIVACY_TITLE to ReedPolicyTexts.PRIVACY_BODY
+        }
+        PolicyLink(ReedPolicyTexts.CONSENT_TITLE) {
+            policyDialog = ReedPolicyTexts.CONSENT_TITLE to ReedPolicyTexts.CONSENT_BODY
+        }
+
         Spacer(Modifier.height(28.dp))
+    }
+}
+
+// Строка-ссылка на документ внизу ЛК: название + иконка ℹ️, открывает текст модалкой.
+@Composable
+private fun PolicyLink(title: String, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick)
+            .padding(vertical = 12.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+        Icon(Icons.Rounded.Info, contentDescription = "Открыть",
+            tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
     }
 }
