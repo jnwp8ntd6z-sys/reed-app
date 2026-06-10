@@ -53,6 +53,42 @@ internal expect suspend fun <T> withProxyAuthentication(
     block: suspend () -> T
 ): T
 
+// Временный VPN для регистрации через Telegram (до оформления подписки). Всегда
+// присутствует в списке локаций: без подписки/входа он единственный, с подпиской —
+// добавляется в конец. Конфиг для подключения тянется БЕЗ токена с /app/temp. Лимит
+// 5 ГБ/устройство считает и применяет приложение (клиентский счётчик).
+object ReedTempServer {
+    const val STORAGE_ID = "reed-temp-vpn"
+    const val LOCATION_ID = "reed-temp"
+    const val NAME = "Только приложение и Telegram Bot @reedvpnbot"
+    const val DESC = "VPN для регистрации через Telegram. Работает только приложение и Telegram."
+    const val LIMIT_BYTES = 5L * 1024 * 1024 * 1024  // 5 ГБ на устройство
+    private const val HOST = "132.243.242.194"
+    private const val PORT = 8443
+
+    fun entry(): LocationEntry = LocationEntry.from(
+        storageId = STORAGE_ID,
+        location = LocationConfig(
+            name = NAME,
+            id = LOCATION_ID,
+            key = "temp",          // ключ-сентинел (токен не нужен; конфиг с /app/temp)
+            engine = LocationConfig.ENGINE_VLESS,
+            host = HOST,
+            port = PORT,
+        ),
+        metadata = LocationMetadata(ip = "$HOST:$PORT"),
+    )
+
+    fun isTemp(storageId: String?): Boolean = storageId == STORAGE_ID
+    fun isTempConfig(config: LocationConfig?): Boolean = config?.id == LOCATION_ID
+}
+
+private fun LocationBundleV4.withTempServer(): LocationBundleV4 {
+    // Свежий temp всегда последним; убираем возможный персистнутый старый дубль.
+    val others = locations.filterNot { it.storageId == ReedTempServer.STORAGE_ID }
+    return copy(locations = others + ReedTempServer.entry())
+}
+
 class LocationsRepositoryImpl(
     private val dataSource: LocationsDataSource,
     private val httpClient: HttpClient = createProxyHttpClient(),
@@ -116,13 +152,14 @@ class LocationsRepositoryImpl(
 
     private suspend fun getBundleUnlocked(): LocationBundleV4 {
         val stored = dataSource.loadLocationBundle()?.normalized()
-        if (stored != null && stored.locations.isNotEmpty()) return stored
+        if (stored != null && stored.locations.isNotEmpty()) return stored.withTempServer()
 
         val legacy = migrateLegacyBundle()
         if (legacy.locations.isNotEmpty()) {
             dataSource.saveLocationBundle(legacy)
         }
-        return legacy
+        // Даже при пустом бандле (нет подписки/входа) показываем временный сервер.
+        return legacy.withTempServer()
     }
 
     override suspend fun saveBundle(bundle: LocationBundleV4) {

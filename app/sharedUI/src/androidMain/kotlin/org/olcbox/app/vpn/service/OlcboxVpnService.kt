@@ -735,13 +735,18 @@ class OlcboxVpnService : VpnService() {
         }
     }
 
-    /** Скачивает sing-box-конфиг с сервера: /app/singbox?token=&socks_port=&server=. */
+    /** Скачивает sing-box-конфиг с сервера: /app/singbox?token=&socks_port=&server=.
+     *  Для временного VPN (id=reed-temp) — БЕЗ токена с /app/temp (работает до входа). */
     private suspend fun fetchSingboxConfig(location: LocationConfig, socksPort: Int): String? =
         withContext(Dispatchers.IO) {
             val token = location.key
             val server = URLEncoder.encode(location.id, "UTF-8")
             val split = if (org.olcbox.app.data.reed.ReedSession.splitRouting) "1" else "0"
-            val url = "$REED_API_BASE/app/singbox?token=$token&socks_port=$socksPort&server=$server&split=$split"
+            val url = if (location.id == "reed-temp") {
+                "$REED_API_BASE/app/temp?socks_port=$socksPort"
+            } else {
+                "$REED_API_BASE/app/singbox?token=$token&socks_port=$socksPort&server=$server&split=$split"
+            }
             runCatching {
                 val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                     connectTimeout = 10_000

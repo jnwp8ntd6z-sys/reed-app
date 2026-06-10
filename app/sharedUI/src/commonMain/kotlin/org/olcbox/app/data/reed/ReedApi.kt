@@ -102,8 +102,16 @@ object ReedSession {
     var importedForToken: String? = null
 
     // Пользователь нажал «Подключить временный VPN» на экране входа → на главном экране
-    // автоматически выбрать и подключить временный сервер (полностью — в Сборке B).
+    // автоматически выбрать и подключить временный сервер.
     var useTempVpnOnEntry: Boolean = false
+
+    // Накопленный трафик временного VPN на устройстве (лимит 5 ГБ). Персист.
+    private const val KEY_TEMP_USED = "reed_temp_used_bytes"
+    var tempUsedBytes: Long = reedStoreGet(KEY_TEMP_USED)?.toLongOrNull() ?: 0L
+        set(value) {
+            field = value
+            reedStorePut(KEY_TEMP_USED, value.toString())
+        }
 
     // Split-routing: российские сайты идут напрямую мимо VPN. По умолчанию включён.
     // Применяется при подключении (передаётся в /app/singbox как &split=1/0).

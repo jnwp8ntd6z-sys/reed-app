@@ -91,6 +91,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.olcbox.app.data.reed.AppNotification
+import org.olcbox.app.data.datasource.ReedTempServer
 import org.olcbox.app.data.reed.DeviceInfo
 import org.olcbox.app.data.reed.DevicesResponse
 import org.olcbox.app.data.reed.ReedApi
@@ -519,6 +520,20 @@ fun ReedHomeScreen(
     }
     LaunchedEffect(ReedSession.token) { reloadSubscription() }
 
+    // Нажал «Подключить временный VPN» на экране входа → авто-выбор и подключение
+    // временного сервера (если не превышен лимит 5 ГБ на устройство).
+    LaunchedEffect(Unit) {
+        if (ReedSession.useTempVpnOnEntry) {
+            ReedSession.useTempVpnOnEntry = false
+            if (ReedSession.tempUsedBytes < ReedTempServer.LIMIT_BYTES) {
+                locationViewModel.selectLocation(ReedTempServer.STORAGE_ID) {
+                    homeViewModel.loadCurrentConfig()
+                    onToggleClick()
+                }
+            }
+        }
+    }
+
     // Авто-импорт серверов Reed после входа: один раз на токен, если серверов ещё нет.
     // Тянем olcRTC-конфиги (родной транспорт движка) — кнопкой можно подключиться.
     LaunchedEffect(ReedSession.token, locations.size) {
@@ -728,17 +743,24 @@ fun ReedHomeScreen(
         } else {
             locations.forEach { loc ->
                 val isSel = loc.storageId == selectedId
+                val isTemp = ReedTempServer.isTemp(loc.storageId)
                 val ping = pingFor(pingsState, loc.storageId)
+                // Временный сервер — оранжевая плашка (фишка для регистрации), остальные — лайм.
+                val accent = if (isTemp) MaterialTheme.colorScheme.secondary
+                    else MaterialTheme.colorScheme.primary
+                val bg = when {
+                    isTemp -> MaterialTheme.colorScheme.secondary.copy(alpha = if (isSel) 0.20f else 0.12f)
+                    isSel -> MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                    else -> MaterialTheme.colorScheme.surfaceContainer
+                }
                 Box(
                     Modifier.fillMaxWidth().padding(bottom = 8.dp)
                         .clip(RoundedCornerShape(16.dp))
-                        .background(
-                            if (isSel) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-                            else MaterialTheme.colorScheme.surfaceContainer
-                        )
+                        .background(bg)
                         .border(
-                            if (isSel) 2.dp else 1.dp,
-                            if (isSel) MaterialTheme.colorScheme.primary
+                            if (isSel || isTemp) 2.dp else 1.dp,
+                            if (isTemp) accent
+                            else if (isSel) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.outlineVariant,
                             RoundedCornerShape(16.dp)
                         )
@@ -753,11 +775,16 @@ fun ReedHomeScreen(
                 ) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text(loc.fullName,
+                            // У временного — трафик «x/5 ГБ» прямо в названии.
+                            val tempUsedGb = (ReedSession.tempUsedBytes.toDouble() /
+                                (1024.0 * 1024 * 1024) * 10).toLong() / 10.0
+                            val title = if (isTemp) "${loc.fullName}  ·  $tempUsedGb/5 ГБ"
+                                else loc.fullName
+                            Text(title,
                                 style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black,
-                                color = if (isSel) MaterialTheme.colorScheme.primary
+                                color = if (isTemp || isSel) accent
                                 else MaterialTheme.colorScheme.onSurface)
-                            val desc = serverDescByName[loc.fullName]
+                            val desc = if (isTemp) ReedTempServer.DESC else serverDescByName[loc.fullName]
                             if (!desc.isNullOrBlank()) {
                                 Text(desc,
                                     style = MaterialTheme.typography.labelSmall,
