@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -44,6 +45,7 @@ import androidx.compose.material.icons.rounded.Shield
 import androidx.compose.material.icons.rounded.Smartphone
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.Wifi
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
@@ -53,6 +55,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -144,6 +147,18 @@ fun ReedOnboardingScreen(onDone: () -> Unit) {
     var statusMsg by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
 
+    // Три обязательных согласия — кнопка регистрации активна только когда все отмечены.
+    var acceptTerms by remember { mutableStateOf(false) }
+    var acceptPrivacy by remember { mutableStateOf(false) }
+    var acceptConsent by remember { mutableStateOf(false) }
+    val allAccepted = acceptTerms && acceptPrivacy && acceptConsent
+
+    // Документ для модального окна (title -> body); null = окно закрыто.
+    var policyDialog by remember { mutableStateOf<Pair<String, String>?>(null) }
+    policyDialog?.let { (title, body) ->
+        PolicyDialog(title = title, body = body, onDismiss = { policyDialog = null })
+    }
+
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
     ) {
@@ -167,17 +182,36 @@ fun ReedOnboardingScreen(onDone: () -> Unit) {
         }
         Spacer(Modifier.height(32.dp))
 
-        OnboardFeature(Icons.Rounded.Shield, "Обходит блокировки",
-            "Работает там, где другие VPN не справляются")
-        OnboardFeature(Icons.Rounded.Bolt, "Быстро и без рекламы",
-            "Свои серверы, высокая скорость, никакой рекламы")
-        OnboardFeature(Icons.Rounded.Public, "Серверы по всему миру",
-            "Нидерланды, Германия, Финляндия, Польша и другие")
+        // Три согласия с открытием полного текста внутри приложения (иконка ℹ️).
+        Text("Перед регистрацией примите документы:",
+            style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black)
+        Spacer(Modifier.height(12.dp))
+        ConsentRow(
+            title = ReedPolicyTexts.TERMS_TITLE,
+            checked = acceptTerms,
+            onCheckedChange = { acceptTerms = it },
+            onInfo = { policyDialog = ReedPolicyTexts.TERMS_TITLE to ReedPolicyTexts.TERMS_BODY },
+        )
+        ConsentRow(
+            title = ReedPolicyTexts.PRIVACY_TITLE,
+            checked = acceptPrivacy,
+            onCheckedChange = { acceptPrivacy = it },
+            onInfo = { policyDialog = ReedPolicyTexts.PRIVACY_TITLE to ReedPolicyTexts.PRIVACY_BODY },
+        )
+        ConsentRow(
+            title = ReedPolicyTexts.CONSENT_TITLE,
+            checked = acceptConsent,
+            onCheckedChange = { acceptConsent = it },
+            onInfo = { policyDialog = ReedPolicyTexts.CONSENT_TITLE to ReedPolicyTexts.CONSENT_BODY },
+        )
 
         Spacer(Modifier.height(20.dp))
 
-        ReedPrimaryButton(if (busy) "Подтвердите в Telegram…" else "Войти через Telegram") {
-            if (busy) return@ReedPrimaryButton
+        ReedPrimaryButton(
+            text = if (busy) "Подтвердите в Telegram…" else "Зарегистрироваться через Telegram",
+            enabled = allAccepted && !busy,
+        ) {
+            if (busy || !allAccepted) return@ReedPrimaryButton
             busy = true
             statusMsg = ""
             scope.launch {
@@ -202,26 +236,71 @@ fun ReedOnboardingScreen(onDone: () -> Unit) {
                 busy = false
             }
         }
+        if (!allAccepted) {
+            Spacer(Modifier.height(8.dp))
+            Text("Отметьте все три пункта, чтобы продолжить.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+        }
+
         Spacer(Modifier.height(12.dp))
-        ReedSecondaryButton("Пропустить — у меня нет аккаунта") {
+        // Временный VPN — только для того, чтобы дойти до Telegram и зарегистрироваться.
+        ReedSecondaryButton("Подключить временный VPN") {
             ReedSession.onboardingDone = true
             onDone()
         }
+
         if (statusMsg.isNotEmpty()) {
             Spacer(Modifier.height(12.dp))
             MutedText(statusMsg)
         }
-        Spacer(Modifier.height(16.dp))
-        Text(
-            "Вход нужен, чтобы подтянуть вашу подписку и серверы. " +
-                "Без входа можно осмотреться, но подключение будет недоступно.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth(),
-        )
         Spacer(Modifier.height(24.dp))
     }
+}
+
+// Строка согласия: чекбокс (✅) + название документа + иконка ℹ️ для открытия текста.
+@Composable
+private fun ConsentRow(
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    onInfo: () -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(checked = checked, onCheckedChange = onCheckedChange)
+        Spacer(Modifier.width(4.dp))
+        Text(
+            title,
+            modifier = Modifier.weight(1f).clickable { onCheckedChange(!checked) },
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Icon(
+            Icons.Rounded.Info,
+            contentDescription = "Открыть текст",
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(22.dp).clip(CircleShape).clickable { onInfo() },
+        )
+    }
+}
+
+// Модальное окно с полным текстом документа (прокручивается). Внутри приложения.
+@Composable
+private fun PolicyDialog(title: String, body: String, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } },
+        title = { Text(title, fontWeight = FontWeight.Black) },
+        text = {
+            Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                Text(body, style = MaterialTheme.typography.bodySmall)
+            }
+        },
+    )
 }
 
 // Раскрывающаяся плашка: иконка + заголовок + подзаголовок + поворачивающийся шеврон.
@@ -559,10 +638,10 @@ fun ReedHomeScreen(
             // Нейтральный блок без призыва к оплате (требование Apple App Store):
             // всё управление подпиской — в Telegram-боте.
             ReedCard {
-                Text("Подписка не активна", style = MaterialTheme.typography.titleMedium,
+                Text("Подписка закончилась", style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Black)
                 Spacer(Modifier.height(8.dp))
-                Text("Полное управление подпиской осуществляется в Telegram-Боте.",
+                Text("Настройте в боте.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(16.dp))

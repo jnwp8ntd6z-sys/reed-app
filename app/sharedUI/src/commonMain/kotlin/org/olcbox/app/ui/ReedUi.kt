@@ -39,9 +39,15 @@ fun ReedCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() 
 }
 
 @Composable
-fun ReedPrimaryButton(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun ReedPrimaryButton(
+    text: String,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
     Button(
         onClick = onClick,
+        enabled = enabled,
         modifier = modifier.fillMaxWidth().height(52.dp),
         shape = ReedButtonShape,
     ) {
