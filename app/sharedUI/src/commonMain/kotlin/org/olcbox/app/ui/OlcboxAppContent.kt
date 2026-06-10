@@ -67,7 +67,12 @@ fun OlcboxAppContent(
     // Онбординг при первом запуске (до основного интерфейса).
     var showOnboarding by remember { mutableStateOf(!ReedSession.onboardingDone) }
     if (showOnboarding) {
-        ReedOnboardingScreen(onDone = { showOnboarding = false })
+        ReedOnboardingScreen(
+            homeViewModel = homeViewModel,
+            locationViewModel = locationViewModel,
+            onToggleClick = onToggleClick,
+            onDone = { showOnboarding = false },
+        )
         return
     }
 

@@ -11,7 +11,7 @@ import kotlin.time.TimeSource
  * для VLESS-серверов (кнопка «Тест»). Возвращает миллисекунды или null при ошибке/таймауте.
  * Кроссплатформенно через ktor-network (JVM/Android/iOS/macOS).
  */
-suspend fun tcpPingMs(host: String, port: Int, timeoutMs: Long = 2500): Long? {
+suspend fun tcpPingMs(host: String, port: Int, timeoutMs: Long = 3500): Long? {
     if (host.isBlank() || port <= 0) return null
     val selector = SelectorManager(Dispatchers.Default)
     return try {

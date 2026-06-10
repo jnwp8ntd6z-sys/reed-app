@@ -62,9 +62,10 @@ class AppActivity : ComponentActivity() {
 
         enableEdgeToEdge()
         setContent {
-            val dynamicThemeEnabled by vpnManager.dynamicThemeEnabled.collectAsState()
-
-            AppTheme(useDynamicColor = dynamicThemeEnabled) {
+            // Reed VPN — фирменный лаймовый бренд. НЕ используем Material You
+            // (dynamicColor): на реальном телефоне он перекрашивал наш лайм в блёклый
+            // зелёный из палитры обоев (в эмуляторе обоев нет → выглядело верно).
+            AppTheme(useDynamicColor = false) {
                 AndroidMainScreen(
                     viewModel = viewModel,
                     locationViewModel = locationViewModel,

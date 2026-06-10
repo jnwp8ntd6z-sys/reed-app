@@ -117,11 +117,14 @@ class HomeScreenViewModel(
         if (config.isVless()) {
             return org.olcbox.app.data.tcpPingMs(config.host, config.port)
         }
-        // olcRTC (LTE): движковый ping ненадёжен/не доходит — меряем TCP-пинг до
-        // хоста комнаты (Jitsi-сигналинг), как у обычных серверов. Это даёт реальное
+        // olcRTC (LTE): сначала TCP-пинг до хоста комнаты (Jitsi-сигналинг) — даёт реальное
         // число вместо «—». host берём из metadata, иначе из URL комнаты (config.id).
-        val (host, port) = olcRtcPingTarget(config) ?: return vpnManager.ping(config)
-        return org.olcbox.app.data.tcpPingMs(host, port)
+        // Если TCP-пинг не прошёл (DNS/блок/таймаут) — пробуем движковый ping как запасной.
+        val target = olcRtcPingTarget(config)
+        if (target != null) {
+            org.olcbox.app.data.tcpPingMs(target.first, target.second)?.let { return it }
+        }
+        return vpnManager.ping(config)
     }
 
     /** host:port для TCP-пинга olcRTC-локации: из metadata.ip либо из URL комнаты. */

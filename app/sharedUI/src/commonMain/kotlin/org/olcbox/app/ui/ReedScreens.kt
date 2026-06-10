@@ -149,11 +149,35 @@ private fun OnboardFeature(icon: ImageVector, title: String, subtitle: String) {
 }
 
 @Composable
-fun ReedOnboardingScreen(onDone: () -> Unit) {
+fun ReedOnboardingScreen(
+    homeViewModel: HomeScreenViewModel,
+    locationViewModel: LocationViewModel,
+    onToggleClick: () -> Unit,
+    onDone: () -> Unit,
+) {
     val uri = LocalUriHandler.current
     val scope = rememberCoroutineScope()
     var statusMsg by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
+    val state by homeViewModel.state.collectAsState()
+
+    // Временный VPN подключается ПРЯМО на этом экране (для входа), не уводя на главную.
+    val tempConnected = state.isVpnConnected
+    val tempConnecting = state.isVpnLoading
+    val limitReached = ReedSession.tempUsedBytes >= ReedTempServer.LIMIT_BYTES
+
+    // Таймер сессии временного VPN.
+    var sessionSeconds by remember { mutableStateOf(0L) }
+    LaunchedEffect(tempConnected) {
+        if (tempConnected) { sessionSeconds = 0L; while (true) { delay(1000); sessionSeconds += 1 } }
+        else sessionSeconds = 0L
+    }
+
+    // Плавный переход цвета кнопки: белая → зелёная при подключении.
+    val tempBtnBg by animateColorAsState(
+        targetValue = if (tempConnected) MaterialTheme.colorScheme.primary else Color.White,
+        animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing), label = "tempBtnBg")
+    val tempBtnFg = if (tempConnected) MaterialTheme.colorScheme.onPrimary else Color(0xFF0A0A0A)
 
     // Тёмный брендовый фон Reed — экран входа показывается раньше основного интерфейса,
     // поэтому фон задаём явно (иначе видно серое окно платформы).
@@ -168,23 +192,44 @@ fun ReedOnboardingScreen(onDone: () -> Unit) {
 
             Spacer(Modifier.height(40.dp))
 
-            // 1) Временный VPN — белая кнопка, ВЫШЕ регистрации. Нужен, чтобы дойти до
-            // Telegram и зарегистрироваться (полное подключение допиливается в Сборке B).
+            // 1) Временный VPN — белая кнопка ВЫШЕ регистрации. Подключается здесь же,
+            // чтобы через него дойти до Telegram и зарегистрироваться (вход → бот).
             Text("VPN для регистрации через Telegram. Работает только приложение и Telegram — этого достаточно, чтобы войти и оформить подписку.",
                 style = MaterialTheme.typography.bodyMedium, color = Color.White)
             Spacer(Modifier.height(10.dp))
             Button(
                 onClick = {
-                    ReedSession.useTempVpnOnEntry = true
-                    ReedSession.onboardingDone = true
-                    onDone()
+                    if (tempConnecting) return@Button
+                    if (tempConnected) {
+                        onToggleClick()  // отключить
+                    } else if (!limitReached) {
+                        // Выбрать временный сервер и подключиться, оставаясь на экране входа.
+                        locationViewModel.selectLocation(ReedTempServer.STORAGE_ID) {
+                            homeViewModel.loadCurrentConfig()
+                            onToggleClick()
+                        }
+                    }
                 },
+                enabled = !limitReached || tempConnected,
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color.White, contentColor = Color(0xFF0A0A0A)),
+                    containerColor = tempBtnBg, contentColor = tempBtnFg),
             ) {
-                Text("Подключить временный VPN", fontWeight = FontWeight.Black)
+                Text(
+                    when {
+                        tempConnected -> "Временный VPN подключён · ${formatSession(sessionSeconds)}"
+                        tempConnecting -> "Подключаюсь…"
+                        limitReached -> "Лимит временного VPN исчерпан"
+                        else -> "Подключить временный VPN"
+                    },
+                    fontWeight = FontWeight.Black)
+            }
+            if (tempConnected) {
+                Spacer(Modifier.height(8.dp))
+                Text("Готово — теперь зарегистрируйтесь через Telegram ниже.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold)
             }
 
             Spacer(Modifier.height(20.dp))
@@ -399,6 +444,10 @@ private fun pingFor(state: PingsState, id: String): Int? = when (state) {
     PingsState.Idle -> null
 }
 
+// Идёт ли сейчас замер пинга для этой локации (для крутящегося индикатора у строки).
+private fun pingLoadingFor(state: PingsState, id: String): Boolean =
+    state is PingsState.Loading && state.pendingLocationIds.contains(id)
+
 @Composable
 private fun ratioColor(ratio: Double) = when {
     ratio < 0.7 -> MaterialTheme.colorScheme.primary
@@ -496,6 +545,7 @@ private fun ReedServerRow(
     isSelected: Boolean,
     isConnectedHere: Boolean,
     ping: Int?,
+    pingLoading: Boolean,
     serversRefreshing: Boolean,
     serversRefreshed: Boolean,
     desc: String?,
@@ -537,7 +587,8 @@ private fun ReedServerRow(
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            // Трейлинг: при обновлении — спиннер; после успеха — галочка (плавно гаснет); иначе — пинг.
+            // Трейлинг: обновление серверов → спиннер; после успеха → галочка (гаснет);
+            // замер пинга → спиннер; иначе — значение пинга.
             if (serversRefreshing) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(18.dp), strokeWidth = 2.dp,
@@ -548,9 +599,15 @@ private fun ReedServerRow(
                         tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                 }
                 if (!serversRefreshed) {
-                    Text(if (ping != null) "$ping мс" else "—",
-                        style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (pingLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp), strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary)
+                    } else {
+                        Text(if (ping != null) "$ping мс" else "—",
+                            style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
             if (isConnectedHere) {
@@ -841,6 +898,7 @@ fun ReedHomeScreen(
                     isSelected = loc.storageId == selectedId,
                     isConnectedHere = state.isVpnConnected && loc.storageId == selectedId,
                     ping = pingFor(pingsState, loc.storageId),
+                    pingLoading = pingLoadingFor(pingsState, loc.storageId),
                     serversRefreshing = serversRefreshing,
                     serversRefreshed = serversRefreshed,
                     desc = serverDescByName[loc.fullName],
@@ -875,6 +933,7 @@ fun ReedHomeScreen(
                         isSelected = tempServer.storageId == selectedId,
                         isConnectedHere = state.isVpnConnected && tempServer.storageId == selectedId,
                         ping = pingFor(pingsState, tempServer.storageId),
+                        pingLoading = pingLoadingFor(pingsState, tempServer.storageId),
                         serversRefreshing = serversRefreshing,
                         serversRefreshed = serversRefreshed,
                         desc = ReedTempServer.DESC,
@@ -891,6 +950,7 @@ fun ReedHomeScreen(
                     isSelected = onlyTemp.storageId == selectedId,
                     isConnectedHere = state.isVpnConnected && onlyTemp.storageId == selectedId,
                     ping = pingFor(pingsState, onlyTemp.storageId),
+                    pingLoading = pingLoadingFor(pingsState, onlyTemp.storageId),
                     serversRefreshing = serversRefreshing,
                     serversRefreshed = serversRefreshed,
                     desc = if (ReedTempServer.isTemp(onlyTemp.storageId)) ReedTempServer.DESC
