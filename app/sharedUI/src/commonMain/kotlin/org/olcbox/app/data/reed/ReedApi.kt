@@ -36,6 +36,10 @@ object ReedApi {
     suspend fun subscription(token: String): SubscriptionResponse =
         client.get("$BASE/app/subscription") { parameter("token", token) }.body()
 
+    // Список всех активных подписок аккаунта (для переключателя «Сменить подписку»).
+    suspend fun subscriptions(token: String): SubscriptionsResponse =
+        client.get("$BASE/app/subscriptions") { parameter("token", token) }.body()
+
     // Аватар пользователя (JPEG). Возвращает байты или null, если фото нет / ошибка.
     suspend fun avatarBytes(token: String): ByteArray? = try {
         val resp = client.get("$BASE/app/avatar") { parameter("token", token) }
@@ -174,6 +178,26 @@ data class SubInfo(
     val expires_at: String? = null,
     val seconds_left: Long = 0,
     val days_left: Long = 0,
+)
+
+@Serializable
+data class SubscriptionsResponse(
+    val subscriptions: List<SubscriptionItem> = emptyList(),
+    val count: Int = 0,
+)
+
+@Serializable
+data class SubscriptionItem(
+    val sub_token: String,
+    val plan_id: String? = null,
+    val plan_type: String? = null,
+    val plan_label: String? = null,
+    val expires_at: String? = null,
+    val seconds_left: Long = 0,
+    val days_left: Long = 0,
+    val used: Long = 0,
+    val total: Long = 0,
+    val current: Boolean = false,
 )
 
 @Serializable

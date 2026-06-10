@@ -97,6 +97,7 @@ import org.olcbox.app.data.reed.DevicesResponse
 import org.olcbox.app.data.reed.ReedApi
 import org.olcbox.app.data.reed.ReedLinks
 import org.olcbox.app.data.reed.ReedSession
+import org.olcbox.app.data.reed.SubscriptionItem
 import org.olcbox.app.data.reed.SubscriptionResponse
 import org.olcbox.app.data.reed.decodeImageBitmap
 import org.olcbox.app.ui.features.home.HomeScreenViewModel
@@ -652,6 +653,15 @@ fun ReedHomeScreen(
     }
     LaunchedEffect(ReedSession.token) { reloadSubscription() }
 
+    // Все подписки аккаунта (для переключателя «Сменить подписку» на карточке трафика).
+    var subsList by remember { mutableStateOf<List<SubscriptionItem>>(emptyList()) }
+    var showSubSwitcher by remember { mutableStateOf(false) }
+    suspend fun reloadSubsList() {
+        val t = ReedSession.token ?: return
+        subsList = try { ReedApi.subscriptions(t).subscriptions } catch (e: Throwable) { subsList }
+    }
+    LaunchedEffect(ReedSession.token) { reloadSubsList() }
+
     // Нажал «Подключить временный VPN» на экране входа → авто-выбор и подключение
     // временного сервера (если не превышен лимит 5 ГБ на устройство).
     LaunchedEffect(Unit) {
@@ -785,20 +795,85 @@ fun ReedHomeScreen(
             }
             Spacer(Modifier.height(20.dp))
         } else {
+            // Карточка трафика. Если у аккаунта несколько подписок — она раскрывается
+            // в список со сменой активной подписки (как плашки в настройках).
+            val switchable = subsList.size > 1
+            val subChevronRot by animateFloatAsState(
+                if (showSubSwitcher) 90f else 0f, label = "subChevron")
             ReedCard {
-                val normalUsed = (data?.traffic?.used ?: 0L) / BYTES_IN_GB
-                val normalTotal = (data?.traffic?.total ?: 0L) / BYTES_IN_GB
-                ReedTrafficBar("Трафик", normalUsed, normalTotal)
-                Spacer(Modifier.height(16.dp))
-                Box(Modifier.fillMaxWidth().height(1.dp)
-                    .background(MaterialTheme.colorScheme.outlineVariant))
-                Spacer(Modifier.height(14.dp))
-                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(formatCountdown(sub?.seconds_left ?: 0L),
-                        style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
-                    Spacer(Modifier.height(2.dp))
-                    Text("ОКОНЧАНИЕ ПОДПИСКИ", style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(
+                    Modifier.fillMaxWidth().then(
+                        if (switchable) Modifier.clickable { showSubSwitcher = !showSubSwitcher }
+                        else Modifier
+                    )
+                ) {
+                    val normalUsed = (data?.traffic?.used ?: 0L) / BYTES_IN_GB
+                    val normalTotal = (data?.traffic?.total ?: 0L) / BYTES_IN_GB
+                    ReedTrafficBar("Трафик", normalUsed, normalTotal)
+                    Spacer(Modifier.height(16.dp))
+                    Box(Modifier.fillMaxWidth().height(1.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant))
+                    Spacer(Modifier.height(14.dp))
+                    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(formatCountdown(sub?.seconds_left ?: 0L),
+                            style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
+                        Spacer(Modifier.height(2.dp))
+                        Text((sub?.plan_label ?: "Окончание подписки").uppercase(),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (switchable) {
+                        Spacer(Modifier.height(10.dp))
+                        Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Rounded.ChevronRight, contentDescription = null,
+                                tint = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.rotate(subChevronRot))
+                            Text("Нажмите, чтобы сменить подписку",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                AnimatedVisibility(visible = showSubSwitcher && switchable,
+                    enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                    Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                        subsList.forEach { item ->
+                            val isCur = item.current || item.sub_token == ReedSession.token
+                            Row(
+                                Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(
+                                        if (isCur) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                                        else MaterialTheme.colorScheme.surfaceContainer)
+                                    .border(1.dp,
+                                        if (isCur) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.outlineVariant,
+                                        RoundedCornerShape(12.dp))
+                                    .clickable(enabled = !isCur) {
+                                        // Переключение активной подписки = смена токена.
+                                        ReedSession.token = item.sub_token
+                                        ReedSession.importedForToken = null  // переимпорт серверов
+                                        token = item.sub_token
+                                        showSubSwitcher = false
+                                        scope.launch { reloadSubscription(); reloadSubsList() }
+                                    }
+                                    .padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(item.plan_label ?: "Подписка",
+                                        style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black,
+                                        color = if (isCur) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurface)
+                                    MutedText("ещё ${item.days_left} дн.")
+                                }
+                                if (isCur) {
+                                    Icon(Icons.Rounded.Check, contentDescription = "Активна",
+                                        tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                                }
+                            }
+                        }
+                    }
                 }
             }
             Spacer(Modifier.height(24.dp))
