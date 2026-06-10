@@ -1,6 +1,9 @@
 package org.olcbox.app.vpn.service
 
 import android.util.Log
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -22,8 +25,11 @@ object OlcboxVpnState {
     }
 
     fun addLog(msg: String) {
-        Log.d(TAG, msg)
-        _logs.update { (it + msg).takeLast(MAX_LOG_ENTRIES) }
+        // Таймстемп на каждой строке — чтобы по экспорту логов можно было замерить, где
+        // именно теряется время при подключении (и удобнее разбирать любые проблемы).
+        val line = "${SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(Date())} $msg"
+        Log.d(TAG, line)
+        _logs.update { (it + line).takeLast(MAX_LOG_ENTRIES) }
     }
 
     private const val MAX_LOG_ENTRIES = 1_000

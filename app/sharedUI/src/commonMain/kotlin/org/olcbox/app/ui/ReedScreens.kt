@@ -524,6 +524,12 @@ fun ReedHomeScreen(
     val selectedId = locationViewModel.selectedLocationId
     var consent by remember { mutableStateOf(ReedSession.consentAccepted) }
 
+    // Локальное зеркало токена — чтобы перерисовать экран после входа на главном экране.
+    var token by remember { mutableStateOf(ReedSession.token) }
+    var loginBusy by remember { mutableStateOf(false) }
+    var loginMsg by remember { mutableStateOf("") }
+    var logsMsg by remember { mutableStateOf("") }
+
     var data by remember { mutableStateOf<SubscriptionResponse?>(null) }
     // Первая загрузка подписки ещё не завершилась — чтобы не мигать «Подписка не
     // активна», пока идёт запрос (выглядело как «вылет из аккаунта» при перезаходе).
@@ -624,7 +630,51 @@ fun ReedHomeScreen(
             Spacer(Modifier.height(12.dp))
         }
 
-        if (ReedSession.token != null && !subLoaded && data == null) {
+        if (token == null) {
+            // Не вошёл через Telegram — даём рабочую кнопку регистрации прямо на главном.
+            ReedCard {
+                Text("Войдите через Telegram", style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Black)
+                Spacer(Modifier.height(8.dp))
+                Text("Чтобы подтянуть подписку и серверы.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(16.dp))
+                ReedPrimaryButton(
+                    text = if (loginBusy) "Подтвердите в Telegram…" else "Зарегистрироваться через Telegram",
+                    enabled = !loginBusy,
+                ) {
+                    if (loginBusy) return@ReedPrimaryButton
+                    loginBusy = true
+                    loginMsg = ""
+                    scope.launch {
+                        try {
+                            val start = ReedApi.authStart()
+                            uri.openUri(start.deeplink)
+                            loginMsg = "Подтвердите вход в Telegram…"
+                            repeat(60) {
+                                delay(2000)
+                                val poll = ReedApi.authPoll(start.nonce)
+                                if (poll.status == "ok") {
+                                    ReedSession.token = poll.token
+                                    token = poll.token
+                                    loginMsg = ""
+                                    return@launch
+                                }
+                            }
+                            loginMsg = "Вход не завершён, попробуйте снова"
+                        } catch (e: Throwable) {
+                            loginMsg = "Ошибка входа, попробуйте снова"
+                        }
+                        loginBusy = false
+                    }
+                }
+                if (loginMsg.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp)); MutedText(loginMsg)
+                }
+            }
+            Spacer(Modifier.height(20.dp))
+        } else if (ReedSession.token != null && !subLoaded && data == null) {
             // Идёт первичная загрузка данных аккаунта — показываем нейтральный
             // плейсхолдер, а не «Подписка не активна» (чтобы не выглядело как вылет).
             ReedCard {
@@ -704,8 +754,17 @@ fun ReedHomeScreen(
             // Экспорт логов подключения (для диагностики проблем с VPN) — открывает
             // системное «Поделиться»: можно отправить лог в Telegram-бот/поддержку.
             IconAction(Icons.Rounded.BugReport, "Логи") {
-                homeViewModel.onShareLogs()
+                // Android/iOS — системное «Поделиться»; Windows — копирование в буфер.
+                // Показываем короткое подтверждение, чтобы на десктопе кнопка не «молчала».
+                homeViewModel.onShareLogs(
+                    onShared = { logsMsg = it.ifBlank { "Логи готовы" } },
+                    onError = { logsMsg = "Не удалось выгрузить логи" },
+                )
             }
+        }
+        if (logsMsg.isNotEmpty()) {
+            Spacer(Modifier.height(6.dp))
+            MutedText(logsMsg)
         }
         Spacer(Modifier.height(14.dp))
 

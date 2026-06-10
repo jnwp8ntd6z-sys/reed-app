@@ -684,10 +684,13 @@ class OlcboxVpnService : VpnService() {
             bindProcessToNetwork(upstream, "Bound VLESS to ${getNetName(upstream)}")
 
             addLog("Fetching VLESS config server=${config.id}")
+            val tFetch = System.currentTimeMillis()
             val singboxJson = fetchSingboxConfig(config, targetSocksPort)
                 ?: throw IllegalStateException("Failed to fetch VLESS config")
+            addLog("VLESS config fetched in ${System.currentTimeMillis() - tFetch}ms")
 
             addLog("Starting VLESS (sing-box) on $socksListenHost:$targetSocksPort")
+            val tStart = System.currentTimeMillis()
             SingBoxTunnel.start(singboxJson)
             vlessActive = true
 
@@ -706,6 +709,7 @@ class OlcboxVpnService : VpnService() {
             if (!ready) throw IllegalStateException("VLESS SOCKS not ready")
 
             markRtcConnected()
+            addLog("VLESS SOCKS ready in ${System.currentTimeMillis() - tStart}ms")
             addLog("VLESS ready on $socksListenHost:$targetSocksPort")
             true
         } catch (e: CancellationException) {
