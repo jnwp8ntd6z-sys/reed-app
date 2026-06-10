@@ -7,10 +7,12 @@ import io.ktor.client.request.get
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 
 /**
@@ -20,10 +22,15 @@ import kotlinx.serialization.json.Json
  */
 object ReedApi {
     private const val BASE = "https://reed-vpn.duckdns.org"
+    // Ключ кэша последнего успешного ответа /app/subscription (персист). Нужен, чтобы
+    // без интернета приложение не выглядело как «вылет из аккаунта»: показываем кэш.
+    private const val KEY_SUB_CACHE = "reed_sub_cache"
+
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     private val client = HttpClient {
         install(ContentNegotiation) {
-            json(Json { ignoreUnknownKeys = true; isLenient = true })
+            json(json)
         }
     }
 
@@ -33,8 +40,20 @@ object ReedApi {
     suspend fun authPoll(nonce: String): AuthPoll =
         client.get("$BASE/app/auth/poll") { parameter("nonce", nonce) }.body()
 
-    suspend fun subscription(token: String): SubscriptionResponse =
-        client.get("$BASE/app/subscription") { parameter("token", token) }.body()
+    suspend fun subscription(token: String): SubscriptionResponse {
+        val text = client.get("$BASE/app/subscription") { parameter("token", token) }.bodyAsText()
+        val parsed = json.decodeFromString<SubscriptionResponse>(text)
+        // Кэшируем только активную подписку — чтобы офлайн показывать рабочий аккаунт,
+        // а не последний «закончилась».
+        if (parsed.subscription.status == "active") reedStorePut(KEY_SUB_CACHE, text)
+        return parsed
+    }
+
+    /** Последняя успешно загруженная подписка из кэша (для офлайна). null если кэша нет. */
+    fun cachedSubscription(): SubscriptionResponse? {
+        val text = reedStoreGet(KEY_SUB_CACHE) ?: return null
+        return try { json.decodeFromString<SubscriptionResponse>(text) } catch (e: Throwable) { null }
+    }
 
     // Список всех активных подписок аккаунта (для переключателя «Сменить подписку»).
     suspend fun subscriptions(token: String): SubscriptionsResponse =

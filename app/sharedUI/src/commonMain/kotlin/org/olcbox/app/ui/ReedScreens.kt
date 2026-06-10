@@ -648,7 +648,9 @@ fun ReedHomeScreen(
     var subLoaded by remember { mutableStateOf(false) }
     suspend fun reloadSubscription() {
         val t = ReedSession.token ?: return
-        data = try { ReedApi.subscription(t) } catch (e: Throwable) { data }
+        // Офлайн/сбой сети → НЕ выходим из аккаунта: показываем кэш последней активной
+        // подписки (или то, что уже было загружено), а не «Подписка закончилась».
+        data = try { ReedApi.subscription(t) } catch (e: Throwable) { data ?: ReedApi.cachedSubscription() }
         subLoaded = true
     }
     LaunchedEffect(ReedSession.token) { reloadSubscription() }
@@ -798,8 +800,6 @@ fun ReedHomeScreen(
             // Карточка трафика. Если у аккаунта несколько подписок — она раскрывается
             // в список со сменой активной подписки (как плашки в настройках).
             val switchable = subsList.size > 1
-            val subChevronRot by animateFloatAsState(
-                if (showSubSwitcher) 90f else 0f, label = "subChevron")
             ReedCard {
                 Column(
                     Modifier.fillMaxWidth().then(
@@ -824,13 +824,17 @@ fun ReedHomeScreen(
                     }
                     if (switchable) {
                         Spacer(Modifier.height(10.dp))
+                        // Текст сверху (мелкий, серый), стрелка ПОД текстом и всегда
+                        // направлена вниз (ChevronRight повёрнут на 90°), серого цвета.
                         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Rounded.ChevronRight, contentDescription = null,
-                                tint = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.rotate(subChevronRot))
                             Text("Нажмите, чтобы сменить подписку",
                                 style = MaterialTheme.typography.labelSmall,
+                                fontSize = 10.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.height(2.dp))
+                            Icon(Icons.Rounded.ChevronRight, contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.rotate(90f))
                         }
                     }
                 }
