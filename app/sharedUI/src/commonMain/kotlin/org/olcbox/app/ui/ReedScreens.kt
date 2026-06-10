@@ -538,7 +538,10 @@ fun ReedHomeScreen(
     // Тянем olcRTC-конфиги (родной транспорт движка) — кнопкой можно подключиться.
     LaunchedEffect(ReedSession.token, locations.size) {
         val t = ReedSession.token
-        if (t != null && locations.isEmpty() && ReedSession.importedForToken != t) {
+        // «Серверов ещё нет» = нет НИ ОДНОЙ не-временной локации (временный сервер
+        // присутствует всегда, поэтому isEmpty() тут не годится).
+        val hasRealServers = locations.any { !ReedTempServer.isTemp(it.storageId) }
+        if (t != null && !hasRealServers && ReedSession.importedForToken != t) {
             ReedSession.importedForToken = t
             // Сначала olcRTC-локации (родной транспорт движка), затем VLESS из
             // /app/locations. VLESS импортируется последним → именно быстрый VLESS
