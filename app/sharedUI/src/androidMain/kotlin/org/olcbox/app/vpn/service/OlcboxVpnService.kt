@@ -284,8 +284,13 @@ class OlcboxVpnService : VpnService() {
             }
         }
 
+        // TUN-сигнатура до применения новых опций: если параметры, влияющие на
+        // сам TUN-интерфейс (режим, SOCKS-порт/хост, split-tunnel), не изменились,
+        // смену сервера можно выполнить бесшовно (in-place), не пересоздавая туннель.
+        val previousTunSignature = tunBuildSignature()
         applyStartOptions(loadStartOptions(intent))
         val isRestart = shouldRestartForStartCommand()
+        val allowInPlaceRestart = isRestart && tunBuildSignature() == previousTunSignature
         if (isRestart) {
             addLog("Restarting ${activeModeLabel()} for selected location")
         }
@@ -296,7 +301,11 @@ class OlcboxVpnService : VpnService() {
                 "Protecting your connection"
             }
         )
-        startTunnel(isMigration = false, isRestart = isRestart)
+        startTunnel(
+            isMigration = false,
+            isRestart = isRestart,
+            allowInPlaceRestart = allowInPlaceRestart
+        )
         return START_REDELIVER_INTENT
     }
 
@@ -403,7 +412,8 @@ class OlcboxVpnService : VpnService() {
     private fun startTunnel(
         isMigration: Boolean,
         forceFullRestart: Boolean = false,
-        isRestart: Boolean = false
+        isRestart: Boolean = false,
+        allowInPlaceRestart: Boolean = false
     ) {
         val previousStartupJob = startupJob
         val hadPendingStartup = previousStartupJob?.isActive == true
@@ -457,7 +467,15 @@ class OlcboxVpnService : VpnService() {
                         return@withLock
                     }
 
-                    if (isMigration && !forceFullRestart && canReconnectTransportInPlace()) {
+                    // Бесшовная смена сервера: при переключении на другую локацию
+                    // (isRestart) НЕ закрываем TUN-интерфейс и tun2socks, а только
+                    // перезапускаем движок на новый сервер — переключение почти
+                    // мгновенное, без разрыва «отключился-подключился».
+                    if (((isMigration) || (isRestart && allowInPlaceRestart)) &&
+                        !forceFullRestart &&
+                        canReconnectTransportInPlace()
+                    ) {
+                        if (isRestart) addLog("Seamless server switch (keeping tunnel)")
                         reconnectTransport(location, requestedGeneration)
                     } else {
                         startFullTunnel(location, requestedGeneration, isMigration, isRestart)
@@ -1475,6 +1493,23 @@ class OlcboxVpnService : VpnService() {
             AndroidConnectionMode.Tun -> vpnInterface != null && tun2socksThread?.isAlive == true
             AndroidConnectionMode.Proxy -> transportRunning()
         }
+    }
+
+    /**
+     * Подпись параметров, влияющих на сам TUN-интерфейс/маршрутизацию. Если она не
+     * изменилась между запусками, смену сервера можно сделать бесшовно (переиспользовать
+     * существующий TUN + tun2socks). При изменении режима/порта/split-tunnel нужен полный
+     * перезапуск туннеля.
+     */
+    private fun tunBuildSignature(): String {
+        return listOf(
+            connectionMode.value,
+            socksListenHost,
+            socksListenPort.toString(),
+            splitTunnelMode.value,
+            splitTunnelProxyApps.sorted().joinToString(","),
+            splitTunnelBypassApps.sorted().joinToString(",")
+        ).joinToString("|")
     }
 
     private fun shouldRestartForStartCommand(): Boolean {
