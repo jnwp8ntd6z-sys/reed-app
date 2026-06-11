@@ -162,6 +162,16 @@ object ReedSession {
             field = value
             reedStorePut(KEY_CONSENT, if (value) "1" else null)
         }
+
+    // Авто-подключение при запуске приложения (фишка Happ). По умолчанию выключено,
+    // чтобы не подключать без ведома пользователя. При включении — на главном экране
+    // автоматически подключается к выбранному серверу.
+    private const val KEY_AUTOCONNECT = "reed_autoconnect"
+    var autoConnect: Boolean = reedStoreGet(KEY_AUTOCONNECT) == "1"
+        set(value) {
+            field = value
+            reedStorePut(KEY_AUTOCONNECT, if (value) "1" else null)
+        }
 }
 
 object ReedLinks {

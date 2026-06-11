@@ -582,6 +582,14 @@ private fun ReedServerRow(
                 Text(title,
                     style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black,
                     color = if (isTemp || isSelected) accent else MaterialTheme.colorScheme.onSurface)
+                // Индикатор активного транспорта: VLESS (обычный) или LTE (olcRTC, при белых
+                // списках). Помогает понять, какой движок задействован на этом сервере.
+                if (!isTemp) {
+                    val transportLabel = if (loc.config?.isVless() == true) "VLESS" else "LTE"
+                    Text(transportLabel,
+                        style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f))
+                }
                 if (!desc.isNullOrBlank()) {
                     Text(desc,
                         style = MaterialTheme.typography.labelSmall,
@@ -706,6 +714,31 @@ fun ReedHomeScreen(
                 },
                 onError = { ReedSession.importedForToken = null },
             )
+        }
+    }
+
+    // Авто-пинг и авто-подключение при запуске (фишки Happ).
+    var autoPinged by remember { mutableStateOf(false) }
+    var autoConnected by remember { mutableStateOf(false) }
+    LaunchedEffect(locations.size, state.canStartVpn, state.isVpnConnected) {
+        val hasReal = locations.any { !ReedTempServer.isTemp(it.storageId) }
+        // Авто-пинг всех серверов один раз, как только появились реальные серверы —
+        // чтобы сортировка по пингу сразу была актуальной.
+        if (hasReal && !autoPinged) {
+            autoPinged = true
+            locationViewModel.refreshPings(
+                targetLocationIds = null,
+                performPing = { config -> homeViewModel.performPingFor(config) },
+            )
+        }
+        // Авто-подключение к выбранному серверу один раз за запуск, если включено в
+        // настройках и сейчас не подключено. Не вмешивается во временный VPN со входа.
+        if (ReedSession.autoConnect && !autoConnected && hasReal &&
+            !ReedSession.useTempVpnOnEntry &&
+            !state.isVpnConnected && !state.isVpnLoading && state.canStartVpn
+        ) {
+            autoConnected = true
+            onToggleClick()
         }
     }
 
@@ -958,7 +991,10 @@ fun ReedHomeScreen(
         //  • нет активной подписки (не вошёл / кончилась) → в списке ТОЛЬКО временный;
         //  • подписка активна → реальные серверы, а временный уезжает в конец и прячется
         //    под сворачиваемую строку (оранжевый акцент, всегда доступен).
-        val realServers = locations.filter { !ReedTempServer.isTemp(it.storageId) }
+        // Серверы сортируются по пингу (быстрейший сверху, недоступные — в конце) — фишка Happ.
+        val realServers = locations
+            .filter { !ReedTempServer.isTemp(it.storageId) }
+            .sortedBy { pingFor(pingsState, it.storageId) ?: Int.MAX_VALUE }
         val tempServer = locations.firstOrNull { ReedTempServer.isTemp(it.storageId) }
 
         // Общий onClick для выбора сервера.
@@ -972,7 +1008,7 @@ fun ReedHomeScreen(
 
         if (locations.isEmpty()) {
             ReedCard {
-                MutedText("Серверы появятся автоматически после входа и оформления подписки.")
+                MutedText("Серверы появятся автоматически после входа. Полное управление подпиской — в Telegram-боте.")
             }
         } else if (hasSubscription && realServers.isNotEmpty()) {
             realServers.forEach { loc ->
@@ -1117,6 +1153,7 @@ fun ReedSettingsScreen() {
     val scope = rememberCoroutineScope()
     var operator by remember { mutableStateOf("МТС") }
     var splitRouting by remember { mutableStateOf(ReedSession.splitRouting) }
+    var autoConnect by remember { mutableStateOf(ReedSession.autoConnect) }
     var data by remember { mutableStateOf<SubscriptionResponse?>(null) }
     var devicesData by remember { mutableStateOf<DevicesResponse?>(null) }
     var devicesBusy by remember { mutableStateOf(false) }
@@ -1237,6 +1274,14 @@ fun ReedSettingsScreen() {
         }
         Spacer(Modifier.height(4.dp))
         MutedText("Российские сайты идут напрямую, мимо VPN. Применяется при следующем подключении.")
+        Spacer(Modifier.height(12.dp))
+
+        TogglePlashka(Icons.Rounded.Bolt, "Авто-подключение", autoConnect) {
+            autoConnect = it
+            ReedSession.autoConnect = it
+        }
+        Spacer(Modifier.height(4.dp))
+        MutedText("При запуске приложение само подключится к выбранному серверу.")
         Spacer(Modifier.height(28.dp))
     }
 }
