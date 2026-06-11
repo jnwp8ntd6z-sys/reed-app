@@ -1,5 +1,6 @@
 package org.olcbox.app.ui
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -9,6 +10,9 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -32,6 +36,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.BugReport
@@ -40,6 +45,8 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.DeleteForever
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.NotificationsNone
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Public
@@ -90,6 +97,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import multiplatform_app.sharedui.generated.resources.Res
+import multiplatform_app.sharedui.generated.resources.reed_logo
+import org.jetbrains.compose.resources.painterResource
 import org.olcbox.app.data.reed.AppNotification
 import org.olcbox.app.data.datasource.ReedTempServer
 import org.olcbox.app.data.reed.DeviceInfo
@@ -162,6 +172,20 @@ fun ReedOnboardingScreen(
     var busy by remember { mutableStateOf(false) }
     val state by homeViewModel.state.collectAsState()
 
+    // Согласия перед регистрацией (3 документа) — регистрация недоступна, пока не
+    // отмечены все три. Тексты открываются модальным окном прямо в приложении.
+    var agreeTerms by remember { mutableStateOf(false) }
+    var agreePrivacy by remember { mutableStateOf(false) }
+    var agreeConsent by remember { mutableStateOf(false) }
+    val allConsentsAccepted = agreeTerms && agreePrivacy && agreeConsent
+    var policyDialog by remember { mutableStateOf<Pair<String, String>?>(null) }
+    policyDialog?.let { (title, body) ->
+        PolicyDialog(title = title, body = body, onDismiss = { policyDialog = null })
+    }
+    LaunchedEffect(allConsentsAccepted) {
+        if (allConsentsAccepted) ReedSession.consentAccepted = true
+    }
+
     // Временный VPN подключается ПРЯМО на этом экране (для входа), не уводя на главную.
     val tempConnected = state.isVpnConnected
     val tempConnecting = state.isVpnLoading
@@ -186,12 +210,20 @@ fun ReedOnboardingScreen(
         Column(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
         ) {
-            Spacer(Modifier.height(28.dp))
-            // Только надпись слева сверху — без логотипа и слогана.
-            Text("REED VPN", style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Black, color = Color.White)
+            Spacer(Modifier.height(32.dp))
+            // Финальный логотип Reed по центру + название под ним.
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Image(
+                    painter = painterResource(Res.drawable.reed_logo),
+                    contentDescription = "Reed VPN",
+                    modifier = Modifier.size(96.dp).clip(RoundedCornerShape(22.dp)),
+                )
+                Spacer(Modifier.height(12.dp))
+                Text("REED VPN", style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Black, color = Color.White)
+            }
 
-            Spacer(Modifier.height(40.dp))
+            Spacer(Modifier.height(32.dp))
 
             // 1) Временный VPN — белая кнопка ВЫШЕ регистрации. Подключается здесь же,
             // чтобы через него дойти до Telegram и зарегистрироваться (вход → бот).
@@ -233,14 +265,46 @@ fun ReedOnboardingScreen(
                     fontWeight = FontWeight.SemiBold)
             }
 
+            Spacer(Modifier.height(24.dp))
+
+            // 2) Соглашения — обязательны перед регистрацией. Каждое: галочка + название
+            // + ℹ️ для открытия полного текста внутри приложения.
+            Text("Перед регистрацией примите документы:",
+                style = MaterialTheme.typography.bodyMedium, color = Color.White,
+                fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
+            ConsentRow(
+                title = ReedPolicyTexts.TERMS_TITLE,
+                checked = agreeTerms,
+                onCheckedChange = { agreeTerms = it },
+                onInfo = { policyDialog = ReedPolicyTexts.TERMS_TITLE to ReedPolicyTexts.TERMS_BODY },
+            )
+            ConsentRow(
+                title = ReedPolicyTexts.PRIVACY_TITLE,
+                checked = agreePrivacy,
+                onCheckedChange = { agreePrivacy = it },
+                onInfo = { policyDialog = ReedPolicyTexts.PRIVACY_TITLE to ReedPolicyTexts.PRIVACY_BODY },
+            )
+            ConsentRow(
+                title = ReedPolicyTexts.CONSENT_TITLE,
+                checked = agreeConsent,
+                onCheckedChange = { agreeConsent = it },
+                onInfo = { policyDialog = ReedPolicyTexts.CONSENT_TITLE to ReedPolicyTexts.CONSENT_BODY },
+            )
+
             Spacer(Modifier.height(20.dp))
 
-            // 2) Регистрация через Telegram (лаймовая основная кнопка).
+            // 3) Регистрация через Telegram (лаймовая основная кнопка). Недоступна, пока
+            // не приняты все соглашения.
             ReedPrimaryButton(
-                text = if (busy) "Подтвердите в Telegram…" else "Зарегистрироваться через Telegram",
-                enabled = !busy,
+                text = when {
+                    busy -> "Подтвердите в Telegram…"
+                    !allConsentsAccepted -> "Примите соглашения выше"
+                    else -> "Зарегистрироваться через Telegram"
+                },
+                enabled = !busy && allConsentsAccepted,
             ) {
-                if (busy) return@ReedPrimaryButton
+                if (busy || !allConsentsAccepted) return@ReedPrimaryButton
                 busy = true
                 statusMsg = ""
                 scope.launch {
@@ -271,15 +335,6 @@ fun ReedOnboardingScreen(
                 Text(statusMsg, style = MaterialTheme.typography.bodySmall, color = Color.White)
             }
 
-            Spacer(Modifier.height(16.dp))
-            // 3) Текстовая кнопка без подложки — пропустить временный VPN.
-            TextButton(
-                onClick = { ReedSession.onboardingDone = true; onDone() },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Мне не нужен временный VPN", color = Color.White,
-                    fontWeight = FontWeight.SemiBold)
-            }
             Spacer(Modifier.height(24.dp))
         }
     }
@@ -667,6 +722,24 @@ fun ReedHomeScreen(
     }
     LaunchedEffect(ReedSession.token) { reloadSubscription() }
 
+    // Уведомления (звоночек на главном). Красный кружок — если есть уведомление новее
+    // последнего просмотренного. Открытие вкладки помечает все как просмотренные.
+    var notifications by remember { mutableStateOf<List<AppNotification>>(emptyList()) }
+    var showNotifications by remember { mutableStateOf(false) }
+    suspend fun reloadNotifications() {
+        val t = ReedSession.token ?: return
+        notifications = try { ReedApi.notifications(t).notifications } catch (e: Throwable) { notifications }
+    }
+    LaunchedEffect(ReedSession.token) { reloadNotifications() }
+    val maxNotifId = notifications.maxOfOrNull { it.id } ?: 0
+    val hasUnread = maxNotifId > ReedSession.notifSeenMaxId
+    // При открытии вкладки уведомлений помечаем всё как просмотренное (кружок гаснет).
+    LaunchedEffect(showNotifications) {
+        if (showNotifications && maxNotifId > ReedSession.notifSeenMaxId) {
+            ReedSession.notifSeenMaxId = maxNotifId
+        }
+    }
+
     // Все подписки аккаунта (для переключателя «Сменить подписку» на карточке трафика).
     var subsList by remember { mutableStateOf<List<SubscriptionItem>>(emptyList()) }
     var showSubSwitcher by remember { mutableStateOf(false) }
@@ -756,10 +829,40 @@ fun ReedHomeScreen(
     val hasSubscription = data?.subscription?.status == "active"
     val sub = data?.subscription
 
+    // Плавный переход «главная ↔ уведомления»: уведомления въезжают справа, главная —
+    // слегка уезжает влево (и наоборот при возврате).
+    AnimatedContent(
+        targetState = showNotifications,
+        transitionSpec = {
+            if (targetState) {
+                (slideInHorizontally(tween(320, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(320))) togetherWith
+                    (slideOutHorizontally(tween(320, easing = FastOutSlowInEasing)) { -it / 5 } + fadeOut(tween(220)))
+            } else {
+                (slideInHorizontally(tween(320, easing = FastOutSlowInEasing)) { -it / 5 } + fadeIn(tween(320))) togetherWith
+                    (slideOutHorizontally(tween(320, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(220)))
+            }
+        },
+        label = "home_notifications",
+    ) { notifOpen ->
+    if (notifOpen) {
+        ReedNotificationsScreen(notifications = notifications, onBack = { showNotifications = false })
+        return@AnimatedContent
+    }
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
     ) {
-        Text("REED VPN", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+        // Шапка: логотип + «REED VPN» + звоночек уведомлений (с красным кружком при новых).
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Image(
+                painter = painterResource(Res.drawable.reed_logo),
+                contentDescription = null,
+                modifier = Modifier.size(30.dp).clip(RoundedCornerShape(8.dp)),
+            )
+            Spacer(Modifier.width(10.dp))
+            Text("REED VPN", modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+            NotificationBell(hasUnread = hasUnread, onClick = { showNotifications = true })
+        }
         Spacer(Modifier.height(16.dp))
 
         // Согласие/политики убраны с главного экрана — все документы теперь внизу
@@ -1103,6 +1206,90 @@ fun ReedHomeScreen(
         }
         Spacer(Modifier.height(28.dp))
     }
+    }  // AnimatedContent (главная ↔ уведомления)
+}
+
+// Звоночек уведомлений в шапке главной. Красный кружок — если есть непрочитанные.
+@Composable
+private fun NotificationBell(hasUnread: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier.size(44.dp).clip(CircleShape).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            if (hasUnread) Icons.Rounded.Notifications else Icons.Rounded.NotificationsNone,
+            contentDescription = "Уведомления",
+            tint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(26.dp),
+        )
+        if (hasUnread) {
+            Box(
+                Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp)
+                    .size(10.dp).clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.error)
+                    .border(2.dp, MaterialTheme.colorScheme.surface, CircleShape),
+            )
+        }
+    }
+}
+
+// Вкладка уведомлений (открывается по звоночку с главной). Свой app-bar с кнопкой
+// «назад». Сюда приходят оповещения: окончание подписки, блок/удаление устройства и т.п.
+@Composable
+private fun ReedNotificationsScreen(
+    notifications: List<AppNotification>,
+    onBack: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(40.dp).clip(CircleShape).clickable(onClick = onBack),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "Назад",
+                    tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(24.dp))
+            }
+            Spacer(Modifier.width(8.dp))
+            Text("Уведомления", style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Black)
+        }
+        Spacer(Modifier.height(20.dp))
+
+        if (notifications.isEmpty()) {
+            ReedCard {
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Rounded.NotificationsNone, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(40.dp))
+                    Spacer(Modifier.height(12.dp))
+                    Text("Пока уведомлений нет", style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Black)
+                    Spacer(Modifier.height(4.dp))
+                    MutedText("Здесь будут оповещения об окончании подписки, блокировке или удалении устройств и другие важные события.")
+                }
+            }
+        } else {
+            notifications.forEach { n ->
+                ReedCard {
+                    if (n.title.isNotBlank()) {
+                        Text(n.title, style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Black)
+                        Spacer(Modifier.height(4.dp))
+                    }
+                    if (n.body.isNotBlank()) MutedText(n.body)
+                    if (n.created_at.isNotBlank()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(n.created_at.take(16),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+        }
+        Spacer(Modifier.height(28.dp))
+    }
 }
 
 // ── Настройки ────────────────────────────────────────────────────────────────
@@ -1180,14 +1367,23 @@ fun ReedSettingsScreen() {
     var data by remember { mutableStateOf<SubscriptionResponse?>(null) }
     var devicesData by remember { mutableStateOf<DevicesResponse?>(null) }
     var devicesBusy by remember { mutableStateOf(false) }
+    // Устройства показываем по выбранной подписке: своя подписка = свой sub_token, и
+    // /app/devices отдаёт устройства именно этой подписки (свой лимит 5/11).
+    var subsList by remember { mutableStateOf<List<SubscriptionItem>>(emptyList()) }
+    var selectedSubToken by remember { mutableStateOf(ReedSession.token) }
     LaunchedEffect(ReedSession.token) {
         val t = ReedSession.token
         if (t != null) {
             val r = try { ReedApi.subscription(t) } catch (e: Throwable) { null }
             data = r
             r?.current_operator?.let { operator = it }
-            devicesData = try { ReedApi.devices(t) } catch (e: Throwable) { null }
+            subsList = try { ReedApi.subscriptions(t).subscriptions } catch (e: Throwable) { emptyList() }
         }
+    }
+    // Перезагрузка устройств при смене выбранной подписки.
+    LaunchedEffect(selectedSubToken) {
+        val t = selectedSubToken
+        devicesData = if (t != null) try { ReedApi.devices(t) } catch (e: Throwable) { null } else null
     }
     val operators = data?.operators?.takeIf { it.isNotEmpty() } ?: OPERATORS
 
@@ -1255,13 +1451,13 @@ fun ReedSettingsScreen() {
         }
         Spacer(Modifier.height(12.dp))
 
-        // Устройства — реальные данные из /app/devices
+        // Устройства — по выбранной подписке (/app/devices для её sub_token).
         val dd = devicesData
         val devSubtitle = if (dd != null) "Занято ${dd.used} из ${dd.limit}" else "—"
         ExpandablePlashka(Icons.Rounded.Smartphone, "Устройства", devSubtitle) {
-            // действие над устройством + перезагрузка списка
+            // действие над устройством бьёт по выбранной подписке + перезагрузка списка.
             fun act(deviceId: Int, action: String) {
-                val t = ReedSession.token ?: return
+                val t = selectedSubToken ?: return
                 if (devicesBusy) return
                 devicesBusy = true
                 scope.launch {
@@ -1271,14 +1467,53 @@ fun ReedSettingsScreen() {
                 }
             }
 
+            // Если у аккаунта несколько подписок — выбор: чьи устройства показывать.
+            if (subsList.size > 1) {
+                Text("ПОДПИСКА", style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(8.dp))
+                subsList.forEach { item ->
+                    val sel = item.sub_token == selectedSubToken
+                    Box(
+                        Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                            .border(
+                                if (sel) 2.dp else 1.dp,
+                                if (sel) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outlineVariant,
+                                RoundedCornerShape(12.dp))
+                            .clickable(enabled = !devicesBusy) { selectedSubToken = item.sub_token }
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(item.plan_label ?: "Подписка",
+                                    style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black,
+                                    color = if (sel) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.onSurface)
+                                MutedText("ещё ${item.days_left} дн.")
+                            }
+                            if (sel) {
+                                Icon(Icons.Rounded.Check, contentDescription = "Выбрана",
+                                    tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+
             if (dd == null) {
                 MutedText("Управление устройствами появится после входа в аккаунт.")
             } else {
                 val all = dd.devices + dd.blocked
                 if (all.isEmpty()) {
-                    MutedText("Пока нет подключённых устройств.")
+                    MutedText("На этой подписке пока нет подключённых устройств.")
                 } else {
-                    Text("ПОДКЛЮЧЁННЫЕ УСТРОЙСТВА", style = MaterialTheme.typography.labelSmall,
+                    Text("УСТРОЙСТВА ЭТОЙ ПОДПИСКИ", style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(12.dp))
                     all.forEach { dev ->
@@ -1349,7 +1584,6 @@ fun ReedAccountScreen() {
     var friendCode by remember { mutableStateOf("") }
     var friendSaved by remember { mutableStateOf(false) }
     var avatar by remember { mutableStateOf<ImageBitmap?>(null) }
-    var notifications by remember { mutableStateOf<List<AppNotification>>(emptyList()) }
     var confirmDelete by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
 
@@ -1361,7 +1595,6 @@ fun ReedAccountScreen() {
                 statusMsg = "Не удалось загрузить данные"; null
             }
             if (data != null) statusMsg = ""
-            notifications = try { ReedApi.notifications(t).notifications } catch (e: Throwable) { emptyList() }
             val bytes = ReedApi.avatarBytes(t)
             if (bytes != null) avatar = decodeImageBitmap(bytes)
         }
@@ -1503,36 +1736,7 @@ fun ReedAccountScreen() {
         }
         Spacer(Modifier.height(14.dp))
 
-        // Уведомления — реальные, из /app/notifications
-        ReedCard {
-            ReedSectionTitle("Уведомления")
-            Spacer(Modifier.height(10.dp))
-            if (notifications.isEmpty()) {
-                MutedText("Новых уведомлений нет.")
-            } else {
-                notifications.forEachIndexed { idx, n ->
-                    if (idx > 0) {
-                        Spacer(Modifier.height(10.dp))
-                        Box(Modifier.fillMaxWidth().height(1.dp)
-                            .background(MaterialTheme.colorScheme.outlineVariant))
-                        Spacer(Modifier.height(10.dp))
-                    }
-                    if (n.title.isNotBlank()) {
-                        Text(n.title, style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Black)
-                        Spacer(Modifier.height(2.dp))
-                    }
-                    if (n.body.isNotBlank()) MutedText(n.body)
-                    if (n.created_at.isNotBlank()) {
-                        Spacer(Modifier.height(2.dp))
-                        Text(n.created_at.take(16),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            }
-        }
-        Spacer(Modifier.height(14.dp))
+        // Уведомления переехали на главный экран (звоночек в шапке) — здесь их больше нет.
 
         // Выйти
         Row(

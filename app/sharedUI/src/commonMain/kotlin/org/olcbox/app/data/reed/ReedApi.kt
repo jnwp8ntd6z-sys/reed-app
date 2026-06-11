@@ -163,6 +163,16 @@ object ReedSession {
             reedStorePut(KEY_CONSENT, if (value) "1" else null)
         }
 
+    // Максимальный id уведомления, которое пользователь уже видел (открывал вкладку
+    // «звоночек» на главном). Красный кружок над звоночком показывается, если есть
+    // уведомление с id больше этого значения. Персист.
+    private const val KEY_NOTIF_SEEN = "reed_notif_seen_max_id"
+    var notifSeenMaxId: Int = reedStoreGet(KEY_NOTIF_SEEN)?.toIntOrNull() ?: 0
+        set(value) {
+            field = value
+            reedStorePut(KEY_NOTIF_SEEN, value.toString())
+        }
+
     // Авто-подключение при запуске приложения (фишка Happ). По умолчанию выключено,
     // чтобы не подключать без ведома пользователя. При включении — на главном экране
     // автоматически подключается к выбранному серверу.
