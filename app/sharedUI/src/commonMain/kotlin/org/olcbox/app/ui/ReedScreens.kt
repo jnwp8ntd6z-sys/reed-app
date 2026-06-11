@@ -834,6 +834,29 @@ fun ReedHomeScreen(
             }
             Spacer(Modifier.height(20.dp))
         } else {
+            // Предупреждение об окончании подписки (за 3 дня) — фишка Happ. В приложении
+            // НЕ предлагаем оплату: всё управление в Telegram-боте (правило Apple).
+            val secLeft = sub?.seconds_left ?: 0L
+            if (secLeft in 1..(3L * 86400)) {
+                val daysLeft = (secLeft + 86399) / 86400  // округление вверх до дня
+                Box(
+                    Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f))
+                        .border(1.dp, MaterialTheme.colorScheme.secondary, RoundedCornerShape(16.dp))
+                        .clickable { uri.openUri(BOT_URL) }
+                        .padding(16.dp)
+                ) {
+                    Column {
+                        Text("Подписка заканчивается через $daysLeft дн.",
+                            style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black,
+                            color = MaterialTheme.colorScheme.secondary)
+                        Spacer(Modifier.height(2.dp))
+                        MutedText("Полное управление подпиской — в Telegram-боте.")
+                    }
+                }
+            }
+
             // Карточка трафика. Если у аккаунта несколько подписок — она раскрывается
             // в список со сменой активной подписки (как плашки в настройках).
             val switchable = subsList.size > 1
