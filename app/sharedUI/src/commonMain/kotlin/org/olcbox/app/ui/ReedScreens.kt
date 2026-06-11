@@ -1304,7 +1304,7 @@ fun ReedSettingsScreen() {
             ReedSession.autoConnect = it
         }
         Spacer(Modifier.height(4.dp))
-        MutedText("При запуске приложение само подключится к выбранному серверу.")
+        MutedText("Приложение само подключится к выбранному серверу при запуске и после перезагрузки телефона.")
         Spacer(Modifier.height(28.dp))
     }
 }

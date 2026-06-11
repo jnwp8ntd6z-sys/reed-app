@@ -2,6 +2,7 @@ package org.olcbox.app
 
 import android.app.Application
 import android.content.Context
+import org.olcbox.app.data.reed.reedStoreInitAndroid
 
 class App : Application() {
     companion object {
@@ -11,5 +12,8 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         appContext = applicationContext
+        // Инициализируем хранилище сессии Reed на уровне процесса — нужно в т.ч.
+        // для BootReceiver (автозапуск), который срабатывает без открытия Activity.
+        reedStoreInitAndroid(applicationContext)
     }
 }
