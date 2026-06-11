@@ -195,7 +195,7 @@ fun ReedOnboardingScreen(
 
             // 1) Временный VPN — белая кнопка ВЫШЕ регистрации. Подключается здесь же,
             // чтобы через него дойти до Telegram и зарегистрироваться (вход → бот).
-            Text("VPN для регистрации через Telegram. Работает только приложение и Telegram — этого достаточно, чтобы войти и оформить подписку.",
+            Text("VPN для регистрации через Telegram. Работает только приложение и Telegram — этого достаточно, чтобы войти. Полное управление подпиской — в Telegram-боте.",
                 style = MaterialTheme.typography.bodyMedium, color = Color.White)
             Spacer(Modifier.height(10.dp))
             Button(
@@ -1404,7 +1404,7 @@ fun ReedAccountScreen() {
             Spacer(Modifier.height(2.dp))
             Text(d?.referral?.code ?: "—", style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
-            MutedText("Делитесь кодом: получаете ${d?.referral?.percent ?: 30}% от оплат друзей.")
+            MutedText("Делитесь кодом — вам начисляются бонусы за приглашённых друзей.")
             Spacer(Modifier.height(14.dp))
             MutedText("Реферальный код друга")
             Spacer(Modifier.height(6.dp))
@@ -1428,10 +1428,10 @@ fun ReedAccountScreen() {
             Spacer(Modifier.height(14.dp))
             MutedText("Ваш бонусный баланс")
             Spacer(Modifier.height(2.dp))
-            Text("${d?.referral?.bonus_balance ?: 0} ₽", style = MaterialTheme.typography.titleLarge,
+            Text("${d?.referral?.bonus_balance ?: 0} бонусов", style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.height(4.dp))
-            MutedText("Вывод доступен от ${d?.referral?.withdraw_min ?: 3000} бонусов. Обращаться в поддержку.")
+            MutedText("Подробности — в Telegram-боте и поддержке.")
         }
         Spacer(Modifier.height(14.dp))
 
