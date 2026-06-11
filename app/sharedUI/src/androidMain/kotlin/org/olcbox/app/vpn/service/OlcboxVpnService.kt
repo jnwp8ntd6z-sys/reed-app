@@ -39,6 +39,7 @@ import mobile.SocketProtector
 import org.olcbox.app.data.TUN2SOCKS_CONFIG_FILE_NAME
 import org.olcbox.app.data.datasource.LocationsDataSourceImpl
 import org.olcbox.app.data.datasource.LocationsRepositoryImpl
+import org.olcbox.app.data.datasource.ReedTempServer
 import org.olcbox.app.data.identity.PersistentDeviceIdentityProvider
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.repository.LocationsRepository
@@ -97,6 +98,11 @@ class OlcboxVpnService : VpnService() {
     private var recoveryRequestedForGeneration = 0L
     private var watchdogTunStats: Tun2SocksStats? = null
     private var watchdogStalledSamples = 0
+
+    // Учёт трафика временного VPN (reed-temp, лимит 5 ГБ на устройство).
+    private var activeLocationId: String? = null
+    private var tempSessionStartCumulative = -1L
+    private var tempUsedAtSessionStart = 0L
     private var lastWakeLockRefreshAtMs = 0L
     @Volatile
     private var lastRtcConnectedAtMs = 0L
@@ -582,6 +588,12 @@ class OlcboxVpnService : VpnService() {
     ): Boolean {
         val keepProcessBound = shouldKeepProcessBound(upstream)
         val config = location.normalized()
+        // Запоминаем активную локацию для учёта трафика временного VPN. Сбрасываем
+        // базовую точку счётчика — она возьмётся из первой выборки статистики.
+        if (activeLocationId != config.id) {
+            activeLocationId = config.id
+            tempSessionStartCumulative = -1L
+        }
         if (config.engine == LocationConfig.ENGINE_VLESS) {
             return startVless(config, upstream, requestedGeneration, setErrorOnFailure)
         }
@@ -1040,12 +1052,39 @@ class OlcboxVpnService : VpnService() {
                     requestTransportRecovery("TUN traffic stalled", fullRestart = false)
                     return@launch
                 }
+
+                if (accountTempTrafficAndCheckLimit()) {
+                    addLog("Temp VPN: 5 GB limit reached — disconnecting")
+                    cleanup()
+                    return@launch
+                }
             }
         }
     }
 
+    /**
+     * Учёт трафика временного VPN. Возвращает true, если достигнут лимит 5 ГБ.
+     * Считаем дельту от tun2socks-статистики и копим в ReedSession.tempUsedBytes (персист).
+     */
+    private fun accountTempTrafficAndCheckLimit(): Boolean {
+        if (activeLocationId != ReedTempServer.LOCATION_ID) return false
+        val stats = readTun2SocksStats() ?: return false
+        val cumulative = stats.txBytes + stats.rxBytes
+        if (tempSessionStartCumulative < 0L) {
+            tempSessionStartCumulative = cumulative
+            tempUsedAtSessionStart = org.olcbox.app.data.reed.ReedSession.tempUsedBytes
+            return false
+        }
+        val sessionUsed = (cumulative - tempSessionStartCumulative).coerceAtLeast(0L)
+        val total = tempUsedAtSessionStart + sessionUsed
+        org.olcbox.app.data.reed.ReedSession.tempUsedBytes = total
+        return total >= ReedTempServer.LIMIT_BYTES
+    }
+
     private fun cleanup(stopService: Boolean = true) {
         if (cleanupJob?.isActive == true) return
+        activeLocationId = null
+        tempSessionStartCumulative = -1L
 
         val status = OlcboxVpnState.status.value
         if (status is VpnStatus.Disconnected &&
