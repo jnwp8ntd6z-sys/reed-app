@@ -747,7 +747,7 @@ class OlcboxVpnService : VpnService() {
             } else {
                 "$REED_API_BASE/app/singbox?token=$token&socks_port=$socksPort&server=$server&split=$split"
             }
-            runCatching {
+            val fetched = runCatching {
                 val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                     connectTimeout = 10_000
                     readTimeout = 15_000
@@ -764,7 +764,35 @@ class OlcboxVpnService : VpnService() {
                     conn.disconnect()
                 }
             }.getOrNull()
+
+            if (fetched != null) {
+                // Сохраняем последний рабочий конфиг — чтобы подключаться без интернета (как HAPP).
+                runCatching { writeSingboxCache(location.id, socksPort, fetched) }
+                return@withContext fetched
+            }
+            // API недоступен (нет интернета / белые списки режут наш хост) — берём кэш.
+            val cached = readSingboxCache(location.id, socksPort)
+            if (cached != null) {
+                addLog("VLESS config from offline cache (API unreachable)")
+            } else {
+                addLog("VLESS config unavailable (no network, no cache)")
+            }
+            cached
         }
+
+    /** Имя файла кэша sing-box-конфига для (сервер, socks-порт). */
+    private fun singboxCacheFile(serverId: String, socksPort: Int): File {
+        val safe = serverId.map { if (it.isLetterOrDigit()) it else '_' }.joinToString("")
+        return File(filesDir, "singbox_cache_${safe}_$socksPort.json")
+    }
+
+    private fun writeSingboxCache(serverId: String, socksPort: Int, json: String) {
+        singboxCacheFile(serverId, socksPort).writeText(json)
+    }
+
+    private fun readSingboxCache(serverId: String, socksPort: Int): String? =
+        singboxCacheFile(serverId, socksPort).takeIf { it.exists() }
+            ?.readText()?.takeIf { it.isNotBlank() }
 
     private fun transportRunning(): Boolean =
         if (vlessActive) SingBoxTunnel.isRunning() else Mobile.isRunning()

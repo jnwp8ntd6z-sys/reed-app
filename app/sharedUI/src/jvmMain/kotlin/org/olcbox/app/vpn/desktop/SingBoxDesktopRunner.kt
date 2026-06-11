@@ -2,6 +2,7 @@ package org.olcbox.app.vpn.desktop
 
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.reed.ReedSession
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -42,24 +43,38 @@ internal object SingBoxDesktopRunner {
             "$REED_API_BASE/app/singbox?token=$token&socks_port=$socksPort&server=$server&split=$split"
         }
 
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = CONNECT_TIMEOUT_MS
-            readTimeout = READ_TIMEOUT_MS
-            requestMethod = "GET"
-        }
+        val fetched = runCatching {
+            val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+                connectTimeout = CONNECT_TIMEOUT_MS
+                readTimeout = READ_TIMEOUT_MS
+                requestMethod = "GET"
+            }
+            try {
+                val code = connection.responseCode
+                if (code !in 200..299) error("VLESS config request failed with HTTP $code")
+                connection.inputStream.bufferedReader().use { it.readText() }
+                    .takeIf { it.isNotBlank() }
+                    ?: error("VLESS config response was empty")
+            } finally {
+                connection.disconnect()
+            }
+        }.getOrNull()
 
-        try {
-            val code = connection.responseCode
-            if (code !in 200..299) {
-                error("VLESS config request failed with HTTP $code")
-            }
-            val body = connection.inputStream.bufferedReader().use { it.readText() }
-            if (body.isBlank()) {
-                error("VLESS config response was empty")
-            }
-            return body
-        } finally {
-            connection.disconnect()
+        if (fetched != null) {
+            // Кэшируем последний рабочий конфиг — подключение без интернета (как HAPP).
+            runCatching { cacheFile(config.id, socksPort).writeText(fetched) }
+            return fetched
         }
+        // API недоступен (нет сети / белые списки) — берём последний рабочий конфиг из кэша.
+        val cached = cacheFile(config.id, socksPort).takeIf { it.exists() }
+            ?.readText()?.takeIf { it.isNotBlank() }
+        return cached ?: error("VLESS config unavailable (no network, no cache)")
+    }
+
+    /** Файл кэша sing-box-конфига в каталоге настроек приложения. */
+    private fun cacheFile(serverId: String, socksPort: Int): File {
+        val dir = File(System.getProperty("user.home"), ".reedvpn/cache").apply { mkdirs() }
+        val safe = serverId.map { if (it.isLetterOrDigit()) it else '_' }.joinToString("")
+        return File(dir, "singbox_cache_${safe}_$socksPort.json")
     }
 }

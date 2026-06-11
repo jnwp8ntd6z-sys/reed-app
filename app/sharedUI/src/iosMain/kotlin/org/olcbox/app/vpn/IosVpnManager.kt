@@ -205,7 +205,7 @@ class IosVpnManager(
     }
 
     private suspend fun fetchSingboxConfig(token: String, server: String, socksPort: Int): String? {
-        return runCatching {
+        val fetched = runCatching {
             withContext(Dispatchers.Default) {
                 // Временный VPN (id=reed-temp) — БЕЗ токена с /app/temp (работает до входа).
                 if (server == "reed-temp") {
@@ -227,6 +227,22 @@ class IosVpnManager(
             addLog("VLESS config fetch failed: ${it.message}")
             null
         }
+        if (fetched != null) {
+            // Кэшируем последний рабочий конфиг — подключение без интернета (как HAPP).
+            NSUserDefaults.standardUserDefaults.setObject(fetched, singboxCacheKey(server, socksPort))
+            return fetched
+        }
+        // API недоступен (нет сети / белые списки) — берём последний рабочий конфиг из кэша.
+        val cached = NSUserDefaults.standardUserDefaults.stringForKey(singboxCacheKey(server, socksPort))
+            ?.takeIf { it.isNotBlank() }
+        addLog(if (cached != null) "VLESS config from offline cache (API unreachable)"
+               else "VLESS config unavailable (no network, no cache)")
+        return cached
+    }
+
+    private fun singboxCacheKey(server: String, socksPort: Int): String {
+        val safe = server.map { if (it.isLetterOrDigit()) it else '_' }.joinToString("")
+        return "singbox_cache_${safe}_$socksPort"
     }
 
     private fun transportRunning(): Boolean =
