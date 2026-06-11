@@ -1393,8 +1393,16 @@ fun ReedSettingsScreen() {
         ScreenTitle("Настройки")
         Spacer(Modifier.height(20.dp))
 
-        // Сменить оператора — раскрывающийся список
-        ExpandablePlashka(Icons.Rounded.Router, "Сменить оператора", "Текущий: $operator") {
+        // Сменить оператора — раскрывающийся список. Бета: пока не влияет на подключение
+        // (заработает с отдельными olcRTC-комнатами под каждого оператора).
+        ExpandablePlashka(Icons.Rounded.Router, "Сменить оператора (бета)", "Текущий: $operator") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Info, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                MutedText("Бета: выбор оператора пока не влияет на подключение. Скоро под каждого оператора будут отдельные настройки обхода.")
+            }
+            Spacer(Modifier.height(12.dp))
             operators.forEach { op ->
                 val sel = op == operator
                 Box(
