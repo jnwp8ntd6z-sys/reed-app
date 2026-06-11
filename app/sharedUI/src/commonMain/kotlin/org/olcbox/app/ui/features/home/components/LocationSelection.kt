@@ -94,7 +94,7 @@ fun LocationSelectorScreen(
                     Column(
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        group.forEach { location ->
+                        group.sortedByPing(pingsState.stablePingMap()).forEach { location ->
                             LocationSelectorRow(
                                 location = location,
                                 selectedLocationId = selectedLocationId,
@@ -136,7 +136,7 @@ fun LocationSelectorScreen(
                     Spacer(modifier = Modifier.height(6.dp))
 
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        customLocations.forEach { location ->
+                        customLocations.sortedByPing(pingsState.stablePingMap()).forEach { location ->
                             LocationSelectorRow(
                                 location = location,
                                 selectedLocationId = selectedLocationId,
@@ -453,3 +453,19 @@ private fun plural(value: Long, unit: String): String {
 private const val MINUTE_MILLIS = 60_000L
 private const val HOUR_MILLIS = 60 * MINUTE_MILLIS
 private const val DAY_MILLIS = 24 * HOUR_MILLIS
+
+/**
+ * Стабильная карта пингов для сортировки серверов: во время обновления берём ПРЕДЫДУЩИЕ
+ * полные результаты (lastPings), чтобы строки не «прыгали» по мере прихода новых пингов,
+ * и обновляем порядок только когда обновление завершилось (Success).
+ */
+private fun PingsState.stablePingMap(): Map<String, Int?> = when (this) {
+    is PingsState.Success -> pings
+    is PingsState.Loading -> lastPings ?: currentPings
+    is PingsState.Error -> lastPings ?: emptyMap()
+    PingsState.Idle -> emptyMap()
+}
+
+/** Сортирует серверы по пингу (быстрейший сверху). Недоступные (null) — в конце. */
+private fun List<LocationItem>.sortedByPing(pings: Map<String, Int?>): List<LocationItem> =
+    sortedBy { pings[it.storageId] ?: Int.MAX_VALUE }
