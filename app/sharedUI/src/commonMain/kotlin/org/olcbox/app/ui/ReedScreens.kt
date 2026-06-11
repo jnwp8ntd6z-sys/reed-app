@@ -650,7 +650,11 @@ fun ReedHomeScreen(
         val t = ReedSession.token ?: return
         // Офлайн/сбой сети → НЕ выходим из аккаунта: показываем кэш последней активной
         // подписки (или то, что уже было загружено), а не «Подписка закончилась».
-        data = try { ReedApi.subscription(t) } catch (e: Throwable) { data ?: ReedApi.cachedSubscription() }
+        // Кэш показываем СРАЗУ (до сетевого запроса), чтобы офлайн экран не залипал на
+        // «Загрузка аккаунта» и сразу был виден аккаунт + кнопка подключения.
+        val cached = ReedApi.cachedSubscription()
+        if (data == null && cached != null) { data = cached; subLoaded = true }
+        data = try { ReedApi.subscription(t) } catch (e: Throwable) { data ?: cached }
         subLoaded = true
     }
     LaunchedEffect(ReedSession.token) { reloadSubscription() }

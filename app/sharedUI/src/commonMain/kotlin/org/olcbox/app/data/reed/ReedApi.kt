@@ -2,6 +2,7 @@ package org.olcbox.app.data.reed
 
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
@@ -31,6 +32,15 @@ object ReedApi {
     private val client = HttpClient {
         install(ContentNegotiation) {
             json(json)
+        }
+        // БЕЗ таймаута офлайн/при блокировке нашего домена (белые списки) вызовы
+        // подписки/входа висели десятками секунд → экран замирал на «Загрузка аккаунта»,
+        // нельзя было выбрать сервер и подключиться. Теперь падают быстро → дальше
+        // показываем кэш подписки и серверы с диска (офлайн-режим как в HAPP).
+        install(HttpTimeout) {
+            connectTimeoutMillis = 4_000
+            requestTimeoutMillis = 8_000
+            socketTimeoutMillis = 8_000
         }
     }
 
