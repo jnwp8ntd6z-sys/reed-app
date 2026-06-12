@@ -89,6 +89,7 @@ fun OlcboxAppContent(
         TabDef(Icons.Rounded.ChatBubble, "Помощь", orange),
     )
 
+    ReedMemberGate {
     Scaffold(
         bottomBar = {
             NavigationBar {
@@ -122,6 +123,7 @@ fun OlcboxAppContent(
                 }
             }
         }
+    }
     }
 }
 

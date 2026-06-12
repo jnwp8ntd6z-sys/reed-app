@@ -38,13 +38,17 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Logout
+import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Bolt
 import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.CardGiftcard
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteForever
+import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.NotificationsNone
 import androidx.compose.material.icons.rounded.Person
@@ -88,7 +92,9 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextAlign
@@ -179,6 +185,8 @@ fun ReedOnboardingScreen(
     policyDialog?.let { (title, body) ->
         PolicyDialog(title = title, body = body, onDismiss = { policyDialog = null })
     }
+    // Поток входа по коду-приглашению (для семьи/друзей, без Telegram).
+    var showCodeFlow by remember { mutableStateOf(false) }
     LaunchedEffect(allConsentsAccepted) {
         if (allConsentsAccepted) ReedSession.consentAccepted = true
     }
@@ -330,8 +338,41 @@ fun ReedOnboardingScreen(
                 Text(statusMsg, style = MaterialTheme.typography.bodySmall, color = Color.White)
             }
 
+            Spacer(Modifier.height(20.dp))
+            // Вход по коду-приглашению — для членов семьи/друзей, которым владелец
+            // подписки выдал код. Они входят БЕЗ Telegram, только по коду + имени.
+            Text("— или —", style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.5f),
+                modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+            Spacer(Modifier.height(12.dp))
+            TextButton(
+                onClick = { showCodeFlow = true },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Rounded.Key, contentDescription = null, tint = Color.White,
+                    modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("У меня есть код приглашения", color = Color.White,
+                    fontWeight = FontWeight.SemiBold)
+            }
+
             Spacer(Modifier.height(24.dp))
         }
+    }
+
+    if (showCodeFlow) {
+        JoinByCodeDialog(
+            onDismiss = { showCodeFlow = false },
+            onJoined = { memberToken, joinedName ->
+                ReedSession.token = memberToken
+                ReedSession.joinedViaCode = true
+                ReedSession.memberName = joinedName
+                ReedSession.consentAccepted = true
+                ReedSession.onboardingDone = true
+                showCodeFlow = false
+                onDone()
+            },
+        )
     }
 }
 
@@ -374,6 +415,95 @@ private fun PolicyDialog(title: String, body: String, onDismiss: () -> Unit) {
         text = {
             Column(Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
                 Text(body, style = MaterialTheme.typography.bodySmall)
+            }
+        },
+    )
+}
+
+// Диалог входа по коду-приглашению: шаг 1 — ввод кода, шаг 2 — ввод имени.
+// При успехе вызывает onJoined(memberToken, name).
+@Composable
+private fun JoinByCodeDialog(
+    onDismiss: () -> Unit,
+    onJoined: (memberToken: String, name: String) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var step by remember { mutableStateOf(0) }        // 0 = код, 1 = имя
+    var code by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        confirmButton = {
+            TextButton(
+                enabled = !busy && (if (step == 0) code.trim().length >= 4 else name.trim().isNotEmpty()),
+                onClick = {
+                    error = ""
+                    if (step == 0) {
+                        step = 1
+                    } else {
+                        busy = true
+                        scope.launch {
+                            try {
+                                val r = ReedApi.shareRedeem(code.trim(), name.trim())
+                                if (r.ok && !r.member_token.isNullOrBlank()) {
+                                    onJoined(r.member_token, r.name ?: name.trim())
+                                } else {
+                                    error = r.message ?: "Не удалось войти по коду."
+                                    busy = false
+                                }
+                            } catch (e: Throwable) {
+                                error = "Нет связи с сервером. Попробуйте ещё раз."
+                                busy = false
+                            }
+                        }
+                    }
+                },
+            ) { Text(if (step == 0) "Далее" else "Войти") }
+        },
+        dismissButton = {
+            TextButton(enabled = !busy, onClick = {
+                if (step == 1) { step = 0 } else onDismiss()
+            }) { Text(if (step == 1) "Назад" else "Отмена") }
+        },
+        title = { Text(if (step == 0) "Вход по коду" else "Как вас зовут?",
+            fontWeight = FontWeight.Black) },
+        text = {
+            Column(Modifier.fillMaxWidth()) {
+                if (step == 0) {
+                    MutedText("Введите код приглашения, который дал владелец подписки.")
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = { code = it.uppercase().take(16) },
+                        singleLine = true,
+                        label = { Text("Код") },
+                        placeholder = { Text("REED-XXXXXX") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    MutedText("Имя увидит владелец подписки в списке участников.")
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it.take(40) },
+                        singleLine = true,
+                        label = { Text("Ваше имя") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                if (busy) {
+                    Spacer(Modifier.height(12.dp))
+                    Text("Входим…", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary)
+                }
+                if (error.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(error, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
+                }
             }
         },
     )
@@ -1354,6 +1484,11 @@ private fun DeviceRow(
 
 @Composable
 fun ReedSettingsScreen() {
+    // Вошедшим по коду — упрощённые настройки (без управления подпиской/устройствами).
+    if (ReedSession.joinedViaCode) {
+        ReedMemberSettingsScreen()
+        return
+    }
     val scope = rememberCoroutineScope()
     var operator by remember { mutableStateOf("МТС") }
     var splitRouting by remember { mutableStateOf(ReedSession.splitRouting) }
@@ -1528,6 +1663,10 @@ fun ReedSettingsScreen() {
         }
         Spacer(Modifier.height(12.dp))
 
+        // Участники подписки — те, кто вошёл по коду-приглашению (семья/друзья).
+        MembersPlashka(ownerToken = selectedSubToken ?: ReedSession.token)
+        Spacer(Modifier.height(12.dp))
+
         TogglePlashka(Icons.Rounded.Wifi, "Split-routing", splitRouting) {
             splitRouting = it
             ReedSession.splitRouting = it
@@ -1543,6 +1682,285 @@ fun ReedSettingsScreen() {
         Spacer(Modifier.height(4.dp))
         MutedText("Приложение само подключится к выбранному серверу при запуске и после перезагрузки телефона.")
         Spacer(Modifier.height(28.dp))
+    }
+}
+
+// ── Участники подписки (вход по коду) — раздел для владельца ──────────────────
+@Composable
+private fun MembersPlashka(ownerToken: String?) {
+    val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
+    var data by remember { mutableStateOf<MembersResponse?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var inviteCode by remember { mutableStateOf<String?>(null) }
+    var inviteError by remember { mutableStateOf("") }
+
+    suspend fun reload() {
+        val t = ownerToken ?: return
+        data = try { ReedApi.members(t) } catch (e: Throwable) { data }
+    }
+    LaunchedEffect(ownerToken) { reload() }
+
+    fun act(memberId: Int, action: String) {
+        val t = ownerToken ?: return
+        if (busy) return
+        busy = true
+        scope.launch {
+            try { ReedApi.memberAction(t, memberId, action) } catch (e: Throwable) {}
+            reload()
+            busy = false
+        }
+    }
+
+    val d = data
+    val subtitle = if (d != null) "${d.count} из ${d.limit}" else "—"
+    ExpandablePlashka(Icons.Rounded.Group, "Участники", subtitle) {
+        MutedText("Люди, которым вы дали код для входа без Telegram (например, семья). " +
+            "У них нет управления — только подключение.")
+        Spacer(Modifier.height(12.dp))
+
+        val full = d != null && d.count >= d.limit
+        if (full) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Info, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                MutedText("Достигнут лимит участников. Расширить можно в Telegram-боте Reed VPN.")
+            }
+        } else {
+            ReedPrimaryButton(if (busy) "Подождите…" else "Пригласить участника") {
+                val t = ownerToken ?: return@ReedPrimaryButton
+                if (busy) return@ReedPrimaryButton
+                busy = true
+                inviteError = ""
+                scope.launch {
+                    try {
+                        val r = ReedApi.shareCreate(t)
+                        if (r.ok && r.code.isNotBlank()) inviteCode = r.code
+                        else inviteError = "Не удалось создать код. Попробуйте ещё раз."
+                    } catch (e: Throwable) {
+                        inviteError = "Нет связи с сервером."
+                    }
+                    busy = false
+                }
+            }
+        }
+        if (inviteError.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text(inviteError, style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error)
+        }
+
+        Spacer(Modifier.height(12.dp))
+        val members = d?.members ?: emptyList()
+        if (members.isEmpty()) {
+            MutedText("Пока никто не присоединился по коду.")
+        } else {
+            Text("УЧАСТНИКИ", style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(8.dp))
+            members.forEach { m -> MemberRow(m, busy,
+                onToggleBlock = { act(m.id, if (m.blocked) "unblock" else "block") },
+                onDelete = { act(m.id, "delete") }) }
+        }
+    }
+
+    inviteCode?.let { code ->
+        InviteCodeDialog(code = code, onCopy = {
+            clipboard.setText(AnnotatedString(code))
+        }, onDismiss = {
+            inviteCode = null
+            scope.launch { reload() }
+        })
+    }
+}
+
+@Composable
+private fun MemberRow(m: MemberItem, busy: Boolean, onToggleBlock: () -> Unit, onDelete: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(m.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black)
+                if (m.blocked) {
+                    Spacer(Modifier.width(6.dp))
+                    Text("заблокирован", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error)
+                }
+            }
+            val sub = buildString {
+                if (m.device.isNotBlank()) append(m.device)
+                if (m.joined_at.isNotBlank()) {
+                    if (isNotEmpty()) append(" · ")
+                    append(m.joined_at.take(16))
+                }
+            }
+            if (sub.isNotBlank()) MutedText(sub)
+        }
+        Icon(
+            if (m.blocked) Icons.Rounded.Check else Icons.Rounded.Block,
+            contentDescription = if (m.blocked) "Разблокировать" else "Заблокировать",
+            tint = if (m.blocked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(34.dp).clip(CircleShape)
+                .clickable(enabled = !busy) { onToggleBlock() }.padding(6.dp),
+        )
+        Spacer(Modifier.width(4.dp))
+        Icon(
+            Icons.Rounded.DeleteForever, contentDescription = "Удалить",
+            tint = MaterialTheme.colorScheme.error,
+            modifier = Modifier.size(34.dp).clip(CircleShape)
+                .clickable(enabled = !busy) { onDelete() }.padding(6.dp),
+        )
+    }
+}
+
+@Composable
+private fun InviteCodeDialog(code: String, onCopy: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Готово") } },
+        dismissButton = {
+            TextButton(onClick = onCopy) {
+                Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Скопировать")
+            }
+        },
+        title = { Text("Код приглашения", fontWeight = FontWeight.Black) },
+        text = {
+            Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(code, style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(12.dp))
+                MutedText("Передайте код тому, кого приглашаете. В приложении он нажимает " +
+                    "«У меня есть код приглашения», вводит код и своё имя.")
+                Spacer(Modifier.height(8.dp))
+                MutedText("Код действует 1 час и только для одного устройства. Когда срок выйдет — " +
+                    "просто создайте новый.")
+            }
+        },
+    )
+}
+
+// Упрощённые настройки для вошедших по коду: без управления подпиской/устройствами.
+@Composable
+private fun ReedMemberSettingsScreen() {
+    var splitRouting by remember { mutableStateOf(ReedSession.splitRouting) }
+    var autoConnect by remember { mutableStateOf(ReedSession.autoConnect) }
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+    ) {
+        ScreenTitle("Настройки")
+        Spacer(Modifier.height(20.dp))
+        ReedCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.Key, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    Text("Вы вошли по коду приглашения", style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Black)
+                    MutedText("Управление подпиской и устройствами — у её владельца.")
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        TogglePlashka(Icons.Rounded.Wifi, "Split-routing", splitRouting) {
+            splitRouting = it; ReedSession.splitRouting = it
+        }
+        Spacer(Modifier.height(4.dp))
+        MutedText("Российские сайты идут напрямую, мимо VPN. Применяется при следующем подключении.")
+        Spacer(Modifier.height(12.dp))
+        TogglePlashka(Icons.Rounded.Bolt, "Авто-подключение", autoConnect) {
+            autoConnect = it; ReedSession.autoConnect = it
+        }
+        Spacer(Modifier.height(28.dp))
+    }
+}
+
+// Гейт для вошедших по коду: следит за статусом (active/blocked/deleted) и при
+// блокировке/удалении владельцем показывает соответствующий экран вместо приложения.
+@Composable
+fun ReedMemberGate(content: @Composable () -> Unit) {
+    if (!ReedSession.joinedViaCode) { content(); return }
+    var status by remember { mutableStateOf("active") }   // active | blocked | deleted
+    LaunchedEffect(ReedSession.token) {
+        while (true) {
+            val t = ReedSession.token
+            if (t != null) {
+                val s = try { ReedApi.session(t) } catch (e: Throwable) { null }
+                if (s != null) {
+                    status = when {
+                        s.kind == "deleted" -> "deleted"
+                        s.kind == "member" && s.blocked -> "blocked"
+                        s.kind == "member" || s.kind == "owner" -> "active"
+                        else -> status   // нет связи — статус не меняем
+                    }
+                }
+            }
+            delay(15000)
+        }
+    }
+    when (status) {
+        "blocked" -> ReedMemberStateScreen(
+            emoji = "🔒",
+            title = "Доступ к подписке приостановлен",
+            body = "Владелец подписки временно приостановил ваш доступ. " +
+                "Как только он снимет ограничение — подключение восстановится автоматически.",
+            actionLabel = null, onAction = {},
+        )
+        "deleted" -> {
+            var showCode by remember { mutableStateOf(false) }
+            ReedMemberStateScreen(
+                emoji = "🚪",
+                title = "Вы отключены от подписки",
+                body = "Владелец отключил ваше устройство от подписки. " +
+                    "Попросите у него новый код приглашения и войдите заново.",
+                actionLabel = "Войти по новому коду", onAction = { showCode = true },
+            )
+            if (showCode) {
+                JoinByCodeDialog(
+                    onDismiss = { showCode = false },
+                    onJoined = { memberToken, joinedName ->
+                        ReedSession.token = memberToken
+                        ReedSession.joinedViaCode = true
+                        ReedSession.memberName = joinedName
+                        showCode = false
+                        status = "active"
+                    },
+                )
+            }
+        }
+        else -> content()
+    }
+}
+
+@Composable
+private fun ReedMemberStateScreen(
+    emoji: String, title: String, body: String,
+    actionLabel: String?, onAction: () -> Unit,
+) {
+    Box(Modifier.fillMaxSize().background(Color(0xFF0A0A0A)), contentAlignment = Alignment.Center) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(emoji, style = MaterialTheme.typography.displayMedium)
+            Spacer(Modifier.height(16.dp))
+            Text(title, style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Black, color = Color.White, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(12.dp))
+            Text(body, style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.75f), textAlign = TextAlign.Center)
+            if (actionLabel != null) {
+                Spacer(Modifier.height(24.dp))
+                ReedPrimaryButton(actionLabel) { onAction() }
+            }
+        }
     }
 }
 
@@ -1746,6 +2164,10 @@ fun ReedAccountScreen() {
                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant, ReedCardShape)
                 .clickable {
                     ReedSession.token = null
+                    // При выходе сбрасываем и код-сессию (если вошёл по коду).
+                    ReedSession.joinedViaCode = false
+                    ReedSession.memberName = null
+                    ReedSession.onboardingDone = false
                     token = null
                     data = null
                 }

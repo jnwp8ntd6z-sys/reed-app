@@ -105,6 +105,47 @@ object ReedApi {
             contentType(ContentType.Application.Json)
             setBody(DeleteAccountRequest(token))
         }.body()
+
+    // ── Вход по коду-приглашению (семейный доступ без Telegram) ──────────────
+
+    // Состояние сессии: owner | member | deleted. Для участника — статус и блок.
+    suspend fun session(token: String): SessionInfo = try {
+        val resp = client.get("$BASE/app/session") { parameter("token", token) }
+        if (resp.status.value == 404) SessionInfo(kind = "deleted")
+        else resp.body()
+    } catch (e: Throwable) {
+        SessionInfo(kind = "unknown")
+    }
+
+    // Владелец генерирует код-приглашение для своей подписки.
+    suspend fun shareCreate(token: String): ShareCreateResult =
+        client.post("$BASE/app/share/create") {
+            contentType(ContentType.Application.Json)
+            setBody(TokenRequest(token))
+        }.body()
+
+    // Вход по коду: возвращает member_token (становится токеном сессии).
+    suspend fun shareRedeem(
+        code: String, name: String,
+        hwid: String = "", deviceModel: String = "", deviceOs: String = "",
+    ): RedeemResult {
+        val resp = client.post("$BASE/app/share/redeem") {
+            contentType(ContentType.Application.Json)
+            setBody(RedeemRequest(code, name, hwid, deviceModel, deviceOs))
+        }
+        return resp.body()
+    }
+
+    // Список участников подписки (для владельца).
+    suspend fun members(token: String): MembersResponse =
+        client.get("$BASE/app/members") { parameter("token", token) }.body()
+
+    // Управление участником: action = "block" | "unblock" | "delete".
+    suspend fun memberAction(token: String, memberId: Int, action: String): MemberActionResult =
+        client.post("$BASE/app/member/action") {
+            contentType(ContentType.Application.Json)
+            setBody(MemberActionRequest(token, memberId, action))
+        }.body()
 }
 
 /**
@@ -181,6 +222,23 @@ object ReedSession {
         set(value) {
             field = value
             reedStorePut(KEY_AUTOCONNECT, if (value) "1" else null)
+        }
+
+    // Вошёл по коду-приглашению (не через Telegram). У таких пользователей нет
+    // управления устройствами/приглашениями — только просмотр и подключение.
+    private const val KEY_VIA_CODE = "reed_joined_via_code"
+    var joinedViaCode: Boolean = reedStoreGet(KEY_VIA_CODE) == "1"
+        set(value) {
+            field = value
+            reedStorePut(KEY_VIA_CODE, if (value) "1" else null)
+        }
+
+    // Имя, которое участник ввёл при входе по коду (показываем в кабинете).
+    private const val KEY_MEMBER_NAME = "reed_member_name"
+    var memberName: String? = reedStoreGet(KEY_MEMBER_NAME)
+        set(value) {
+            field = value
+            reedStorePut(KEY_MEMBER_NAME, value)
         }
 }
 
@@ -347,4 +405,76 @@ data class ServerInfo(
     val type: String = "SMART",
     val lte: Boolean = false,
     val vless: String? = null,
+)
+
+// ── Вход по коду-приглашению ────────────────────────────────────────────────
+
+@Serializable
+data class TokenRequest(val token: String)
+
+@Serializable
+data class SessionInfo(
+    val kind: String = "owner",            // owner | member | deleted | unknown
+    val name: String = "",
+    val member_status: String = "active",  // active | blocked
+    val can_manage: Boolean = true,
+    val blocked: Boolean = false,
+)
+
+@Serializable
+data class ShareCreateResult(
+    val ok: Boolean = false,
+    val code: String = "",
+    val expires_at: String = "",
+    val ttl_seconds: Int = 0,
+    val error: String? = null,
+)
+
+@Serializable
+data class RedeemRequest(
+    val code: String,
+    val name: String,
+    val hwid: String = "",
+    val device_model: String = "",
+    val device_os: String = "",
+)
+
+@Serializable
+data class RedeemResult(
+    val ok: Boolean = false,
+    val member_token: String? = null,
+    val name: String? = null,
+    val error: String? = null,
+    val message: String? = null,
+)
+
+@Serializable
+data class MemberItem(
+    val id: Int,
+    val name: String = "",
+    val device: String = "",
+    val os: String = "",
+    val joined_at: String = "",
+    val blocked: Boolean = false,
+)
+
+@Serializable
+data class MembersResponse(
+    val members: List<MemberItem> = emptyList(),
+    val count: Int = 0,
+    val limit: Int = 0,
+)
+
+@Serializable
+data class MemberActionRequest(
+    val token: String,
+    val member_id: Int,
+    val action: String,
+)
+
+@Serializable
+data class MemberActionResult(
+    val ok: Boolean = false,
+    val action: String = "",
+    val error: String? = null,
 )
