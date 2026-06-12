@@ -779,10 +779,11 @@ class OlcboxVpnService : VpnService() {
             } else {
                 "$REED_API_BASE/app/singbox?token=$token&socks_port=$socksPort&server=$server&split=$split"
             }
-            val fetched = runCatching {
+            // Один HTTP GET конфига (или null при сбое/не-200).
+            fun httpGet(): String? = runCatching {
                 val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 10_000
-                    readTimeout = 15_000
+                    connectTimeout = 8_000
+                    readTimeout = 8_000
                     requestMethod = "GET"
                 }
                 try {
@@ -790,26 +791,34 @@ class OlcboxVpnService : VpnService() {
                         addLog("VLESS config HTTP ${conn.responseCode}")
                         return@runCatching null
                     }
-                    conn.inputStream.bufferedReader().use { it.readText() }
-                        .takeIf { it.isNotBlank() }
+                    conn.inputStream.bufferedReader().use { it.readText() }.takeIf { it.isNotBlank() }
                 } finally {
                     conn.disconnect()
                 }
             }.getOrNull()
 
+            // CACHE-FIRST. На мобильном интернете, который «режут» (РФ-белые списки), наш API
+            // reed-vpn.duckdns.org НЕ в белом списке → недоступен, а сам VPN-сервер (белый SNI
+            // belkacar.ru) — доступен. Поэтому, как Happ (у него конфиг лежит в подписке),
+            // подключаемся СРАЗУ по кэшу, не дёргая наш API; свежий конфиг тянем в фоне для
+            // следующего раза. Сеть блокирующе нужна только при ПЕРВОМ подключении к серверу.
+            val cached = readSingboxCache(location.id, socksPort)
+            if (cached != null) {
+                scope.launch(Dispatchers.IO) {
+                    httpGet()?.let { runCatching { writeSingboxCache(location.id, socksPort, it) } }
+                }
+                addLog("VLESS config from cache (cache-first)")
+                return@withContext cached
+            }
+
+            // Кэша ещё нет (первое подключение к этому серверу) — тянем с сети и сохраняем.
+            val fetched = httpGet()
             if (fetched != null) {
-                // Сохраняем последний рабочий конфиг — чтобы подключаться без интернета (как HAPP).
                 runCatching { writeSingboxCache(location.id, socksPort, fetched) }
                 return@withContext fetched
             }
-            // API недоступен (нет интернета / белые списки режут наш хост) — берём кэш.
-            val cached = readSingboxCache(location.id, socksPort)
-            if (cached != null) {
-                addLog("VLESS config from offline cache (API unreachable)")
-            } else {
-                addLog("VLESS config unavailable (no network, no cache)")
-            }
-            cached
+            addLog("VLESS config unavailable (no cache, API unreachable)")
+            null
         }
 
     /** Имя файла кэша sing-box-конфига для (сервер, socks-порт). */
