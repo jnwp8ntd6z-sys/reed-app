@@ -62,6 +62,11 @@ android {
                 storePassword = keystoreProperties.getProperty("storePassword")
                 keyAlias = keystoreProperties.getProperty("keyAlias")
                 keyPassword = keystoreProperties.getProperty("keyPassword")
+                // Поддержка PKCS12-хранилища (наш постоянный ключ reed-release.p12),
+                // иначе AGP пытается читать как JKS и падает.
+                keystoreProperties.getProperty("storeType")?.takeIf { it.isNotBlank() }?.let {
+                    storeType = it
+                }
             }
         }
     }

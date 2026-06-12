@@ -906,16 +906,24 @@ fun ReedHomeScreen(
             // /app/locations. VLESS импортируется последним → именно быстрый VLESS
             // становится сервером по умолчанию (parseReedLocations выставляет активным
             // первый VLESS), а не запасной LTE-olcRTC.
+            // VLESS-импорт тянем ВСЕГДА (и при успехе, и при сбое olcRTC), иначе при
+            // сбое /app/olcconf серверы вообще не появлялись. loadLocations перечитывает
+            // диск в любом исходе — список не «пропадает». Флаг ретрая сбрасываем только
+            // если и VLESS не вышел (чтобы попробовать снова, когда вернётся сеть).
+            val importVless = {
+                homeViewModel.onImportFullConfig(
+                    rawText = "$REED_LOCATIONS_BASE$t",
+                    onComplete = { locationViewModel.loadLocations { } },
+                    onError = {
+                        ReedSession.importedForToken = null
+                        locationViewModel.loadLocations { }
+                    },
+                )
+            }
             homeViewModel.onImportFullConfig(
                 rawText = "$REED_OLCCONF_BASE$t",
-                onComplete = {
-                    homeViewModel.onImportFullConfig(
-                        rawText = "$REED_LOCATIONS_BASE$t",
-                        onComplete = { locationViewModel.loadLocations { } },
-                        onError = { locationViewModel.loadLocations { } },
-                    )
-                },
-                onError = { ReedSession.importedForToken = null },
+                onComplete = { importVless() },
+                onError = { importVless() },
             )
         }
     }
