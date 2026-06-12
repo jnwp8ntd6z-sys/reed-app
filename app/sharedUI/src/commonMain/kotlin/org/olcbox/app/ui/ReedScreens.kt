@@ -107,6 +107,8 @@ import org.olcbox.app.data.reed.AppNotification
 import org.olcbox.app.data.datasource.ReedTempServer
 import org.olcbox.app.data.reed.DeviceInfo
 import org.olcbox.app.data.reed.DevicesResponse
+import org.olcbox.app.data.reed.MemberItem
+import org.olcbox.app.data.reed.MembersResponse
 import org.olcbox.app.data.reed.ReedApi
 import org.olcbox.app.data.reed.ReedLinks
 import org.olcbox.app.data.reed.ReedSession
