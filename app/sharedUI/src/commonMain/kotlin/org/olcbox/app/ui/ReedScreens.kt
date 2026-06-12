@@ -394,9 +394,12 @@ private fun ConsentRow(
         Spacer(Modifier.width(4.dp))
         Text(
             title,
+            // Экран входа — тёмный фон вне Surface, поэтому цвет текста задаём явно
+            // (иначе LocalContentColor по умолчанию чёрный → слова не видны).
             modifier = Modifier.weight(1f).clickable { onCheckedChange(!checked) },
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.SemiBold,
+            color = Color.White,
         )
         Icon(
             Icons.Rounded.Info,

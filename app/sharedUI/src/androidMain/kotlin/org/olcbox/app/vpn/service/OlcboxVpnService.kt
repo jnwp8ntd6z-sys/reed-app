@@ -892,6 +892,15 @@ class OlcboxVpnService : VpnService() {
                 .addDnsServer(MAPDNS_ADDRESS)
                 .setBlocking(true)
 
+            // IPv6 ОБЯЗАТЕЛЬНО заворачиваем в TUN. Иначе на двойном стеке (Wi-Fi/LTE с IPv6)
+            // приложения (Telegram, Google) ходят по IPv6 НАПРЯМУЮ мимо туннеля — а в РФ-сетях
+            // с белыми списками этот прямой IPv6 режется → «Telegram не открывается». С захватом
+            // v6 трафик идёт в hev → SOCKS5 → сервер (или happy-eyeballs падает на рабочий v4).
+            runCatching {
+                builder.addAddress(TUN_IPV6_ADDRESS, IPV6_PREFIX_LENGTH)
+                builder.addRoute("::", 0)
+            }.onFailure { addLog("IPv6 TUN setup skipped: ${it.message}") }
+
             if (!applySplitTunneling(builder)) return null
 
             currentNetwork?.let { builder.setUnderlyingNetworks(arrayOf(it)) }
@@ -987,6 +996,7 @@ class OlcboxVpnService : VpnService() {
               mtu: $TUN_MTU
               multi-queue: false
               ipv4: $TUN_IPV4_ADDRESS
+              ipv6: '$TUN_IPV6_ADDRESS'
 
             socks5:
               address: ${socksConnectHost()}
@@ -1917,6 +1927,10 @@ class OlcboxVpnService : VpnService() {
         private const val TUN_MTU = 1500
         private const val TUN_IPV4_ADDRESS = "10.0.88.88"
         private const val IPV4_PREFIX_LENGTH = 24
+        // ULA-адрес для IPv6-плеча TUN (захват v6, чтоб не утекал мимо туннеля). /128 — точечный
+        // адрес интерфейса; маршрут ::/0 заворачивает весь v6-трафик в hev-socks5-tunnel.
+        private const val TUN_IPV6_ADDRESS = "fdfe:dcba:9876::1"
+        private const val IPV6_PREFIX_LENGTH = 128
         private const val MAPDNS_ADDRESS = "1.1.1.1"
         private const val MAPDNS_NETWORK = "100.64.0.0"
         private const val MAPDNS_NETMASK = "255.192.0.0"
