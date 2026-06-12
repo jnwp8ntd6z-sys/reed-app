@@ -12,6 +12,9 @@ class App : Application() {
     override fun onCreate() {
         super.onCreate()
         appContext = applicationContext
+        // СПЕЦ-СБОРКА: ставим перехватчик вылетов ПЕРВЫМ делом, чтобы поймать краш
+        // запуска и записать стек в «Загрузки/reed-crash-*.txt».
+        CrashLogger.install(applicationContext)
         // Инициализируем хранилище сессии Reed на уровне процесса — нужно в т.ч.
         // для BootReceiver (автозапуск), который срабатывает без открытия Activity.
         reedStoreInitAndroid(applicationContext)
