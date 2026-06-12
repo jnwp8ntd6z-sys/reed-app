@@ -97,9 +97,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import multiplatform_app.sharedui.generated.resources.Res
-import multiplatform_app.sharedui.generated.resources.reed_logo
-import org.jetbrains.compose.resources.painterResource
 import org.olcbox.app.data.reed.AppNotification
 import org.olcbox.app.data.datasource.ReedTempServer
 import org.olcbox.app.data.reed.DeviceInfo
@@ -213,9 +210,7 @@ fun ReedOnboardingScreen(
             Spacer(Modifier.height(32.dp))
             // Финальный логотип Reed по центру + название под ним.
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                Image(
-                    painter = painterResource(Res.drawable.reed_logo),
-                    contentDescription = "Reed VPN",
+                ReedBrandLogo(
                     modifier = Modifier.size(96.dp).clip(RoundedCornerShape(22.dp)),
                 )
                 Spacer(Modifier.height(12.dp))
@@ -853,8 +848,7 @@ fun ReedHomeScreen(
     ) {
         // Шапка: логотип + «REED VPN» + звоночек уведомлений (с красным кружком при новых).
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Image(
-                painter = painterResource(Res.drawable.reed_logo),
+            ReedBrandLogo(
                 contentDescription = null,
                 modifier = Modifier.size(30.dp).clip(RoundedCornerShape(8.dp)),
             )
