@@ -535,20 +535,16 @@ class OlcboxVpnService : VpnService() {
 
         val upstream = findActiveUpstreamNetwork()
         if (upstream == null) {
+            // Сети сейчас нет (полностью офлайн). VPN физически не поднимется без сети,
+            // но ведём себя как Happ: НЕ висим молча и НЕ выкидываем ошибку, а переходим в
+            // «Ожидание сети» и АВТОМАТИЧЕСКИ подключаемся, как только сеть появится
+            // (через networkCallback + периодический ретрай). Юзеру не нужно жать заново.
             updateUnderlyingNetwork(null)
             unbindProcessFromNetwork()
-            addLog("No upstream network")
-            if (isMigration || isRestart) {
-                // Пересоединение/переключение: сеть могла мигнуть — ждём её возврата.
-                setStatus(VpnStatus.Reconnecting)
-                updateNotification("Waiting for network...")
-                scheduleTransportRetry(requestedGeneration, "no upstream network", NETWORK_RETRY_BASE_DELAY_MS)
-            } else {
-                // ПЕРВИЧНОЕ подключение без интернета: не висим вечно на «Подключаюсь»
-                // (VPN физически не может подняться без сети) — честно сообщаем юзеру.
-                setStatus(VpnStatus.Error("Нет подключения к интернету. Включите сеть и попробуйте снова."))
-                updateNotification("Нет интернета")
-            }
+            addLog("Нет сети — подключусь автоматически, когда она появится")
+            setStatus(VpnStatus.Reconnecting)
+            updateNotification("Ожидание сети…")
+            scheduleTransportRetry(requestedGeneration, "no upstream network", NETWORK_RETRY_BASE_DELAY_MS)
             return
         }
         updateUnderlyingNetwork(upstream)
