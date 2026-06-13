@@ -7,7 +7,7 @@ name: build
 on:
   push:
     branches: [ main ]
-    paths: [ "app/**", ".github/workflows/build.yml" ]
+    paths: [ "app/**", "singbox-mobile/**", ".github/workflows/build.yml" ]
   workflow_dispatch:
 
 permissions:
