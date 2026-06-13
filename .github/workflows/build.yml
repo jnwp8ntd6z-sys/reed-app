@@ -27,7 +27,7 @@ jobs:
       - name: Checkout olcrtc
         uses: actions/checkout@v4
         with:
-          repository: openlibrecommunity/olcrtc
+          repository: lltvutll-max/olcrtc
           ref: ${{ env.OLCRTC_REF }}
           path: olcrtc
           submodules: recursive
@@ -69,7 +69,7 @@ jobs:
       - name: Checkout olcrtc
         uses: actions/checkout@v4
         with:
-          repository: openlibrecommunity/olcrtc
+          repository: lltvutll-max/olcrtc
           ref: ${{ env.OLCRTC_REF }}
           path: olcrtc
           submodules: recursive
@@ -114,7 +114,7 @@ jobs:
       - name: Checkout olcrtc
         uses: actions/checkout@v4
         with:
-          repository: openlibrecommunity/olcrtc
+          repository: lltvutll-max/olcrtc
           ref: ${{ env.OLCRTC_REF }}
           path: olcrtc
           submodules: recursive
