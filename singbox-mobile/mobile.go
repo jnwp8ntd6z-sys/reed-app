@@ -24,6 +24,7 @@ package singboxmobile
 
 import (
 	"context"
+	"sync"
 
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/include"
@@ -31,7 +32,11 @@ import (
 	"github.com/sagernet/sing/common/json"
 )
 
+// mu сериализует доступ к instance/cancel. БЕЗ него быстрый Stop→Start при
+// переключении сервера «на ходу» давал гонку по глобальному инстансу и НАТИВНЫЙ КРАШ
+// (olcRTC-биндинг такой мьютекс имеет — поэтому крашил только VLESS-путь).
 var (
+	mu       sync.Mutex
 	instance *box.Box
 	cancel   context.CancelFunc
 )
@@ -39,8 +44,10 @@ var (
 // Start запускает sing-box из JSON-конфига. Конфиг должен содержать socks-inbound —
 // именно его адрес (127.0.0.1:port) потом использует tun2socks.
 func Start(configJSON string) error {
+	mu.Lock()
+	defer mu.Unlock()
 	if instance != nil {
-		_ = Stop()
+		stopLocked()
 	}
 
 	// Контекст со всеми реестрами sing-box (inbound/outbound/endpoint/dns/service).
@@ -74,6 +81,13 @@ func Start(configJSON string) error {
 
 // Stop останавливает текущий инстанс sing-box (idempotent).
 func Stop() error {
+	mu.Lock()
+	defer mu.Unlock()
+	return stopLocked()
+}
+
+// stopLocked закрывает инстанс; вызывать ТОЛЬКО под mu.
+func stopLocked() error {
 	if instance == nil {
 		return nil
 	}
@@ -88,5 +102,7 @@ func Stop() error {
 
 // IsRunning сообщает, запущен ли инстанс.
 func IsRunning() bool {
+	mu.Lock()
+	defer mu.Unlock()
 	return instance != nil
 }
