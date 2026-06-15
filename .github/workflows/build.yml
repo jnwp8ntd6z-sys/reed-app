@@ -9,6 +9,12 @@ on:
     branches: [ main ]
     paths: [ "app/**", "singbox-mobile/**", ".github/workflows/build.yml" ]
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: "Which platforms to build (all/android/windows/ios)"
+        default: "all"
+        type: choice
+        options: [ all, android, windows, ios ]
 
 permissions:
   contents: read
@@ -22,6 +28,7 @@ env:
 jobs:
   android:
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' || inputs.platforms == 'all' || inputs.platforms == 'android' }}
     steps:
       - uses: actions/checkout@v4
       - name: Checkout olcrtc
@@ -63,7 +70,7 @@ jobs:
 
   ios:
     runs-on: macos-latest
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.platforms == 'all' || inputs.platforms == 'ios') }}
     steps:
       - uses: actions/checkout@v4
       - name: Checkout olcrtc
@@ -108,7 +115,7 @@ jobs:
 
   windows:
     runs-on: windows-latest
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.platforms == 'all' || inputs.platforms == 'windows') }}
     steps:
       - uses: actions/checkout@v4
       - name: Checkout olcrtc
@@ -122,13 +129,26 @@ jobs:
         with: { distribution: temurin, java-version: "21" }
       - uses: actions/setup-go@v5
         with: { go-version: "stable", cache-dependency-path: olcrtc/go.sum }
-      - name: Build Windows portable (unsigned)
+      - name: Ensure WiX Toolset (jpackage EXE installer needs candle/light from WiX 3)
+        shell: pwsh
+        run: |
+          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) {
+            choco install wixtoolset --version=3.14.1 -y --no-progress
+            "C:\Program Files (x86)\WiX Toolset v3.14\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          } else {
+            Write-Host "WiX already present: $((Get-Command candle.exe).Source)"
+          }
+      - name: Build Windows portable + EXE installer (unsigned)
         shell: pwsh
         working-directory: app
         run: |
           $env:OLCRTC_REPO="${{ github.workspace }}\olcrtc"
-          .\gradlew.bat "-Polcbox.version=$env:OLCBOX_VERSION" "-Polcbox.versionCode=$env:OLCBOX_VERSION_CODE" :desktopApp:packageReleasePortableZip --stacktrace
+          .\gradlew.bat "-Polcbox.version=$env:OLCBOX_VERSION" "-Polcbox.versionCode=$env:OLCBOX_VERSION_CODE" :desktopApp:packageReleasePortableZip :desktopApp:packageReleaseExe --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: reed-windows-portable
           path: app/desktopApp/build/compose/binaries/main-release/portable/*.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reed-windows-installer
+          path: app/desktopApp/build/compose/binaries/main-release/exe/*.exe
