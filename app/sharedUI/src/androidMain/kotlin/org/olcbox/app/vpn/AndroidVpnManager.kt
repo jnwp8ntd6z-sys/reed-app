@@ -38,6 +38,7 @@ import org.olcbox.app.vpn.data.KEY_ANDROID_SOCKS_USERNAME_INITIALIZED
 import org.olcbox.app.vpn.data.vpnPrefDataStore
 import org.olcbox.app.vpn.service.OlcboxVpnActions
 import org.olcbox.app.vpn.service.OlcboxVpnState
+import org.olcbox.app.vpn.service.SingboxConfigCache
 import java.security.SecureRandom
 
 class AndroidVpnManager(private val context: Context) : VpnManager {
@@ -277,6 +278,72 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         )
     }
 
+    /**
+     * Предзагружает sing-box-конфиги ВСЕХ переданных VLESS-серверов в кэш, пока есть сеть.
+     * Это даёт офлайн-подключение к серверам, к которым ещё не подключались (на «зарезанном»
+     * мобильном наш API недоступен → без кэша первое подключение к серверу падает). Сервис
+     * читает кэш тем же SingboxConfigCache. Без кэша уже использованные серверы и так
+     * работают офлайн (кэшируются при подключении) — добираем остальные.
+     *
+     * Тянем только серверы БЕЗ кэша; первый сбой считаем «сеть недоступна/режут» и выходим,
+     * чтобы не висеть N×таймаут. Всё best-effort: любые ошибки молча игнорируем.
+     */
+    override suspend fun prewarmConfigs(locations: List<LocationConfig>) {
+        val socksPort = _proxySettings.value.port
+        val split = if (org.olcbox.app.data.reed.ReedSession.splitRouting) "1" else "0"
+        // Кандидаты: VLESS, с токеном, не временный, и ещё НЕ закэшированы.
+        val targets = locations
+            .map { it.normalized() }
+            .filter {
+                it.isVless() && it.key.isNotBlank() && it.id != "reed-temp" &&
+                    !SingboxConfigCache.exists(appContext, it.id, socksPort)
+            }
+            .distinctBy { it.id }
+        if (targets.isEmpty()) return
+
+        withContext(Dispatchers.IO) {
+            // Первый — пробник: если API недоступен (сеть режут), нет смысла дёргать остальные.
+            val probe = targets.first()
+            if (fetchAndCacheSingbox(probe, socksPort, split) == null) return@withContext
+
+            val rest = targets.drop(1)
+            if (rest.isEmpty()) return@withContext
+            val gate = Semaphore(PREWARM_PARALLELISM)
+            rest.map { location ->
+                async {
+                    gate.withPermit { fetchAndCacheSingbox(location, socksPort, split) }
+                }
+            }.awaitAll()
+        }
+    }
+
+    /** Один GET /app/singbox + запись в кэш. true при успехе. */
+    private fun fetchAndCacheSingbox(
+        location: LocationConfig,
+        socksPort: Int,
+        split: String
+    ): String? {
+        val server = java.net.URLEncoder.encode(location.id, "UTF-8")
+        val url = "$REED_API_BASE/app/singbox?token=${location.key}" +
+            "&socks_port=$socksPort&server=$server&split=$split"
+        return runCatching {
+            val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                connectTimeout = PREWARM_TIMEOUT_MS
+                readTimeout = PREWARM_TIMEOUT_MS
+                requestMethod = "GET"
+            }
+            try {
+                if (conn.responseCode !in 200..299) return@runCatching null
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                    .takeIf { it.isNotBlank() } ?: return@runCatching null
+                SingboxConfigCache.write(appContext, location.id, socksPort, body)
+                body
+            } finally {
+                conn.disconnect()
+            }
+        }.getOrNull()
+    }
+
     private suspend fun ensureProxySettings() {
         appContext.vpnPrefDataStore.edit { preferences ->
             val username = preferences[KEY_ANDROID_SOCKS_USERNAME]
@@ -371,6 +438,9 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         const val PROXY_USERNAME_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
         const val PROXY_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
         const val DEFAULT_LOCATION_PING_PARALLELISM = 4
+        const val REED_API_BASE = "https://reed-vpn.duckdns.org"
+        const val PREWARM_PARALLELISM = 3
+        const val PREWARM_TIMEOUT_MS = 8_000
         val random = SecureRandom()
     }
 }

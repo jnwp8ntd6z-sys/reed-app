@@ -23,4 +23,12 @@ interface VpnManager {
     suspend fun ping(locationConfig: LocationConfig): Long?
     suspend fun checkConnection(locationConfig: LocationConfig): Long?
     fun subscriptionFetchProxy(): SubscriptionFetchProxy? = null
+
+    /**
+     * Предзагрузка sing-box-конфигов для переданных VLESS-серверов в локальный кэш, пока
+     * сеть доступна. Нужно для офлайн-подключения к ещё не использованным серверам: на
+     * «зарезанном» мобильном наш API недоступен, и без кэша первое подключение к серверу
+     * не проходит. Реализовано только на Android; на остальных платформах — no-op.
+     */
+    suspend fun prewarmConfigs(locations: List<LocationConfig>) {}
 }

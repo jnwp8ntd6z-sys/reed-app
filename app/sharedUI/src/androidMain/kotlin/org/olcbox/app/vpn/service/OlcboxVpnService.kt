@@ -821,19 +821,14 @@ class OlcboxVpnService : VpnService() {
             null
         }
 
-    /** Имя файла кэша sing-box-конфига для (сервер, socks-порт). */
-    private fun singboxCacheFile(serverId: String, socksPort: Int): File {
-        val safe = serverId.map { if (it.isLetterOrDigit()) it else '_' }.joinToString("")
-        return File(filesDir, "singbox_cache_${safe}_$socksPort.json")
-    }
-
-    private fun writeSingboxCache(serverId: String, socksPort: Int, json: String) {
-        singboxCacheFile(serverId, socksPort).writeText(json)
-    }
+    // Кэш sing-box-конфигов вынесен в общий SingboxConfigCache — тот же формат имени файла
+    // использует AndroidVpnManager для предзагрузки всех серверов (офлайн-подключение к ещё
+    // не использованным серверам). Делегируем, чтобы имена файлов не разошлись.
+    private fun writeSingboxCache(serverId: String, socksPort: Int, json: String) =
+        SingboxConfigCache.write(this, serverId, socksPort, json)
 
     private fun readSingboxCache(serverId: String, socksPort: Int): String? =
-        singboxCacheFile(serverId, socksPort).takeIf { it.exists() }
-            ?.readText()?.takeIf { it.isNotBlank() }
+        SingboxConfigCache.read(this, serverId, socksPort)
 
     private fun transportRunning(): Boolean =
         if (vlessActive) SingBoxTunnel.isRunning() else Mobile.isRunning()

@@ -112,6 +112,19 @@ class HomeScreenViewModel(
 
     suspend fun performPingFor(config: LocationConfig): Long? = pingConfig(config)
 
+    /**
+     * Предзагрузка конфигов всех серверов в кэш, пока есть сеть — чтобы офлайн можно было
+     * подключиться к любому серверу, а не только к уже использованным. Best-effort, в фоне.
+     */
+    fun prewarmAllConfigs() {
+        viewModelScope.launch {
+            runCatching {
+                val locations = locationsRepository.getAllLocations().map { it.location }
+                vpnManager.prewarmConfigs(locations)
+            }
+        }
+    }
+
     private suspend fun pingConfig(config: LocationConfig): Long? {
         // VLESS-серверы: обычный TCP-пинг до host:port.
         if (config.isVless()) {
