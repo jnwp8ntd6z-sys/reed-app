@@ -66,6 +66,13 @@ fun OlcboxAppContent(
 ) {
     // Онбординг при первом запуске (до основного интерфейса).
     var showOnboarding by remember { mutableStateOf(!ReedSession.onboardingDone) }
+    // Полный выход в экран входа: чистим сессию И возвращаем UI на онбординг. Раньше
+    // выход/удаление только сбрасывали токен, но showOnboarding не переключался →
+    // оставались на главном экране с «пустым»/странным меню. Теперь — назад на вход.
+    val backToLogin: () -> Unit = {
+        ReedSession.logout()
+        showOnboarding = true
+    }
     if (showOnboarding) {
         ReedOnboardingScreen(
             homeViewModel = homeViewModel,
@@ -89,7 +96,7 @@ fun OlcboxAppContent(
         TabDef(Icons.Rounded.ChatBubble, "Помощь", orange),
     )
 
-    ReedMemberGate {
+    ReedMemberGate(onLogout = backToLogin) {
     Scaffold(
         bottomBar = {
             NavigationBar {
@@ -118,7 +125,7 @@ fun OlcboxAppContent(
                         onToggleClick = onToggleClick,
                     )
                     1 -> ReedSettingsScreen()
-                    2 -> ReedAccountScreen()
+                    2 -> ReedAccountScreen(onLogout = backToLogin)
                     else -> ReedSupportScreen()
                 }
             }

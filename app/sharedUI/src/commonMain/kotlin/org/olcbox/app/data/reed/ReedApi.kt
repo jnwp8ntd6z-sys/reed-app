@@ -240,6 +240,17 @@ object ReedSession {
             field = value
             reedStorePut(KEY_MEMBER_NAME, value)
         }
+
+    // Полный выход в экран входа: сбрасывает токен и код-сессию и помечает онбординг
+    // непройденным, чтобы UI вернулся на экран входа (Telegram / по коду). Используется
+    // при выходе, удалении аккаунта и при блокировке/удалении участника владельцем.
+    fun logout() {
+        token = null
+        joinedViaCode = false
+        memberName = null
+        importedForToken = null
+        onboardingDone = false
+    }
 }
 
 object ReedLinks {

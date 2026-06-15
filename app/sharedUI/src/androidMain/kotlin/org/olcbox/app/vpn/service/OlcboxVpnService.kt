@@ -423,9 +423,14 @@ class OlcboxVpnService : VpnService() {
         recoveryJob?.cancel()
         recoveryJob = null
         if (hadPendingStartup) {
-            addLog("Canceling pending olcRTC start")
-            stopMobile()
-            stopTun2socks()
+            // ВАЖНО: не останавливаем движок здесь синхронно. Предыдущий запуск мог быть
+            // в нативном Mobile.startWithTransport (он выполняется ПОД tunnelMutex, но ВНЕ
+            // его сейчас) — одновременный вызов Mobile.stop() из этого потока с нативным
+            // start в другом валит приложение при смене сервера «во время подключения»
+            // (краш LTE→LTE). Очистку и перезапуск сделает новый startupJob под tunnelMutex,
+            // где start/stop сериализованы и безопасны. Новый job ниже сначала дождётся
+            // завершения предыдущего (его нативный вызов раскрутится), затем заберёт замок.
+            addLog("Canceling pending start; cleanup will run under tunnel lock")
         }
         if (!isMigration) {
             resetRecoveryState()

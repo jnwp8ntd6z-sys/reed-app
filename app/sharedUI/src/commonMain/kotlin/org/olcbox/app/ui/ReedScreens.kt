@@ -1901,7 +1901,7 @@ private fun ReedMemberSettingsScreen() {
 // Гейт для вошедших по коду: следит за статусом (active/blocked/deleted) и при
 // блокировке/удалении владельцем показывает соответствующий экран вместо приложения.
 @Composable
-fun ReedMemberGate(content: @Composable () -> Unit) {
+fun ReedMemberGate(onLogout: () -> Unit = {}, content: @Composable () -> Unit) {
     if (!ReedSession.joinedViaCode) { content(); return }
     var status by remember { mutableStateOf("active") }   // active | blocked | deleted
     LaunchedEffect(ReedSession.token) {
@@ -1928,6 +1928,8 @@ fun ReedMemberGate(content: @Composable () -> Unit) {
             body = "Владелец подписки временно приостановил ваш доступ. " +
                 "Как только он снимет ограничение — подключение восстановится автоматически.",
             actionLabel = null, onAction = {},
+            // Можно выйти на экран входа (войти через Telegram или по другому коду).
+            secondaryLabel = "Выйти в меню входа", onSecondary = onLogout,
         )
         "deleted" -> {
             var showCode by remember { mutableStateOf(false) }
@@ -1935,8 +1937,9 @@ fun ReedMemberGate(content: @Composable () -> Unit) {
                 emoji = "🚪",
                 title = "Вы отключены от подписки",
                 body = "Владелец отключил ваше устройство от подписки. " +
-                    "Попросите у него новый код приглашения и войдите заново.",
+                    "Войдите по новому коду приглашения или вернитесь в меню входа.",
                 actionLabel = "Войти по новому коду", onAction = { showCode = true },
+                secondaryLabel = "Выйти в меню входа", onSecondary = onLogout,
             )
             if (showCode) {
                 JoinByCodeDialog(
@@ -1959,6 +1962,7 @@ fun ReedMemberGate(content: @Composable () -> Unit) {
 private fun ReedMemberStateScreen(
     emoji: String, title: String, body: String,
     actionLabel: String?, onAction: () -> Unit,
+    secondaryLabel: String? = null, onSecondary: () -> Unit = {},
 ) {
     Box(Modifier.fillMaxSize().background(Color(0xFF0A0A0A)), contentAlignment = Alignment.Center) {
         Column(
@@ -1975,6 +1979,19 @@ private fun ReedMemberStateScreen(
             if (actionLabel != null) {
                 Spacer(Modifier.height(24.dp))
                 ReedPrimaryButton(actionLabel) { onAction() }
+            }
+            if (secondaryLabel != null) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    secondaryLabel,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Black,
+                    color = Color.White.copy(alpha = 0.9f),
+                    modifier = Modifier
+                        .clip(ReedCardShape)
+                        .clickable { onSecondary() }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                )
             }
         }
     }
@@ -2006,7 +2023,7 @@ fun ReedSupportScreen() {
 
 // ── Личный кабинет ───────────────────────────────────────────────────────────
 @Composable
-fun ReedAccountScreen() {
+fun ReedAccountScreen(onLogout: () -> Unit = {}) {
     val uri = LocalUriHandler.current
     val scope = rememberCoroutineScope()
     var token by remember { mutableStateOf(ReedSession.token) }
@@ -2179,13 +2196,10 @@ fun ReedAccountScreen() {
             Modifier.fillMaxWidth().clip(ReedCardShape)
                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant, ReedCardShape)
                 .clickable {
-                    ReedSession.token = null
-                    // При выходе сбрасываем и код-сессию (если вошёл по коду).
-                    ReedSession.joinedViaCode = false
-                    ReedSession.memberName = null
-                    ReedSession.onboardingDone = false
+                    // Полный выход + возврат на экран входа (Telegram / по коду).
                     token = null
                     data = null
+                    onLogout()
                 }
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -2239,11 +2253,12 @@ fun ReedAccountScreen() {
                                 deleting = true
                                 scope.launch {
                                     try { ReedApi.deleteAccount(t) } catch (e: Throwable) {}
-                                    ReedSession.token = null
-                                    ReedSession.onboardingDone = false
                                     token = null
                                     data = null
                                     deleting = false
+                                    // Полный сброс сессии + возврат на экран входа,
+                                    // чтобы можно было снова войти (ТГ или по коду).
+                                    onLogout()
                                 }
                             }
                             .padding(14.dp),
