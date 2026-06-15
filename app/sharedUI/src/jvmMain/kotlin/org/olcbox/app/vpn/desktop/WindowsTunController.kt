@@ -11,12 +11,20 @@ internal class WindowsTunController(
     private val addLog: (String) -> Unit
 ) {
     private var routesInstalled = false
+    // IP-адреса VPN-сервера, которые пускаем в обход TUN (см. start()).
+    private var serverBypassIps: List<String> = emptyList()
 
     suspend fun start(
         tun2SocksBinary: Path,
-        socksPort: Int = PacServer.LOCAL_SOCKS_PORT
+        socksPort: Int = PacServer.LOCAL_SOCKS_PORT,
+        serverHost: String? = null
     ): Process {
         ensureAdministratorOrRequestRestart()
+
+        // Резолвим адрес сервера ДО поднятия TUN (пока активен системный DNS), чтобы
+        // добавить для него /32-маршрут в обход туннеля. Без этого соединение движка к
+        // самому серверу заворачивается в TUN → петля → WSAENOBUFS на Windows.
+        serverBypassIps = resolveServerIps(serverHost)
 
         val process = ProcessBuilder(tun2SocksCommand(tun2SocksBinary, socksPort))
             .directory(tun2SocksBinary.parent.toFile())
@@ -118,10 +126,44 @@ internal class WindowsTunController(
         }.getOrDefault(false)
     }
 
+    /** Резолвит host сервера в IPv4-адреса (или возвращает сам IP, если это литерал). */
+    private fun resolveServerIps(host: String?): List<String> {
+        val h = host?.trim().orEmpty()
+        if (h.isEmpty()) return emptyList()
+        return runCatching {
+            java.net.InetAddress.getAllByName(h)
+                .filterIsInstance<java.net.Inet4Address>()
+                .map { it.hostAddress }
+                .distinct()
+        }.getOrElse {
+            if (h.matches(Regex("""\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}"""))) listOf(h) else emptyList()
+        }
+    }
+
+    /** PowerShell-блок: /32-маршруты к серверу через физический шлюз (в обход TUN). */
+    private fun serverBypassInstallScript(): String {
+        if (serverBypassIps.isEmpty()) return ""
+        val ipArray = serverBypassIps.joinToString(",") { "'$it'" }
+        return """
+            ${'$'}phys = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
+              Where-Object { ${'$'}_.InterfaceAlias -ne '$TUN_NAME' } |
+              Sort-Object RouteMetric | Select-Object -First 1
+            if (${'$'}phys) {
+              foreach (${'$'}ip in @($ipArray)) {
+                Get-NetRoute -DestinationPrefix "${'$'}ip/32" -ErrorAction SilentlyContinue |
+                  Where-Object { ${'$'}_.InterfaceAlias -ne '$TUN_NAME' } |
+                  Remove-NetRoute -Confirm:${'$'}false -ErrorAction SilentlyContinue
+                New-NetRoute -DestinationPrefix "${'$'}ip/32" -NextHop ${'$'}phys.NextHop -InterfaceIndex ${'$'}phys.InterfaceIndex -RouteMetric 1 -ErrorAction SilentlyContinue | Out-Null
+              }
+            }
+        """.trimIndent()
+    }
+
     private suspend fun installRoutes() {
         runPowerShell(
             """
             ${'$'}ErrorActionPreference = 'Stop'
+            ${serverBypassInstallScript()}
             ${'$'}adapter = Get-NetAdapter -Name '$TUN_NAME' -ErrorAction Stop
             ${'$'}ifIndex = ${'$'}adapter.ifIndex
 
@@ -143,9 +185,23 @@ internal class WindowsTunController(
         )
     }
 
+    /** PowerShell-блок: снять /32-маршруты обхода к серверу. */
+    private fun serverBypassRemoveScript(): String {
+        if (serverBypassIps.isEmpty()) return ""
+        val ipArray = serverBypassIps.joinToString(",") { "'$it'" }
+        return """
+            foreach (${'$'}ip in @($ipArray)) {
+              Get-NetRoute -DestinationPrefix "${'$'}ip/32" -ErrorAction SilentlyContinue |
+                Where-Object { ${'$'}_.InterfaceAlias -ne '$TUN_NAME' } |
+                Remove-NetRoute -Confirm:${'$'}false -ErrorAction SilentlyContinue
+            }
+        """.trimIndent()
+    }
+
     private suspend fun removeRoutes() {
         runPowerShell(
             """
+            ${serverBypassRemoveScript()}
             ${'$'}adapter = Get-NetAdapter -Name '$TUN_NAME' -ErrorAction SilentlyContinue
             if (${'$'}null -eq ${'$'}adapter) { exit 0 }
             ${'$'}ifIndex = ${'$'}adapter.ifIndex

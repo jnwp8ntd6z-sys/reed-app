@@ -256,7 +256,7 @@ class DesktopVpnManager private constructor(
 
             when (desktopMode) {
                 DesktopMode.LinuxTun -> startLinuxTun(socksSettings.port, requestGeneration)
-                DesktopMode.WindowsTun -> startWindowsTun(socksSettings.port, requestGeneration)
+                DesktopMode.WindowsTun -> startWindowsTun(socksSettings.port, requestGeneration, location.host)
                 DesktopMode.SystemProxy -> startSystemProxy(socksSettings, requestGeneration)
             }
 
@@ -324,9 +324,11 @@ class DesktopVpnManager private constructor(
         startTunLogReader(tunProcess ?: error("hev-socks5-tunnel process is missing"))
     }
 
-    private suspend fun startWindowsTun(socksPort: Int, requestGeneration: Long) {
+    private suspend fun startWindowsTun(socksPort: Int, requestGeneration: Long, serverHost: String) {
         val tun2SocksBinary = DesktopNativeAssets.resolveWindowsTun2SocksBinary()
-        tunProcess = windowsTunController.start(tun2SocksBinary, socksPort)
+        // serverHost (адрес VPN-сервера) пускаем В ОБХОД TUN, иначе соединение sing-box к
+        // самому серверу зацикливается обратно в туннель → переполнение сокетов на Windows.
+        tunProcess = windowsTunController.start(tun2SocksBinary, socksPort, serverHost)
 
         if (requestGeneration != generation) {
             throw CancellationException("Desktop start superseded")
