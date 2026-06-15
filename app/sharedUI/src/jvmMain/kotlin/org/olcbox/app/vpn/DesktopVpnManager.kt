@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import org.olcbox.app.data.model.LocationConfig
 import org.olcbox.app.data.repository.LocationsRepository
 import org.olcbox.app.data.repository.SubscriptionFetchProxy
@@ -122,6 +123,22 @@ class DesktopVpnManager private constructor(
             locationConfig = locationConfig,
             deviceId = locationsRepository.getDeviceIdentity()
         )
+    }
+
+    override suspend fun prewarmConfigs(locations: List<LocationConfig>) = withContext(Dispatchers.IO) {
+        val socksPort = _socksProxySettings.value.normalized().port
+        // Кандидаты: VLESS, с токеном, не временный, ещё не закэшированы.
+        val targets = locations
+            .map { it.normalized() }
+            .filter {
+                it.isVless() && it.key.isNotBlank() && it.id != "reed-temp" &&
+                    !SingBoxDesktopRunner.isCached(it.id, socksPort)
+            }
+            .distinctBy { it.id }
+        if (targets.isEmpty()) return@withContext
+        // Первый — пробник: если API недоступен (сеть режут), остальные не дёргаем.
+        if (!SingBoxDesktopRunner.prewarm(targets.first(), socksPort)) return@withContext
+        targets.drop(1).forEach { SingBoxDesktopRunner.prewarm(it, socksPort) }
     }
 
     override fun subscriptionFetchProxy(): SubscriptionFetchProxy? {
