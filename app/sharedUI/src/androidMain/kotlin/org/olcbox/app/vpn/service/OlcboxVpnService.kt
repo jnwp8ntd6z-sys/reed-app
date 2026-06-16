@@ -113,7 +113,11 @@ class OlcboxVpnService : VpnService() {
     @Volatile
     private var lastMobileProvider: String? = null
     @Volatile
+    private var lastMobileRoom: String? = null
+    @Volatile
     private var lastJitsiStopCompletedAtMs = 0L
+    @Volatile
+    private var lastJitsiStoppedRoom: String? = null
     // Активен ли VLESS-движок (sing-box) вместо olcRTC для текущей сессии. Транспортная
     // абстракция: transportRunning()/stopTransport() ниже выбирают нужный движок.
     @Volatile
@@ -632,7 +636,7 @@ class OlcboxVpnService : VpnService() {
             if (isLocalSocksPortOpen(targetSocksPort)) {
                 throw IllegalStateException("SOCKS port $targetSocksPort is still in use")
             }
-            waitForJitsiRoomCleanup(config.bypassProvider)
+            waitForJitsiRoomCleanup(config.bypassProvider, config.id)
             bindProcessToNetwork(upstream, "Bound to ${getNetName(upstream)}")
             configureMobileTransport(config)
             addLog(
@@ -640,6 +644,7 @@ class OlcboxVpnService : VpnService() {
                     "transport=${config.transport}, room=${config.id}"
             )
             lastMobileProvider = config.bypassProvider
+            lastMobileRoom = config.id
             Mobile.startWithTransport(
                 config.bypassProvider,
                 config.transport,
@@ -838,8 +843,13 @@ class OlcboxVpnService : VpnService() {
     private fun transportRunning(): Boolean =
         if (vlessActive) SingBoxTunnel.isRunning() else Mobile.isRunning()
 
-    private suspend fun waitForJitsiRoomCleanup(provider: String) {
+    private suspend fun waitForJitsiRoomCleanup(provider: String, newRoom: String) {
         if (LocationConfig.normalizeProvider(provider) != LocationConfig.PROVIDER_JITSI) return
+
+        // Пауза нужна ТОЛЬКО при перезаходе в ТУ ЖЕ комнату (Jitsi не успевает убрать
+        // прошлую сессию участника → коллизия). При смене сервера комната ДРУГАЯ —
+        // ждать незачем, поэтому переключение между LTE-серверами идёт без задержки.
+        if (newRoom != lastJitsiStoppedRoom) return
 
         val waitMs = JITSI_RESTART_SETTLE_MS -
             (System.currentTimeMillis() - lastJitsiStopCompletedAtMs)
@@ -1088,7 +1098,11 @@ class OlcboxVpnService : VpnService() {
 
                 if (mode == AndroidConnectionMode.Tun && isTunTrafficStalled()) {
                     addLog("Watchdog: TUN traffic has no upstream response")
-                    requestTransportRecovery("TUN traffic stalled", fullRestart = false)
+                    // Полный перезапуск (а не in-place): при зависании канала (особенно
+                    // olcRTC/WebRTC) перезапуск движка «на месте» часто НЕ оживляет его —
+                    // помогает только полная пересборка туннеля. Раньше тут было in-place,
+                    // из-за чего «чинилось только перезаходом в приложение».
+                    requestTransportRecovery("TUN traffic stalled", fullRestart = true)
                     return@launch
                 }
 
@@ -1247,6 +1261,7 @@ class OlcboxVpnService : VpnService() {
         runCatching { Mobile.stop() }
         if (wasRunning && provider == LocationConfig.PROVIDER_JITSI) {
             lastJitsiStopCompletedAtMs = System.currentTimeMillis()
+            lastJitsiStoppedRoom = lastMobileRoom
         }
     }
 
