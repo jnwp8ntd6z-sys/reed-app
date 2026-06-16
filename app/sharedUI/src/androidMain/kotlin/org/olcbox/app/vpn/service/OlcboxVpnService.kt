@@ -558,13 +558,16 @@ class OlcboxVpnService : VpnService() {
         }
         updateUnderlyingNetwork(upstream)
 
-        if (!startMobile(location, upstream, requestedGeneration, setErrorOnFailure = !isMigration)) {
-            if (isMigration) {
-                updateUnderlyingNetwork(null)
-                setStatus(VpnStatus.Reconnecting)
-                updateNotification("Waiting for transport...")
-                scheduleTransportRetry(requestedGeneration, "transport start failed")
-            }
+        if (!startMobile(location, upstream, requestedGeneration, setErrorOnFailure = false)) {
+            // Как Happ: НЕ сдаёмся с ошибкой после первой же неудачи (из-за этого
+            // приходилось «перезаходить»/жать подключение заново), а уходим в
+            // «Переподключение» и автоматически пробуем снова с нарастающей паузой.
+            // Юзеру ничего жать не нужно — подключится само, когда канал поднимется.
+            if (requestedGeneration != generation) return
+            updateUnderlyingNetwork(null)
+            setStatus(VpnStatus.Reconnecting)
+            updateNotification("Переподключение…")
+            scheduleTransportRetry(requestedGeneration, "transport start failed")
             return
         }
 
@@ -1940,7 +1943,7 @@ class OlcboxVpnService : VpnService() {
         private const val RTC_FAILED_RECOVERY_THRESHOLD = 1
         private const val RTC_CLOSED_RECOVERY_THRESHOLD = 2
         private const val RTC_IO_ERROR_RECOVERY_THRESHOLD = 3
-        private const val RECONNECT_RETRY_BASE_DELAY_MS = 4_000L
+        private const val RECONNECT_RETRY_BASE_DELAY_MS = 2_000L
         private const val NETWORK_RETRY_BASE_DELAY_MS = 8_000L
         private const val RECONNECT_RETRY_MAX_DELAY_MS = 30_000L
         private const val MAX_RECONNECT_BACKOFF_POWER = 3
