@@ -67,6 +67,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     /// Конфиг sing-box: /app/singbox?token=&server=&split=  (inbound=tun — см. серверную доработку).
+    ///
+    /// CACHE-FIRST (как на Android, см. OlcboxVpnService): на «зарезанных» мобильных сетях РФ
+    /// наш API недоступен, поэтому при наличии кэша отдаём его СРАЗУ (свежий тянем в фоне) —
+    /// иначе extension не поднимет туннель там, где он нужнее всего. Сеть блокирующе нужна
+    /// только при ПЕРВОМ подключении к серверу.
     private func fetchConfig(token: String, server: String, split: Bool,
                              completion: @escaping (String?) -> Void) {
         var comps = URLComponents(string: "\(apiBase)/app/singbox")!
@@ -76,12 +81,36 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             URLQueryItem(name: "split", value: split ? "1" : "0"),
             URLQueryItem(name: "inbound", value: "tun"),
         ]
-        let task = URLSession.shared.dataTask(with: comps.url!) { data, _, _ in
-            guard let data = data, let s = String(data: data, encoding: .utf8), !s.isEmpty else {
-                completion(nil); return
+        let url = comps.url!
+        let cacheURL = configCacheURL(server: server, split: split)
+
+        func httpGet(_ done: @escaping (String?) -> Void) {
+            let task = URLSession.shared.dataTask(with: url) { data, _, _ in
+                guard let data = data, let s = String(data: data, encoding: .utf8), !s.isEmpty else {
+                    done(nil); return
+                }
+                try? s.data(using: .utf8)?.write(to: cacheURL)
+                done(s)
             }
-            completion(s)
+            task.resume()
         }
-        task.resume()
+
+        if let cached = try? String(contentsOf: cacheURL, encoding: .utf8), !cached.isEmpty {
+            // Есть кэш — отдаём сразу, свежий конфиг обновляем в фоне для следующего раза.
+            httpGet { _ in }
+            completion(cached)
+            return
+        }
+        // Кэша ещё нет (первое подключение к серверу) — тянем с сети и сохраняем.
+        httpGet(completion)
+    }
+
+    /// Файл кэша конфига для (сервер, split) в контейнере extension.
+    private func configCacheURL(server: String, split: Bool) -> URL {
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let safe = String(server.unicodeScalars.map {
+            CharacterSet.alphanumerics.contains($0) ? Character($0) : "_"
+        })
+        return dir.appendingPathComponent("singbox_cache_\(safe)_\(split ? "1" : "0").json")
     }
 }
