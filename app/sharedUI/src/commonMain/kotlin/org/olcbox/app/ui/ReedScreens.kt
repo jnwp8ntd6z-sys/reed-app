@@ -769,11 +769,18 @@ private fun ReedServerRow(
                     color = if (isTemp || isSelected) accent else MaterialTheme.colorScheme.onSurface)
                 // Индикатор активного транспорта: VLESS (обычный) или LTE (olcRTC, при белых
                 // списках). Помогает понять, какой движок задействован на этом сервере.
+                val isLte = !isTemp && loc.config?.isVless() != true
                 if (!isTemp) {
                     val transportLabel = if (loc.config?.isVless() == true) "VLESS" else "LTE"
                     Text(transportLabel,
                         style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f))
+                }
+                // LTE (olcRTC) не работает на Ростелекоме — предупреждаем и зовём на VLESS.
+                if (isLte) {
+                    Text("⚠️ Ростелеком: не работает — выберите VLESS",
+                        style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error)
                 }
                 if (!desc.isNullOrBlank()) {
                     Text(desc,
@@ -1257,10 +1264,10 @@ fun ReedHomeScreen(
         //  • нет активной подписки (не вошёл / кончилась) → в списке ТОЛЬКО временный;
         //  • подписка активна → реальные серверы, а временный уезжает в конец и прячется
         //    под сворачиваемую строку (оранжевый акцент, всегда доступен).
-        // Серверы сортируются по пингу (быстрейший сверху, недоступные — в конце) — фишка Happ.
+        // Порядок серверов ФИКСИРОВАННЫЙ (как пришли из подписки) — НЕ пересортировываем
+        // по пингу, чтобы серверы не «прыгали» вверх/вниз при обновлении пинга.
         val realServers = locations
             .filter { !ReedTempServer.isTemp(it.storageId) }
-            .sortedBy { pingFor(pingsState, it.storageId) ?: Int.MAX_VALUE }
         val tempServer = locations.firstOrNull { ReedTempServer.isTemp(it.storageId) }
 
         // Общий onClick для выбора сервера.

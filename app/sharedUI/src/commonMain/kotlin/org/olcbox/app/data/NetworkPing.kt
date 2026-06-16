@@ -9,9 +9,15 @@ import kotlin.time.TimeSource
 /**
  * Замеряет время TCP-подключения к host:port (DNS + handshake) — используется как «пинг»
  * для VLESS-серверов (кнопка «Тест»). Возвращает миллисекунды или null при ошибке/таймауте.
- * Кроссплатформенно через ktor-network (JVM/Android/iOS/macOS).
+ *
+ * Реализация платформенная: на Android селектор ktor-network даёт «—» (особенно в
+ * эмуляторе), поэтому там используется обычный java.net.Socket. На desktop/iOS/macOS
+ * работает ktor-путь (tcpPingMsKtor).
  */
-suspend fun tcpPingMs(host: String, port: Int, timeoutMs: Long = 3500): Long? {
+expect suspend fun tcpPingMs(host: String, port: Int, timeoutMs: Long = 3500): Long?
+
+/** Кроссплатформенный замер через ktor-network (JVM-desktop/iOS/macOS). */
+internal suspend fun tcpPingMsKtor(host: String, port: Int, timeoutMs: Long): Long? {
     if (host.isBlank() || port <= 0) return null
     val selector = SelectorManager(Dispatchers.Default)
     return try {
