@@ -144,6 +144,33 @@ jobs:
         run: |
           $env:OLCRTC_REPO="${{ github.workspace }}\olcrtc"
           .\gradlew.bat "-Polcbox.version=$env:OLCBOX_VERSION" "-Polcbox.versionCode=$env:OLCBOX_VERSION_CODE" :desktopApp:packageReleasePortableZip :desktopApp:packageReleaseExe --stacktrace
+      - name: Self-sign Windows binaries (Authenticode)
+        shell: pwsh
+        working-directory: app
+        env:
+          PFX_B64: ${{ secrets.WIN_CODESIGN_PFX_B64 }}
+          PFX_PW: ${{ secrets.WIN_CODESIGN_PFX_PW }}
+        run: |
+          if (-not $env:PFX_B64) { Write-Host "no codesign secret — skipping signing"; exit 0 }
+          $pfx = "$env:RUNNER_TEMP\reed-codesign.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_B64))
+          $st = (Get-ChildItem "C:/Program Files (x86)/Windows Kits/10/bin/*/x64/signtool.exe" | Sort-Object FullName | Select-Object -Last 1).FullName
+          Write-Host "signtool: $st"
+          function Sign($f) {
+            & $st sign /fd SHA256 /f $pfx /p $env:PFX_PW /tr http://timestamp.digicert.com /td SHA256 "$f"
+            if ($LASTEXITCODE -ne 0) { throw "sign failed: $f" }
+          }
+          # 1) installer .exe
+          Get-ChildItem desktopApp/build/compose/binaries/main-release/exe -Filter *.exe -ErrorAction SilentlyContinue | ForEach-Object { Sign $_.FullName }
+          # 2) portable: распаковать → подписать вложенный .exe → перепаковать
+          $zip = Get-ChildItem desktopApp/build/compose/binaries/main-release/portable/*.zip -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($zip) {
+            $tmp = "$env:RUNNER_TEMP\portable"; Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+            Expand-Archive $zip.FullName -DestinationPath $tmp
+            Get-ChildItem $tmp -Recurse -Filter *.exe | ForEach-Object { Sign $_.FullName }
+            Remove-Item $zip.FullName -Force
+            Compress-Archive -Path "$tmp\*" -DestinationPath $zip.FullName
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: reed-windows-portable
