@@ -11,6 +11,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 
 @Composable
 actual fun AppTheme(
@@ -36,11 +38,23 @@ actual fun AppTheme(
             else -> OlcboxLightColorScheme
         }
 
-        MaterialTheme(
-            colorScheme = colorScheme,
-            typography = typography
-        ) {
-            ProvideTextStyle(MaterialTheme.typography.bodyMedium, content)
+        // Ограничиваем системный масштаб шрифта. На Honor/Xiaomi с увеличенным размером
+        // шрифта/экрана (fontScale > 1.1) текст «съезжал», наезжал и ломал вёрстку — теперь
+        // он одинаковый на всех телефонах. Лёгкое увеличение (до 1.1) оставляем для
+        // доступности, экстремальные значения зажимаем.
+        val baseDensity = LocalDensity.current
+        val clampedDensity = Density(
+            density = baseDensity.density,
+            fontScale = baseDensity.fontScale.coerceIn(0.9f, 1.1f)
+        )
+
+        CompositionLocalProvider(LocalDensity provides clampedDensity) {
+            MaterialTheme(
+                colorScheme = colorScheme,
+                typography = typography
+            ) {
+                ProvideTextStyle(MaterialTheme.typography.bodyMedium, content)
+            }
         }
     }
 }

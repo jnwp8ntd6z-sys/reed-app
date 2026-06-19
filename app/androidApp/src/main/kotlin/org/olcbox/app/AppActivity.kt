@@ -1,9 +1,11 @@
 package org.olcbox.app
 
 import android.Manifest
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -60,7 +62,20 @@ class AppActivity : ComponentActivity() {
             locationsRepository = locationsRepository
         )
 
-        enableEdgeToEdge()
+        // Reed всегда тёмный. По умолчанию enableEdgeToEdge() подбирает стиль баров под
+        // СИСТЕМНУЮ тему: при светлой теме телефона навбар получал СВЕТЛЫЙ контрастный
+        // скрим → внизу нашего тёмного приложения была «белая полоса» (особенно на Honor/
+        // Xiaomi). Принудительно делаем оба бара ПРОЗРАЧНЫМИ со СВЕТЛЫМИ иконками
+        // (SystemBarStyle.dark) и отключаем принудительный контраст-скрим — тогда тёмный
+        // фон приложения доходит до самого низа без полос и цветовых артефактов.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+            window.isStatusBarContrastEnforced = false
+        }
         setContent {
             // Reed VPN — фирменный лаймовый бренд. НЕ используем Material You
             // (dynamicColor): на реальном телефоне он перекрашивал наш лайм в блёклый

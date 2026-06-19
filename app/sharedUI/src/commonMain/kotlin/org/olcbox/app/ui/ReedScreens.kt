@@ -23,13 +23,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -215,9 +218,13 @@ fun ReedOnboardingScreen(
     // поэтому фон задаём явно (иначе видно серое окно платформы).
     Box(Modifier.fillMaxSize().background(Color(0xFF0A0A0A))) {
         Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+            // Тёмный фон заполняет весь экран (под барами тоже), а контент отступает от
+            // статус-бара/навбара/выреза камеры (safeDrawing) — иначе на Honor/телефонах с
+            // вырезом верхний текст «съезжал» под статус-бар, а нижние кнопки — под навбар.
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                .windowInsetsPadding(WindowInsets.safeDrawing).padding(24.dp),
         ) {
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(16.dp))
             // Финальный логотип Reed по центру + название под ним.
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                 ReedBrandLogo(
