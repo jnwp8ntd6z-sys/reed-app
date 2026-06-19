@@ -71,6 +71,14 @@ import java.net.URL
 import java.net.URLEncoder
 import kotlin.concurrent.thread
 import kotlin.coroutines.coroutineContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 class OlcboxVpnService : VpnService() {
 
@@ -128,6 +136,8 @@ class OlcboxVpnService : VpnService() {
     // olcRTC со split-routing: одновременно работают sing-box-роутер (на основном порту) и
     // движок olcRTC (на внутреннем порту). Нужно знать это для корректной остановки обоих.
     private var olcSplitActive = false
+    // Для правки sing-box-конфига olcRTC (вставка кредов в socks-outbound).
+    private val olcConfigJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     private var vpnInterface: ParcelFileDescriptor? = null
     private var tun2socksThread: Thread? = null
@@ -697,8 +707,14 @@ class OlcboxVpnService : VpnService() {
 
             if (useSplit) {
                 // sing-box-роутер на targetSocksPort: РФ → direct, остальное → olcRTC:$mobilePort.
+                // ВАЖНО: локальный SOCKS движка olcRTC поднят с логином/паролем (requiresAuth),
+                // поэтому в socks-outbound sing-box ОБЯЗАТЕЛЬНО прокидываем те же креды — иначе
+                // sing-box не пройдёт авторизацию у olcRTC и трафик/DNS не пойдут (туннель
+                // «подключён», но ничего не открывается).
+                val splitConfigWithAuth =
+                    injectOlcProxyAuth(olcSplitConfig!!, socksUsername, socksPassword)
                 addLog("Starting split-routing (sing-box) on $socksListenHost:$targetSocksPort")
-                SingBoxTunnel.start(olcSplitConfig!!)
+                SingBoxTunnel.start(splitConfigWithAuth)
                 olcSplitActive = true
                 val deadline = System.currentTimeMillis() + MOBILE_READY_TIMEOUT_MS
                 var ready = false
@@ -943,6 +959,36 @@ class OlcboxVpnService : VpnService() {
             addLog("olcRTC split config unavailable → fallback to direct olcRTC")
             null
         }
+
+    /** Добавляет логин/пароль в socks-outbound «proxy» (выход на локальный движок olcRTC).
+     *  Конфиг с сервера приходит БЕЗ кредов (они per-device), а SOCKS движка olcRTC требует
+     *  авторизацию — без этого sing-box не пройдёт у него аутентификацию. */
+    private fun injectOlcProxyAuth(configJson: String, user: String, pass: String): String {
+        if (user.isBlank() || pass.isBlank()) return configJson
+        return runCatching {
+            val root = olcConfigJson.parseToJsonElement(configJson).jsonObject
+            val outbounds = root["outbounds"]!!.jsonArray.map { el ->
+                val o = el.jsonObject
+                if (o["tag"]?.jsonPrimitive?.contentOrNull == "proxy" &&
+                    o["type"]?.jsonPrimitive?.contentOrNull == "socks"
+                ) {
+                    JsonObject(
+                        o + mapOf(
+                            "username" to JsonPrimitive(user),
+                            "password" to JsonPrimitive(pass),
+                        )
+                    )
+                } else {
+                    el
+                }
+            }
+            val newRoot = JsonObject(root + mapOf("outbounds" to JsonArray(outbounds)))
+            olcConfigJson.encodeToString(JsonObject.serializer(), newRoot)
+        }.getOrElse {
+            addLog("olcRTC split: failed to inject proxy auth (${it.message}); using config as-is")
+            configJson
+        }
+    }
 
     private suspend fun waitForJitsiRoomCleanup(provider: String, newRoom: String) {
         if (LocationConfig.normalizeProvider(provider) != LocationConfig.PROVIDER_JITSI) return
