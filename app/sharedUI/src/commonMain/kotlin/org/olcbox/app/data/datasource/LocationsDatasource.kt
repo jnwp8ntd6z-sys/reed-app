@@ -734,25 +734,42 @@ class LocationsRepositoryImpl(
             }
             .toMutableList()
 
-        // Сигнатуры уже имеющихся локаций — чтобы повторный импорт тех же серверов
-        // (например, авто-импорт после перезапуска приложения) не плодил дубликаты.
-        val existingSignatures = mergedLocations
-            .mapTo(mutableSetOf()) { subscriptionSignature(it.location) }
+        // Уже имеющиеся локации индексируем по ИДЕНТИЧНОСТИ сервера (провайдер|транспорт|id),
+        // БЕЗ токена/ключа. Раньше сигнатура включала key (для Reed = sub-токен): при смене
+        // токена (вход по коду, переключение подписки, повторный вход) у тех же серверов
+        // менялся key → сигнатура не совпадала → весь список импортировался ПОВЕРХ старого =
+        // серверы дублировались. Теперь тот же логический сервер обновляем НА МЕСТЕ (подтягиваем
+        // свежий токен/host, сохраняя storageId и выбор пользователя), а не плодим дубль.
+        val existingByIdentity = mutableMapOf<String, String>()  // identity -> storageId
+        mergedLocations.forEach { existingByIdentity[locationIdentity(it.location)] = it.storageId }
 
         val importedIdMap = mutableMapOf<String, String>()
 
         imported.locations.forEach { entry ->
             if (replaceMatchingStorageIds && entry.storageId in replacedStorageIds) return@forEach
 
-            // В аддитивном режиме пропускаем локацию, идентичную уже добавленной,
-            // иначе повторный авто-импорт удваивает весь список серверов.
-            if (!replaceMatchingStorageIds &&
-                !existingSignatures.add(subscriptionSignature(entry.location))
-            ) return@forEach
+            if (!replaceMatchingStorageIds) {
+                val identity = locationIdentity(entry.location)
+                val existingStorageId = existingByIdentity[identity]
+                if (existingStorageId != null) {
+                    // Тот же сервер уже есть — обновляем запись на месте (новый токен/host),
+                    // дубликат не создаём.
+                    val idx = mergedLocations.indexOfFirst { it.storageId == existingStorageId }
+                    if (idx >= 0) {
+                        mergedLocations[idx] = entry.copy(storageId = existingStorageId).normalized()
+                    }
+                    importedIdMap[entry.storageId] = existingStorageId
+                    return@forEach
+                }
+            }
 
             val storageId = uniqueStorageId(entry.storageId, existingStorageIds)
             importedIdMap[entry.storageId] = storageId
-            mergedLocations += entry.copy(storageId = storageId).normalized()
+            val newEntry = entry.copy(storageId = storageId).normalized()
+            mergedLocations += newEntry
+            if (!replaceMatchingStorageIds) {
+                existingByIdentity[locationIdentity(newEntry.location)] = storageId
+            }
         }
 
         val importedActive = imported.activeLocationId
@@ -1137,6 +1154,20 @@ class LocationsRepositoryImpl(
             normalized.transport,
             normalized.id,
             normalized.key
+        ).joinToString("|")
+    }
+
+    /**
+     * Идентичность сервера БЕЗ ключа/токена: провайдер|транспорт|id. Используется при
+     * аддитивном импорте, чтобы тот же логический сервер с новым токеном (смена подписки,
+     * вход по коду) обновлялся на месте, а не превращался в дубликат.
+     */
+    private fun locationIdentity(location: LocationConfig): String {
+        val normalized = location.normalized()
+        return listOf(
+            normalized.bypassProvider,
+            normalized.transport,
+            normalized.id
         ).joinToString("|")
     }
 

@@ -461,6 +461,32 @@ class LocationsRepositoryImplTest {
     }
 
     @Test
+    fun reedLocationsReimportWithNewTokenUpdatesInPlaceWithoutDuplicates() = runTest {
+        val source = FakeLocationsDataSource()
+        fun reedJson(token: String) = """
+            {
+              "locations": [
+                {"transport":"vless","tag":"🇳🇱 SMART-Нидерланды","name":"🇳🇱 SMART-Нидерланды","host":"1.1.1.1","port":443},
+                {"transport":"vless","tag":"🇩🇪 SMART-Германия","name":"🇩🇪 SMART-Германия","host":"2.2.2.2","port":443}
+              ],
+              "configs": {"vless":"/app/singbox?token=$token","olcrtc":"/app/olcconf?token=$token"}
+            }
+        """.trimIndent()
+        val repo = LocationsRepositoryImpl(source)
+
+        repo.importText(reedJson("TOKEN_A"))
+        // Смена подписки/токена (вход по коду, переключение, повторный вход) → повторный импорт.
+        repo.importText(reedJson("TOKEN_B"))
+
+        val imported = source.stored
+        assertNotNull(imported)
+        // Серверы НЕ задвоились (было бы 4 при старом поведении), а обновились на месте.
+        assertEquals(2, imported.locations.size)
+        // У всех записей подтянулся свежий токен.
+        assertTrue(imported.locations.all { it.location.key == "TOKEN_B" })
+    }
+
+    @Test
     fun bundleRestoreUpdatesMatchingStorageIds() = runTest {
         val source = FakeLocationsDataSource(
             stored = LocationBundleV4(
