@@ -291,6 +291,37 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
     override suspend fun prewarmConfigs(locations: List<LocationConfig>) {
         val socksPort = _proxySettings.value.port
         val split = if (org.olcbox.app.data.reed.ReedSession.splitRouting) "1" else "0"
+
+        // Split-конфиг для olcRTC (один на всех, без токена): кэшируем заранее, чтобы русские
+        // сервисы работали даже офлайн / на «зарезанных» сетях, где наш API недоступен.
+        // olcPort должен совпадать с OLCRTC_INTERNAL_SOCKS_PORT в OlcboxVpnService.
+        val olcPort = 10861
+        if (!SingboxConfigCache.exists(appContext, "olcrtc_split_$olcPort", socksPort)) {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val url = "$REED_API_BASE/app/olcsingbox" +
+                        "?socks_port=$socksPort&olc_port=$olcPort&split=$split"
+                    val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+                        connectTimeout = PREWARM_TIMEOUT_MS
+                        readTimeout = PREWARM_TIMEOUT_MS
+                        requestMethod = "GET"
+                    }
+                    try {
+                        if (conn.responseCode in 200..299) {
+                            val body = conn.inputStream.bufferedReader().use { it.readText() }
+                            if (body.isNotBlank()) {
+                                SingboxConfigCache.write(
+                                    appContext, "olcrtc_split_$olcPort", socksPort, body
+                                )
+                            }
+                        }
+                    } finally {
+                        conn.disconnect()
+                    }
+                }
+            }
+        }
+
         // Кандидаты: VLESS, с токеном, не временный, и ещё НЕ закэшированы.
         val targets = locations
             .map { it.normalized() }

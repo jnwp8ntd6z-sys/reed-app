@@ -93,6 +93,9 @@ class OlcboxVpnService : VpnService() {
     private var cleanupJob: Job? = null
     private var networkLossJob: Job? = null
     private var recoveryJob: Job? = null
+    // Отложенная проверка после ICE «disconnected»: даём WebRTC шанс восстановиться сам;
+    // если за RTC_DISCONNECT_GRACE_MS не вернулся «connected» — пересобираем туннель.
+    private var rtcDisconnectRecoveryJob: Job? = null
     private var reconnectAttempt = 0
     private var generation = 0L
     private var recoveryRequestedForGeneration = 0L
@@ -122,6 +125,9 @@ class OlcboxVpnService : VpnService() {
     // абстракция: transportRunning()/stopTransport() ниже выбирают нужный движок.
     @Volatile
     private var vlessActive = false
+    // olcRTC со split-routing: одновременно работают sing-box-роутер (на основном порту) и
+    // движок olcRTC (на внутреннем порту). Нужно знать это для корректной остановки обоих.
+    private var olcSplitActive = false
 
     private var vpnInterface: ParcelFileDescriptor? = null
     private var tun2socksThread: Thread? = null
@@ -634,17 +640,41 @@ class OlcboxVpnService : VpnService() {
             val targetSocksPort = socksListenPort
             val deviceId = deviceIdentityProvider.hwid()
             resetRtcHealthState()
+            olcSplitActive = false
+
+            // SPLIT-ROUTING для olcRTC: ставим sing-box ПЕРЕД движком olcRTC. РФ-домены/РФ-IP
+            // идут direct (банки/госуслуги видят настоящий РФ-IP → не палят VPN), остальное —
+            // в olcRTC-туннель. Конфиг тянем CACHE-FIRST: на «зарезанных» сетях с белыми
+            // списками (где и нужен olcRTC) наш API недоступен, поэтому работаем по кэшу.
+            // Если конфига нет совсем (ни разу не качали + API недоступен) — ТИХО откатываемся
+            // на прямой olcRTC (как было), чтобы не сломать подключение.
+            val splitWanted = org.olcbox.app.data.reed.ReedSession.splitRouting &&
+                config.id != ReedTempServer.LOCATION_ID
+            val olcSplitConfig =
+                if (splitWanted) fetchOlcSingboxConfig(targetSocksPort, OLCRTC_INTERNAL_SOCKS_PORT)
+                else null
+            val useSplit = olcSplitConfig != null
+            // В split-режиме движок olcRTC слушает ВНУТРЕННИЙ порт, а tun2socks ходит на
+            // sing-box (targetSocksPort). Без split — движок прямо на targetSocksPort, как было.
+            val mobilePort = if (useSplit) OLCRTC_INTERNAL_SOCKS_PORT else targetSocksPort
 
             waitForSocksPortReleased(targetSocksPort, SOCKS_RELEASE_QUICK_TIMEOUT_MS)
             if (isLocalSocksPortOpen(targetSocksPort)) {
                 throw IllegalStateException("SOCKS port $targetSocksPort is still in use")
+            }
+            if (useSplit) {
+                waitForSocksPortReleased(mobilePort, SOCKS_RELEASE_QUICK_TIMEOUT_MS)
+                if (isLocalSocksPortOpen(mobilePort)) {
+                    throw IllegalStateException("olcRTC internal port $mobilePort is still in use")
+                }
             }
             waitForJitsiRoomCleanup(config.bypassProvider, config.id)
             bindProcessToNetwork(upstream, "Bound to ${getNetName(upstream)}")
             configureMobileTransport(config)
             addLog(
                 "Starting olcRTC provider=${config.bypassProvider}, " +
-                    "transport=${config.transport}, room=${config.id}"
+                    "transport=${config.transport}, room=${config.id}" +
+                    if (useSplit) " (split-routing → :$mobilePort)" else ""
             )
             lastMobileProvider = config.bypassProvider
             lastMobileRoom = config.id
@@ -654,7 +684,7 @@ class OlcboxVpnService : VpnService() {
                 config.id,
                 deviceId,
                 config.key,
-                targetSocksPort.toLong(),
+                mobilePort.toLong(),
                 socksUsername,
                 socksPassword
             )
@@ -664,10 +694,29 @@ class OlcboxVpnService : VpnService() {
                 return false
             }
             coroutineContext.ensureActive()
+
+            if (useSplit) {
+                // sing-box-роутер на targetSocksPort: РФ → direct, остальное → olcRTC:$mobilePort.
+                addLog("Starting split-routing (sing-box) on $socksListenHost:$targetSocksPort")
+                SingBoxTunnel.start(olcSplitConfig!!)
+                olcSplitActive = true
+                val deadline = System.currentTimeMillis() + MOBILE_READY_TIMEOUT_MS
+                var ready = false
+                while (System.currentTimeMillis() < deadline) {
+                    coroutineContext.ensureActive()
+                    if (requestedGeneration != generation) {
+                        addLog("olcRTC split start superseded")
+                        return false
+                    }
+                    if (isLocalSocksPortOpen(targetSocksPort)) { ready = true; break }
+                    delay(SOCKS_RELEASE_POLL_MS)
+                }
+                if (!ready) throw IllegalStateException("olcRTC split SOCKS not ready")
+            }
+
             addLog("olcRTC ready on $socksListenHost:$targetSocksPort")
-            addLog("username: $socksUsername, password: $socksPassword")
             markRtcConnected()
-            if (keepProcessBound) {
+            if (keepProcessBound || useSplit) {
                 addLog("Keeping olcRTC bound to ${getNetName(upstream)}")
             }
             true
@@ -694,7 +743,9 @@ class OlcboxVpnService : VpnService() {
             }
             false
         } finally {
-            if (!keepProcessBound || !Mobile.isRunning()) {
+            // В split-режиме держим процесс привязанным к upstream: sing-box «direct» (РФ)
+            // должен ходить мимо TUN. Поэтому при olcSplitActive не отвязываем, пока жив движок.
+            if ((!keepProcessBound && !olcSplitActive) || !Mobile.isRunning()) {
                 unbindProcessFromNetwork()
             }
         }
@@ -844,7 +895,54 @@ class OlcboxVpnService : VpnService() {
         SingboxConfigCache.read(this, serverId, socksPort)
 
     private fun transportRunning(): Boolean =
-        if (vlessActive) SingBoxTunnel.isRunning() else Mobile.isRunning()
+        when {
+            // olcRTC + split: оба ядра должны быть живы (sing-box-роутер и движок olcRTC).
+            olcSplitActive -> SingBoxTunnel.isRunning() && Mobile.isRunning()
+            vlessActive -> SingBoxTunnel.isRunning()
+            else -> Mobile.isRunning()
+        }
+
+    /** Скачивает sing-box-конфиг split-routing ДЛЯ olcRTC (/app/olcsingbox). CACHE-FIRST:
+     *  на «зарезанных» сетях наш API недоступен → используем кэш; если кэша нет и сеть тоже
+     *  недоступна — вернём null (вызывающий тихо откатится на прямой olcRTC). */
+    private suspend fun fetchOlcSingboxConfig(socksPort: Int, olcPort: Int): String? =
+        withContext(Dispatchers.IO) {
+            val split = if (org.olcbox.app.data.reed.ReedSession.splitRouting) "1" else "0"
+            val url = "$REED_API_BASE/app/olcsingbox?socks_port=$socksPort&olc_port=$olcPort&split=$split"
+            val cacheId = "olcrtc_split_$olcPort"
+            fun httpGet(): String? = runCatching {
+                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 8_000
+                    readTimeout = 8_000
+                    requestMethod = "GET"
+                }
+                try {
+                    if (conn.responseCode !in 200..299) {
+                        addLog("olcRTC split config HTTP ${conn.responseCode}")
+                        return@runCatching null
+                    }
+                    conn.inputStream.bufferedReader().use { it.readText() }.takeIf { it.isNotBlank() }
+                } finally {
+                    conn.disconnect()
+                }
+            }.getOrNull()
+
+            val cached = readSingboxCache(cacheId, socksPort)
+            if (cached != null) {
+                scope.launch(Dispatchers.IO) {
+                    httpGet()?.let { runCatching { writeSingboxCache(cacheId, socksPort, it) } }
+                }
+                addLog("olcRTC split config from cache (cache-first)")
+                return@withContext cached
+            }
+            val fetched = httpGet()
+            if (fetched != null) {
+                runCatching { writeSingboxCache(cacheId, socksPort, fetched) }
+                return@withContext fetched
+            }
+            addLog("olcRTC split config unavailable → fallback to direct olcRTC")
+            null
+        }
 
     private suspend fun waitForJitsiRoomCleanup(provider: String, newRoom: String) {
         if (LocationConfig.normalizeProvider(provider) != LocationConfig.PROVIDER_JITSI) return
@@ -1161,6 +1259,8 @@ class OlcboxVpnService : VpnService() {
         networkLossJob?.cancel()
         recoveryJob?.cancel()
         recoveryJob = null
+        rtcDisconnectRecoveryJob?.cancel()
+        rtcDisconnectRecoveryJob = null
         releaseWakeLock()
 
         if (isCallbackRegistered) {
@@ -1254,14 +1354,21 @@ class OlcboxVpnService : VpnService() {
     }
 
     private fun stopMobile() {
-        if (vlessActive) {
+        // sing-box-роутер: для чистого VLESS и для olcRTC+split. Останавливаем, если активен.
+        if (vlessActive || olcSplitActive) {
             runCatching { SingBoxTunnel.stop() }
             vlessActive = false
-            return
         }
+        // Чистый VLESS (без split) движок olcRTC не использует — для него ниже Mobile не запущен,
+        // поэтому Mobile.isRunning()==false и Mobile.stop() безвреден. Для olcRTC и olcRTC+split
+        // обязательно останавливаем движок, иначе WebRTC-сессия утечёт.
+        val wasSplit = olcSplitActive
+        olcSplitActive = false
         val provider = lastMobileProvider
         val wasRunning = Mobile.isRunning()
-        runCatching { Mobile.stop() }
+        if (wasRunning || wasSplit) {
+            runCatching { Mobile.stop() }
+        }
         if (wasRunning && provider == LocationConfig.PROVIDER_JITSI) {
             lastJitsiStopCompletedAtMs = System.currentTimeMillis()
             lastJitsiStoppedRoom = lastMobileRoom
@@ -1339,6 +1446,18 @@ class OlcboxVpnService : VpnService() {
             return
         }
 
+        // ICE «disconnected» — РАНЬШЕ НЕ ОБРАБАТЫВАЛОСЬ: канал отваливался, новые соединения
+        // висли с «remote not ready (timeout)», а авто-восстановление не запускалось → юзеру
+        // приходилось перезапускать приложение. WebRTC «disconnected» часто оживает сам за
+        // пару секунд, поэтому не дёргаем сразу: ждём grace, и если «connected» так и не
+        // пришёл — пересобираем туннель.
+        if (lowerLine.contains("ice connection state changed: disconnected") ||
+            lowerLine.contains("peer connection state changed: disconnected")
+        ) {
+            noteRtcDisconnected()
+            return
+        }
+
         if (lowerLine.contains("network is unreachable") ||
             lowerLine.contains("use of closed network connection") ||
             lowerLine.contains("read/write on closed pipe")
@@ -1355,6 +1474,33 @@ class OlcboxVpnService : VpnService() {
         lastRtcConnectedAtMs = System.currentTimeMillis()
         lastRtcFailureAtMs = 0L
         rtcFailureCount = 0
+        // Канал ожил сам — отменяем отложенную пересборку после «disconnected».
+        rtcDisconnectRecoveryJob?.cancel()
+        rtcDisconnectRecoveryJob = null
+    }
+
+    /**
+     * ICE/peer ушёл в «disconnected». Это часто временно — даём WebRTC шанс восстановиться
+     * сам в течение RTC_DISCONNECT_GRACE_MS. Если «connected» так и не пришёл (markRtcConnected
+     * отменил бы этот job) — запускаем пересборку туннеля, чтобы юзеру не пришлось
+     * перезапускать приложение вручную.
+     */
+    private fun noteRtcDisconnected() {
+        if (OlcboxVpnState.status.value !is VpnStatus.Connected) return
+        // Не реагируем на «disconnected» в первые мгновения после установления связи.
+        if (System.currentTimeMillis() - lastRtcConnectedAtMs < RTC_RECOVERY_GRACE_MS) return
+        if (rtcDisconnectRecoveryJob?.isActive == true) return
+
+        rtcDisconnectRecoveryJob = scope.launch {
+            delay(RTC_DISCONNECT_GRACE_MS)
+            rtcDisconnectRecoveryJob = null
+            if (OlcboxVpnState.status.value !is VpnStatus.Connected) return@launch
+            addLog("RTC disconnected and did not recover; rebuilding tunnel")
+            requestTransportRecovery(
+                reason = "RTC disconnected",
+                fullRestart = shouldRecreateTunnelOnRtcLoss()
+            )
+        }
     }
 
     private fun resetRtcHealthState() {
@@ -1516,6 +1662,8 @@ class OlcboxVpnService : VpnService() {
         reconnectAttempt = 0
         recoveryJob?.cancel()
         recoveryJob = null
+        rtcDisconnectRecoveryJob?.cancel()
+        rtcDisconnectRecoveryJob = null
     }
 
     private fun shouldRecreateTunnelOnRtcLoss(): Boolean {
@@ -1928,6 +2076,10 @@ class OlcboxVpnService : VpnService() {
 
         private const val LOCAL_SOCKS_PORT_BASE = 10818
         private const val LOCAL_SOCKS_PORT_MAX = 10858
+        // Внутренний SOCKS-порт движка olcRTC в split-режиме (выше диапазона основных портов,
+        // чтобы не конфликтовать; sing-box-роутер шлёт сюда не-РФ трафик). Единственный
+        // экземпляр движка за раз → фиксированный порт безопасен.
+        private const val OLCRTC_INTERNAL_SOCKS_PORT = 10861
         private const val MOBILE_READY_TIMEOUT_MS = 25_000L
         private const val PREVIOUS_STOP_WAIT_MS = 12_000L
         private const val JITSI_RESTART_SETTLE_MS = 2_000L
@@ -1939,6 +2091,8 @@ class OlcboxVpnService : VpnService() {
         private const val WATCHDOG_STALLED_TX_PACKET_DELTA = 8L
         private const val WATCHDOG_STALLED_SAMPLE_LIMIT = 3
         private const val RTC_RECOVERY_GRACE_MS = 2_500L
+        // Сколько ждать самовосстановления WebRTC после ICE «disconnected» до пересборки.
+        private const val RTC_DISCONNECT_GRACE_MS = 7_000L
         private const val RTC_FAILURE_WINDOW_MS = 6_000L
         private const val RTC_FAILED_RECOVERY_THRESHOLD = 1
         private const val RTC_CLOSED_RECOVERY_THRESHOLD = 2
