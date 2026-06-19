@@ -505,10 +505,28 @@ data class LocationBundleV4(
     val locations: List<LocationEntry> = emptyList()
 ) {
     fun normalized(): LocationBundleV4 {
-        val normalizedLocations = locations
+        val valid = locations
             .map { it.normalized() }
             .filter { it.storageId.isNotBlank() && it.location.isComplete() }
             .distinctBy { it.storageId }
+
+        // Схлопываем ДУБЛИ одного и того же сервера по «личности» (провайдер|транспорт|id),
+        // независимо от storageId/токена. Раньше повторные импорты/смены токена плодили
+        // записи vless_smart, vless_smart_2 … с тем же сервером → на главном экране сервер
+        // дублировался по 4-5 раз. Тут чистим уже накопленные дубли при каждой загрузке:
+        // сохраняем ПОЗИЦИЮ первого вхождения и порядок; если активная локация оказалась
+        // среди дублей — оставляем именно её (чтобы выбор пользователя не слетел).
+        val byIdentity = LinkedHashMap<String, LocationEntry>()
+        for (entry in valid) {
+            val key = with(entry.location) { "$bypassProvider|$transport|$id" }
+            val existing = byIdentity[key]
+            if (existing == null) {
+                byIdentity[key] = entry
+            } else if (entry.storageId == activeLocationId) {
+                byIdentity[key] = entry
+            }
+        }
+        val normalizedLocations = byIdentity.values.toList()
 
         val active = activeLocationId
             ?.takeIf { id -> normalizedLocations.any { it.storageId == id } }

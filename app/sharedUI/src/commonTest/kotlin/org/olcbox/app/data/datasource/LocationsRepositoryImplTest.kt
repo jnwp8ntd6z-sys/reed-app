@@ -487,6 +487,31 @@ class LocationsRepositoryImplTest {
     }
 
     @Test
+    fun loadingBundleCollapsesAlreadyAccumulatedDuplicateServers() = runTest {
+        // Дубли с РАЗНЫМИ storageId (как накопилось на устройстве до фикса), один и тот же
+        // сервер (одинаковые provider|transport|id). Загрузка должна схлопнуть их в один,
+        // сохранив активный выбор.
+        fun dup(storageId: String, key: String) = LocationEntry.from(
+            storageId,
+            LocationConfig("NL", "room-nl", key, LocationConfig.PROVIDER_WB_STREAM)
+        )
+        val source = FakeLocationsDataSource(
+            stored = LocationBundleV4(
+                activeLocationId = "dup_2",
+                locations = listOf(dup("dup_1", "a".repeat(64)), dup("dup_2", "b".repeat(64)), dup("dup_3", "c".repeat(64)))
+            )
+        )
+
+        val bundle = LocationsRepositoryImpl(source).getBundle()
+
+        val real = bundle.locations.filterNot { ReedTempServer.isTemp(it.storageId) }
+        assertEquals(1, real.size)
+        // Активный сервер сохранился именно как выбранный пользователем.
+        assertEquals("dup_2", real.single().storageId)
+        assertEquals("dup_2", bundle.activeLocationId)
+    }
+
+    @Test
     fun bundleRestoreUpdatesMatchingStorageIds() = runTest {
         val source = FakeLocationsDataSource(
             stored = LocationBundleV4(
