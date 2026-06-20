@@ -1183,9 +1183,7 @@ class OlcboxVpnService : VpnService() {
 
             misc:
               task-stack-size: 24576
-              tcp-buffer-size: 65536
-              udp-recv-buffer-size: 524288
-              udp-copy-buffer-nums: 10
+              tcp-buffer-size: 4096
               max-session-count: 1200
               connect-timeout: 10000
               tcp-read-write-timeout: 300000
@@ -2155,11 +2153,7 @@ class OlcboxVpnService : VpnService() {
         private const val SOCKET_CONNECT_TIMEOUT_MS = 150
         private const val WAKE_LOCK_REFRESH_INTERVAL_MS = 30_000L
         private const val WAKE_LOCK_TIMEOUT_MS = 2 * 60 * 1000L
-        // 1400 (не 1500): VLESS идёт поверх TCP, и при MTU 1500 на «дёрганых» мобильных
-        // сетях (РФ-операторы) PMTU-discovery часто ломается (ICMP «frag needed» режут) →
-        // крупные пакеты застревают, страницы в Chrome висят/догружаются рывками. 1400
-        // оставляет запас под заголовки туннеля → пакеты проходят без застреваний.
-        private const val TUN_MTU = 1400
+        private const val TUN_MTU = 1500
         private const val TUN_IPV4_ADDRESS = "10.0.88.88"
         private const val IPV4_PREFIX_LENGTH = 24
         // ULA-адрес для IPv6-плеча TUN (захват v6, чтоб не утекал мимо туннеля). /128 — точечный
