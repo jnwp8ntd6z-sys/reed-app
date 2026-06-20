@@ -859,11 +859,13 @@ class OlcboxVpnService : VpnService() {
             } else {
                 "$REED_API_BASE/app/singbox?token=$token&socks_port=$socksPort&server=$server&split=$split"
             }
-            // Один HTTP GET конфига (или null при сбое/не-200).
+            // Один HTTP GET конфига (или null при сбое/не-200). КОРОТКИЙ таймаут: на
+            // «зарезанных» сетях API недоступен, и мы должны быстро откатиться на кэш, а не
+            // висеть. На нормальной сети ответ приходит за доли секунды.
             fun httpGet(): String? = runCatching {
                 val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 8_000
-                    readTimeout = 8_000
+                    connectTimeout = 4_000
+                    readTimeout = 4_000
                     requestMethod = "GET"
                 }
                 try {
@@ -877,25 +879,23 @@ class OlcboxVpnService : VpnService() {
                 }
             }.getOrNull()
 
-            // CACHE-FIRST. На мобильном интернете, который «режут» (РФ-белые списки), наш API
-            // reed-vpn.duckdns.org НЕ в белом списке → недоступен, а сам VPN-сервер (белый SNI
-            // belkacar.ru) — доступен. Поэтому, как Happ (у него конфиг лежит в подписке),
-            // подключаемся СРАЗУ по кэшу, не дёргая наш API; свежий конфиг тянем в фоне для
-            // следующего раза. Сеть блокирующе нужна только при ПЕРВОМ подключении к серверу.
-            val cached = readSingboxCache(location.id, socksPort)
-            if (cached != null) {
-                scope.launch(Dispatchers.IO) {
-                    httpGet()?.let { runCatching { writeSingboxCache(location.id, socksPort, it) } }
-                }
-                addLog("VLESS config from cache (cache-first)")
-                return@withContext cached
+            // NETWORK-FIRST с откатом на кэш. Раньше было cache-first → приложение держало
+            // СТАРЫЙ конфиг и серверные правки не подхватывались (в отличие от Happ, который
+            // тянет свежий каждый раз). Теперь при наличии сети берём СВЕЖИЙ конфиг и обновляем
+            // кэш; если сеть недоступна/режется (РФ-белые списки, где наш API не в белом
+            // списке) — быстро (короткий таймаут) откатываемся на кэш, чтобы подключение не
+            // тормозило и работало офлайн.
+            val fresh = httpGet()
+            if (fresh != null) {
+                runCatching { writeSingboxCache(location.id, socksPort, fresh) }
+                addLog("VLESS config fresh (network-first)")
+                return@withContext fresh
             }
 
-            // Кэша ещё нет (первое подключение к этому серверу) — тянем с сети и сохраняем.
-            val fetched = httpGet()
-            if (fetched != null) {
-                runCatching { writeSingboxCache(location.id, socksPort, fetched) }
-                return@withContext fetched
+            val cached = readSingboxCache(location.id, socksPort)
+            if (cached != null) {
+                addLog("VLESS config from cache (API unreachable → fallback)")
+                return@withContext cached
             }
             addLog("VLESS config unavailable (no cache, API unreachable)")
             null
