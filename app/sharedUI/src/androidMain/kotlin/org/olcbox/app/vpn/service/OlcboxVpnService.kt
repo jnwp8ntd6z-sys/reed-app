@@ -1169,7 +1169,12 @@ class OlcboxVpnService : VpnService() {
             socks5:
               address: ${socksConnectHost()}
               port: $socksListenPort
-              udp: 'tcp'
+              # 'udp' (НЕ 'tcp'): относим UDP как настоящий UDP через SOCKS5 UDP-ASSOCIATE
+              # (VLESS-аутбаунд несёт его как xudp). С 'tcp' UDP заворачивался поверх TCP →
+              # звонки в Telegram (real-time UDP) НЕ устанавливались вообще. HAPP использует
+              # нативный UDP — поэтому у него звонки соединяются. Возвращаем как в эталонном
+              # main.yml и как у HAPP.
+              udp: 'udp'
               pipeline: false
               username: '$socksUsername'
               password: '$socksPassword'
