@@ -73,9 +73,21 @@ jobs:
           apk=$(find app/androidApp/build/outputs/apk -name '*.apk' | head -1)
           if [ -z "$apk" ]; then echo "no APK produced"; exit 0; fi
           echo "APK: $apk ($(du -h "$apk" | cut -f1))"
-          url=$(curl -sS --max-time 180 -F "file=@${apk}" https://0x0.st 2>/dev/null || true)
-          echo "APK_MIRROR_URL=${url}"
-          echo "APK mirror: ${url}" >> "$GITHUB_STEP_SUMMARY"
+          emit() { echo "APK_MIRROR_URL=$1"; echo "APK mirror: $1" >> "$GITHUB_STEP_SUMMARY"; }
+          # tmpfiles.org (JSON {data:{url}})
+          j=$(curl -sS --max-time 180 -F "file=@${apk}" https://tmpfiles.org/api/v1/upload 2>/dev/null || true)
+          u=$(printf '%s' "$j" | sed -n 's/.*"url":"\([^"]*\)".*/\1/p' | sed 's#\\/#/#g')
+          if [ -n "$u" ]; then emit "${u/tmpfiles.org\//tmpfiles.org/dl/}"; exit 0; fi
+          # bashupload.com (returns wget line)
+          u=$(curl -sS --max-time 180 --upload-file "${apk}" "https://bashupload.com/reed.apk" 2>/dev/null | grep -oE 'https://bashupload.com/[^ ]+' | head -1 || true)
+          if [ -n "$u" ]; then emit "${u}?download=1"; exit 0; fi
+          # temp.sh
+          u=$(curl -sS --max-time 180 --upload-file "${apk}" "https://temp.sh/reed.apk" 2>/dev/null | grep -oE 'https?://[^ ]+' | head -1 || true)
+          if [ -n "$u" ]; then emit "${u}"; exit 0; fi
+          # file.io
+          u=$(curl -sS --max-time 180 -F "file=@${apk}" https://file.io 2>/dev/null | sed -n 's/.*"link":"\([^"]*\)".*/\1/p')
+          if [ -n "$u" ]; then emit "${u}"; exit 0; fi
+          echo "all mirrors failed"
       - uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
