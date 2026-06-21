@@ -254,7 +254,7 @@ class DesktopProxyModeTest {
         assertContains(command, "--proxy")
         assertContains(command, "socks5://127.0.0.1:10812")
         assertContains(command, "--mtu")
-        assertContains(command, "1500")
+        assertContains(command, "1280")
     }
 
     @Test

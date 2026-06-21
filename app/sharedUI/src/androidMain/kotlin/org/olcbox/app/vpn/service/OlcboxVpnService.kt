@@ -2158,7 +2158,13 @@ class OlcboxVpnService : VpnService() {
         private const val SOCKET_CONNECT_TIMEOUT_MS = 150
         private const val WAKE_LOCK_REFRESH_INTERVAL_MS = 30_000L
         private const val WAKE_LOCK_TIMEOUT_MS = 2 * 60 * 1000L
-        private const val TUN_MTU = 1500
+        // 1280 (IPv6 minimum), not 1500: on double-hop servers (bridge → exit, e.g.
+        // BRIDGE-Нидерланды 2) the inner packet gets VLESS/Reality-encapsulated TWICE.
+        // A 1500-byte TUN packet then overflows the real path MTU and, when PMTUD is
+        // black-holed (typical on RU mobile), large packets (TLS handshakes, page
+        // bodies) get dropped → sites won't load on double-hop while single-hop works.
+        // 1280 leaves headroom for the double encapsulation so traffic flows everywhere.
+        private const val TUN_MTU = 1280
         private const val TUN_IPV4_ADDRESS = "10.0.88.88"
         private const val IPV4_PREFIX_LENGTH = 24
         // ULA-адрес для IPv6-плеча TUN (захват v6, чтоб не утекал мимо туннеля). /128 — точечный

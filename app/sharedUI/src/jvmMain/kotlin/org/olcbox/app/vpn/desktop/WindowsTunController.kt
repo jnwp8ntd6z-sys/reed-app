@@ -255,7 +255,9 @@ internal class WindowsTunController(
 
     internal companion object {
         const val TUN_NAME = "Olcbox"
-        const val TUN_MTU = 1500
+        // 1280: double-hop (bridge → exit) double-encapsulates packets; 1500 overflows
+        // the path MTU and big packets get black-holed. See OlcboxVpnService.TUN_MTU.
+        const val TUN_MTU = 1280
         const val TUN_IPV4_ADDRESS = "10.0.88.88"
         const val TUN_IPV4_PREFIX_LENGTH = 24
         const val MAPDNS_ADDRESS = "1.1.1.1"
