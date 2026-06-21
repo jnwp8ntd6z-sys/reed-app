@@ -172,7 +172,7 @@ internal class LinuxTunController(
         const val TUN_NAME = "olcbox0"
         // 1280: double-hop (bridge → exit) double-encapsulates packets; 1500 overflows
         // the path MTU and big packets get black-holed. See OlcboxVpnService.TUN_MTU.
-        const val TUN_MTU = 1280
+        const val TUN_MTU = 1500
         const val TUN_IPV4_ADDRESS = "10.0.88.88"
         const val MAPDNS_ADDRESS = "1.1.1.1"
         const val MAPDNS_NETWORK = "100.64.0.0"

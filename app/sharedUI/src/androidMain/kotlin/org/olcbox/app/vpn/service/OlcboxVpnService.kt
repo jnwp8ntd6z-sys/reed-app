@@ -2164,7 +2164,7 @@ class OlcboxVpnService : VpnService() {
         // black-holed (typical on RU mobile), large packets (TLS handshakes, page
         // bodies) get dropped → sites won't load on double-hop while single-hop works.
         // 1280 leaves headroom for the double encapsulation so traffic flows everywhere.
-        private const val TUN_MTU = 1280
+        private const val TUN_MTU = 1500
         private const val TUN_IPV4_ADDRESS = "10.0.88.88"
         private const val IPV4_PREFIX_LENGTH = 24
         // ULA-адрес для IPv6-плеча TUN (захват v6, чтоб не утекал мимо туннеля). /128 — точечный
