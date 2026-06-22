@@ -1149,6 +1149,14 @@ class LocationsRepositoryImpl(
 
     private fun subscriptionSignature(location: LocationConfig): String {
         val normalized = location.normalized()
+        // olcRTC (LTE): комната (id) и ключ теперь ПЕРСОНАЛЬНЫЕ и меняются (комната на
+        // юзера + failover между Jitsi-провайдерами). Если включать их в подпись — при
+        // каждой смене адреса сервер считается «новым» и в списке плодятся ДУБЛИ LTE.
+        // Поэтому olcRTC-сервер опознаём по СТАБИЛЬНОМУ имени (страна/LTE), а не по адресу
+        // — тогда переимпорт ОБНОВЛЯЕТ существующую запись, а не создаёт копию.
+        if (!normalized.isVless()) {
+            return "olc|${normalized.name.trim()}"
+        }
         return listOf(
             normalized.bypassProvider,
             normalized.transport,
@@ -1164,6 +1172,13 @@ class LocationsRepositoryImpl(
      */
     private fun locationIdentity(location: LocationConfig): String {
         val normalized = location.normalized()
+        // olcRTC (LTE): id = адрес комнаты Jitsi, который теперь МЕНЯЕТСЯ (персональная
+        // комната на юзера + failover между провайдерами). Если опознавать по id — при смене
+        // адреса сервер считается новым и в списке плодятся ДУБЛИ LTE. Поэтому olcRTC-сервер
+        // опознаём по СТАБИЛЬНОМУ имени (страна/LTE) → переимпорт обновляет запись на месте.
+        if (!normalized.isVless()) {
+            return "olc|${normalized.name.trim()}"
+        }
         return listOf(
             normalized.bypassProvider,
             normalized.transport,

@@ -907,6 +907,27 @@ fun ReedHomeScreen(
         }
     }
 
+    // Раз за запуск приложения ОБНОВЛЯЕМ olcRTC-конфиг, даже если серверы уже есть на
+    // диске. Адрес комнаты/провайдер olcRTC меняется на сервере (персональные комнаты +
+    // failover между Jitsi), а раньше после первого импорта приложение их НИКОГДА не
+    // перечитывало → серверные правки до юзера не доходили. Дедуп по имени (locationIdentity)
+    // обновляет запись на месте, дубли не плодятся. Не трогаем во время активного коннекта.
+    var olcRefreshedThisLaunch by remember { mutableStateOf(false) }
+    LaunchedEffect(ReedSession.token, locations.size, state.isVpnConnected) {
+        val t = ReedSession.token ?: return@LaunchedEffect
+        val hasRealServers = locations.any { !ReedTempServer.isTemp(it.storageId) }
+        if (hasRealServers && !olcRefreshedThisLaunch &&
+            !state.isVpnConnected && !state.isVpnLoading
+        ) {
+            olcRefreshedThisLaunch = true
+            homeViewModel.onImportFullConfig(
+                rawText = "$REED_OLCCONF_BASE$t",
+                onComplete = { locationViewModel.loadLocations { } },
+                onError = { },
+            )
+        }
+    }
+
     // Авто-импорт серверов Reed после входа: один раз на токен, если серверов ещё нет.
     // Тянем olcRTC-конфиги (родной транспорт движка) — кнопкой можно подключиться.
     LaunchedEffect(ReedSession.token, locations.size) {
