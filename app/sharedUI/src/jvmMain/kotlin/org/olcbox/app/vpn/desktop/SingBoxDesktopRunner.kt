@@ -61,9 +61,18 @@ internal object SingBoxDesktopRunner {
 
         // Кэша нет (первое подключение к серверу) — тянем с сети и сохраняем.
         val fetched = httpGet(url)
-            ?: error("VLESS config unavailable (no network, no cache)")
-        runCatching { cacheFile(config.id, socksPort).writeText(fetched) }
-        return fetched
+        if (fetched != null) {
+            runCatching { cacheFile(config.id, socksPort).writeText(fetched) }
+            return fetched
+        }
+        // Временный VPN на свежей установке без доступа к API — берём ВШИТЫЙ конфиг,
+        // чтобы поднять туннель и через него докачать реальные ключи (бутстрап).
+        if (config.id == "reed-temp") {
+            val baked = org.olcbox.app.data.reed.bakedTempSingboxConfig(socksPort)
+            runCatching { cacheFile(config.id, socksPort).writeText(baked) }
+            return baked
+        }
+        error("VLESS config unavailable (no network, no cache)")
     }
 
     /** Уже есть кэш конфига для (сервер, порт)? */

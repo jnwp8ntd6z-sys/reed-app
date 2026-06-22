@@ -901,6 +901,15 @@ class OlcboxVpnService : VpnService() {
                 addLog("VLESS config fresh (no cache yet → fetched)")
                 return@withContext fresh
             }
+            // Временный VPN на свежей установке без доступа к API: берём ВШИТЫЙ конфиг —
+            // поднимаем временный туннель, через него API становится достижим → можно
+            // войти и докачать реальные ключи (бутстрап без обязательного Wi-Fi).
+            if (location.id == "reed-temp") {
+                val baked = org.olcbox.app.data.reed.bakedTempSingboxConfig(socksPort)
+                runCatching { writeSingboxCache(location.id, socksPort, baked) }
+                addLog("temp VLESS config from baked-in (API unreachable, fresh install)")
+                return@withContext baked
+            }
             addLog("VLESS config unavailable (no cache, API unreachable)")
             null
         }

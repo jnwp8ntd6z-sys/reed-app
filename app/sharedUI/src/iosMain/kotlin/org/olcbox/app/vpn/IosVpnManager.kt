@@ -235,8 +235,18 @@ class IosVpnManager(
         // API недоступен (нет сети / белые списки) — берём последний рабочий конфиг из кэша.
         val cached = NSUserDefaults.standardUserDefaults.stringForKey(singboxCacheKey(server, socksPort))
             ?.takeIf { it.isNotBlank() }
-        addLog(if (cached != null) "VLESS config from offline cache (API unreachable)"
-               else "VLESS config unavailable (no network, no cache)")
+        if (cached != null) {
+            addLog("VLESS config from offline cache (API unreachable)")
+            return cached
+        }
+        // Временный VPN на свежей установке без доступа к API — вшитый конфиг для бутстрапа.
+        if (server == "reed-temp") {
+            val baked = org.olcbox.app.data.reed.bakedTempSingboxConfig(socksPort)
+            NSUserDefaults.standardUserDefaults.setObject(baked, singboxCacheKey(server, socksPort))
+            addLog("temp VLESS config from baked-in (API unreachable, fresh install)")
+            return baked
+        }
+        addLog("VLESS config unavailable (no network, no cache)")
         return cached
     }
 
