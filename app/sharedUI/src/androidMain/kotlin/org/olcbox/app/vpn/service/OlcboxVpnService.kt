@@ -879,23 +879,27 @@ class OlcboxVpnService : VpnService() {
                 }
             }.getOrNull()
 
-            // NETWORK-FIRST с откатом на кэш. Раньше было cache-first → приложение держало
-            // СТАРЫЙ конфиг и серверные правки не подхватывались (в отличие от Happ, который
-            // тянет свежий каждый раз). Теперь при наличии сети берём СВЕЖИЙ конфиг и обновляем
-            // кэш; если сеть недоступна/режется (РФ-белые списки, где наш API не в белом
-            // списке) — быстро (короткий таймаут) откатываемся на кэш, чтобы подключение не
-            // тормозило и работало офлайн.
+            // CACHE-FIRST + фоновое обновление. Подключение должно быть БЫСТРЫМ и работать на
+            // «зарезанном» мобильном (РФ-белые списки), где наш API недоступен и network-first
+            // висел до таймаута на каждом подключении. Поэтому: есть кэш → подключаемся СРАЗУ
+            // из него, а свежий конфиг тянем в фоне и обновляем кэш на следующий раз (как Happ
+            // по сути — мгновенный коннект, актуализация незаметно). Кэша нет (первый запуск) →
+            // тянем с сети и кэшируем.
+            val cached = readSingboxCache(location.id, socksPort)
+            if (cached != null) {
+                scope.launch(Dispatchers.IO) {
+                    val fresh = httpGet()
+                    if (fresh != null) runCatching { writeSingboxCache(location.id, socksPort, fresh) }
+                }
+                addLog("VLESS config from cache (instant) + background refresh")
+                return@withContext cached
+            }
+
             val fresh = httpGet()
             if (fresh != null) {
                 runCatching { writeSingboxCache(location.id, socksPort, fresh) }
-                addLog("VLESS config fresh (network-first)")
+                addLog("VLESS config fresh (no cache yet → fetched)")
                 return@withContext fresh
-            }
-
-            val cached = readSingboxCache(location.id, socksPort)
-            if (cached != null) {
-                addLog("VLESS config from cache (API unreachable → fallback)")
-                return@withContext cached
             }
             addLog("VLESS config unavailable (no cache, API unreachable)")
             null
