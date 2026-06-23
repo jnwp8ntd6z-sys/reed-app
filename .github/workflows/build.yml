@@ -134,7 +134,28 @@ jobs:
           rm -rf build/ios-ipa/package dist && mkdir -p build/ios-ipa/package/Payload dist
           cp -R "$app_path" build/ios-ipa/package/Payload/
           (cd build/ios-ipa/package && /usr/bin/zip -qry "${GITHUB_WORKSPACE}/app/dist/Reed-${OLCBOX_VERSION}-ios-unsigned.ipa" Payload)
+      # Fallback delivery (как у Android): artifact-квота аккаунта пересчитывается раз в
+      # 6-12ч, поэтому upload-artifact может падать. Заливаем .ipa на файл-хостинг, чтобы
+      # ссылка всегда была в логе/summary прогона.
+      - name: Mirror IPA to file host
+        if: always()
+        run: |
+          ipa=$(find app/dist -name '*.ipa' | head -1)
+          if [ -z "$ipa" ]; then echo "no IPA produced"; exit 0; fi
+          echo "IPA: $ipa ($(du -h "$ipa" | cut -f1))"
+          emit() { echo "IPA_MIRROR_URL=$1"; echo "IPA mirror: $1" >> "$GITHUB_STEP_SUMMARY"; }
+          j=$(curl -sS --max-time 180 -F "file=@${ipa}" https://tmpfiles.org/api/v1/upload 2>/dev/null || true)
+          u=$(printf '%s' "$j" | sed -n 's/.*"url":"\([^"]*\)".*/\1/p' | sed 's#\\/#/#g')
+          if [ -n "$u" ]; then emit "${u/tmpfiles.org\//tmpfiles.org/dl/}"; exit 0; fi
+          u=$(curl -sS --max-time 180 --upload-file "${ipa}" "https://bashupload.com/reed.ipa" 2>/dev/null | grep -oE 'https://bashupload.com/[^ ]+' | head -1 || true)
+          if [ -n "$u" ]; then emit "${u}?download=1"; exit 0; fi
+          u=$(curl -sS --max-time 180 --upload-file "${ipa}" "https://temp.sh/reed.ipa" 2>/dev/null | grep -oE 'https?://[^ ]+' | head -1 || true)
+          if [ -n "$u" ]; then emit "${u}"; exit 0; fi
+          u=$(curl -sS --max-time 180 -F "file=@${ipa}" https://file.io 2>/dev/null | sed -n 's/.*"link":"\([^"]*\)".*/\1/p')
+          if [ -n "$u" ]; then emit "${u}"; exit 0; fi
+          echo "all mirrors failed"
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: reed-ios-unsigned-ipa
           path: app/dist/Reed-*-ios-unsigned.ipa
