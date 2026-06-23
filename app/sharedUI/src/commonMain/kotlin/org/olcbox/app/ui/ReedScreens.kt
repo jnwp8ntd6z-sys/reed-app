@@ -115,6 +115,7 @@ import org.olcbox.app.data.reed.MembersResponse
 import org.olcbox.app.data.reed.ReedApi
 import org.olcbox.app.data.reed.ReedLinks
 import org.olcbox.app.data.reed.ReedSession
+import org.olcbox.app.data.reed.reedIsIOS
 import org.olcbox.app.data.reed.SubscriptionItem
 import org.olcbox.app.data.reed.SubscriptionResponse
 import org.olcbox.app.data.reed.decodeImageBitmap
@@ -174,6 +175,12 @@ fun ReedOnboardingScreen(
     onToggleClick: () -> Unit,
     onDone: () -> Unit,
 ) {
+    // iOS — отдельный экран входа «прокси-клиента» (две кнопки, без temp-VPN и тяжёлых
+    // согласий). На Android/Windows остаётся прежний экран (Telegram + код-приглашение).
+    if (reedIsIOS()) {
+        ReedIosOnboardingScreen(locationViewModel = locationViewModel, onDone = onDone)
+        return
+    }
     val uri = LocalUriHandler.current
     val scope = rememberCoroutineScope()
     var statusMsg by remember { mutableStateOf("") }
@@ -383,6 +390,168 @@ fun ReedOnboardingScreen(
             },
         )
     }
+}
+
+// ── Экран входа iOS (прокси-клиент: «по коду» / «без кода») ─────────────────
+// Лёгкий экран без temp-VPN и тяжёлых согласий: две кнопки + мини-политика (Apple
+// требует ссылку на политику). «Войти по коду» — вход по аккаунт-коду Reed; «Войти
+// без кода» — режим как Happ (на главной будет «Вставить ключ подписки»).
+@Composable
+private fun ReedIosOnboardingScreen(
+    locationViewModel: LocationViewModel,
+    onDone: () -> Unit,
+) {
+    val uri = LocalUriHandler.current
+    var showCode by remember { mutableStateOf(false) }
+
+    Box(Modifier.fillMaxSize().background(Color(0xFF0A0A0A))) {
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                .windowInsetsPadding(WindowInsets.safeDrawing).padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Spacer(Modifier.height(48.dp))
+            ReedBrandLogo(modifier = Modifier.size(96.dp).clip(RoundedCornerShape(22.dp)))
+            Spacer(Modifier.height(12.dp))
+            Text("REED VPN", style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Black, color = Color.White)
+            Spacer(Modifier.height(8.dp))
+            Text("Клиент для ваших подписок", style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.7f), textAlign = TextAlign.Center)
+
+            Spacer(Modifier.height(48.dp))
+
+            // Зелёная — вход по коду
+            ReedPrimaryButton(text = "Войти по коду") { showCode = true }
+            Spacer(Modifier.height(6.dp))
+            Text("Код из бота @reedvpnbot", style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.6f))
+
+            Spacer(Modifier.height(20.dp))
+
+            // Белая — вход без кода (режим как Happ)
+            Button(
+                onClick = {
+                    ReedSession.token = null
+                    ReedSession.joinedViaCode = false
+                    ReedSession.noCodeMode = true
+                    ReedSession.consentAccepted = true
+                    ReedSession.onboardingDone = true
+                    onDone()
+                },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color.White, contentColor = Color(0xFF0A0A0A)),
+            ) { Text("Войти без кода", fontWeight = FontWeight.Black) }
+
+            Spacer(Modifier.height(28.dp))
+
+            // Мини-политика (без чекбоксов) — обязательна для прохождения ревью Apple.
+            Text(
+                "Продолжая, вы принимаете политику конфиденциальности и условия использования.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.5f),
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(4.dp))
+            Row {
+                TextButton(onClick = { uri.openUri(ReedLinks.PRIVACY_POLICY) }) {
+                    Text("Политика", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary)
+                }
+                TextButton(onClick = { uri.openUri(ReedLinks.TERMS_OF_SERVICE) }) {
+                    Text("Условия", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary)
+                }
+            }
+        }
+    }
+
+    if (showCode) {
+        AccountCodeDialog(
+            locationViewModel = locationViewModel,
+            onDismiss = { showCode = false },
+            onLoggedIn = { subToken ->
+                ReedSession.token = subToken
+                ReedSession.joinedViaCode = false
+                ReedSession.noCodeMode = false
+                ReedSession.consentAccepted = true
+                ReedSession.onboardingDone = true
+                showCode = false
+                onDone()
+            },
+        )
+    }
+}
+
+// Диалог входа по аккаунт-коду Reed (REED-XXXXXXXX). При успехе onLoggedIn(subToken).
+@Composable
+private fun AccountCodeDialog(
+    locationViewModel: LocationViewModel,
+    onDismiss: () -> Unit,
+    onLoggedIn: (subToken: String) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var code by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
+
+    AlertDialog(
+        onDismissRequest = { if (!busy) onDismiss() },
+        confirmButton = {
+            TextButton(
+                enabled = !busy && code.trim().length >= 4,
+                onClick = {
+                    error = ""
+                    busy = true
+                    scope.launch {
+                        try {
+                            val hwid = locationViewModel.deviceHwid()
+                            val r = ReedApi.codeLogin(code.trim(), hwid, deviceOs = "iOS")
+                            if (r.ok && !r.sub_token.isNullOrBlank()) {
+                                onLoggedIn(r.sub_token)
+                            } else {
+                                error = r.message ?: "Не удалось войти по коду."
+                                busy = false
+                            }
+                        } catch (e: Throwable) {
+                            error = "Нет связи с сервером. Попробуйте ещё раз."
+                            busy = false
+                        }
+                    }
+                },
+            ) { Text("Войти") }
+        },
+        dismissButton = {
+            TextButton(enabled = !busy, onClick = onDismiss) { Text("Отмена") }
+        },
+        title = { Text("Вход по коду", fontWeight = FontWeight.Black) },
+        text = {
+            Column(Modifier.fillMaxWidth()) {
+                MutedText("Введите ваш код из бота @reedvpnbot (раздел «🆔 Код приложения»).")
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = code,
+                    onValueChange = { code = it.uppercase().take(20) },
+                    singleLine = true,
+                    label = { Text("Код") },
+                    placeholder = { Text("REED-XXXXXXXX") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (busy) {
+                    Spacer(Modifier.height(12.dp))
+                    Text("Входим…", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary)
+                }
+                if (error.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text(error, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+    )
 }
 
 // Строка согласия: чекбокс (✅) + название документа + иконка ℹ️ для открытия текста.

@@ -53,6 +53,9 @@ class LocationViewModel(
     private val locationsRepository: LocationsRepository,
 ) : ViewModel() {
 
+    /** HWID устройства (для входа по аккаунт-коду — учёт устройств 5/11 на подписку). */
+    suspend fun deviceHwid(): String = locationsRepository.getDeviceIdentity()
+
     var locations = mutableStateListOf<LocationItem>()
         private set
 

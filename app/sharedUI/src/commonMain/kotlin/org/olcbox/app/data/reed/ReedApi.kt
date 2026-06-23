@@ -69,6 +69,29 @@ object ReedApi {
     suspend fun subscriptions(token: String): SubscriptionsResponse =
         client.get("$BASE/app/subscriptions") { parameter("token", token) }.body()
 
+    // ── Вход по аккаунт-коду (REED-XXXXXXXX) ───────────────────────────────
+    // Сервер цепляет устройство (hwid) к подписке со свободным слотом и отдаёт её
+    // sub_token. Сам код к приложению не привязывается — дальше работаем по sub_token.
+    suspend fun codeLogin(code: String, hwid: String, name: String = "",
+                          deviceModel: String = "", deviceOs: String = ""): CodeLoginResponse =
+        client.post("$BASE/app/code/login") {
+            contentType(ContentType.Application.Json)
+            setBody(CodeLoginRequest(code, hwid, name, deviceModel, deviceOs))
+        }.body()
+
+    // Подписки аккаунта с занятостью устройств (для «Сменить подписку»/«другая подписка»).
+    suspend fun codeSubscriptions(token: String, hwid: String): CodeSubscriptionsResponse =
+        client.get("$BASE/app/code/subscriptions") {
+            parameter("token", token); parameter("hwid", hwid)
+        }.body()
+
+    // Перенос текущего устройства на другую подписку аккаунта.
+    suspend fun codeSwitch(token: String, hwid: String, targetSubId: Int): CodeLoginResponse =
+        client.post("$BASE/app/code/switch") {
+            contentType(ContentType.Application.Json)
+            setBody(CodeSwitchRequest(token, hwid, targetSubId))
+        }.body()
+
     // Аватар пользователя (JPEG). Возвращает байты или null, если фото нет / ошибка.
     suspend fun avatarBytes(token: String): ByteArray? = try {
         val resp = client.get("$BASE/app/avatar") { parameter("token", token) }
@@ -241,6 +264,15 @@ object ReedSession {
             reedStorePut(KEY_MEMBER_NAME, value)
         }
 
+    // Режим «без кода» (iOS, как Happ): пользователь вошёл без аккаунта Reed. Токена нет,
+    // кабинет пустой, на главной — «Вставить ключ подписки» / «Войти по коду». Персист.
+    private const val KEY_NO_CODE = "reed_no_code_mode"
+    var noCodeMode: Boolean = reedStoreGet(KEY_NO_CODE) == "1"
+        set(value) {
+            field = value
+            reedStorePut(KEY_NO_CODE, if (value) "1" else null)
+        }
+
     // Полный выход в экран входа: сбрасывает токен и код-сессию и помечает онбординг
     // непройденным, чтобы UI вернулся на экран входа (Telegram / по коду). Используется
     // при выходе, удалении аккаунта и при блокировке/удалении участника владельцем.
@@ -249,6 +281,7 @@ object ReedSession {
         joinedViaCode = false
         memberName = null
         importedForToken = null
+        noCodeMode = false
         onboardingDone = false
     }
 }
@@ -260,6 +293,53 @@ object ReedLinks {
 
 @Serializable
 data class AuthStart(val nonce: String, val deeplink: String)
+
+// ── Вход по аккаунт-коду ───────────────────────────────────────────────────
+@Serializable
+data class CodeLoginRequest(
+    val code: String,
+    val hwid: String,
+    val name: String = "",
+    val device_model: String = "",
+    val device_os: String = "",
+)
+
+@Serializable
+data class CodeSwitchRequest(
+    val token: String,
+    val hwid: String,
+    val target_sub_id: Int,
+)
+
+@Serializable
+data class CodeLoginResponse(
+    val ok: Boolean = false,
+    val error: String? = null,
+    val message: String? = null,
+    val sub_token: String? = null,
+    val sub_id: Int? = null,
+    val plan_type: String? = null,
+    val devices: Int = 0,
+    val limit: Int = 0,
+)
+
+@Serializable
+data class AccountSubItem(
+    val sub_id: Int,
+    val sub_token: String = "",
+    val plan_type: String = "",
+    val expires_at: String = "",
+    val devices: Int = 0,
+    val limit: Int = 0,
+    val has_slot: Boolean = false,
+    val current: Boolean = false,
+)
+
+@Serializable
+data class CodeSubscriptionsResponse(
+    val subscriptions: List<AccountSubItem> = emptyList(),
+    val multi: Boolean = false,
+)
 
 @Serializable
 data class AuthPoll(
