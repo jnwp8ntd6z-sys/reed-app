@@ -296,9 +296,15 @@ class LocationsRepositoryImpl(
                 ).normalized()
             }
 
+            // На первый сервер сбрасываем ТОЛЬКО если ранее выбранный сервер реально
+            // исчез после обновления (его storageId нет среди переназначенных). Раньше
+            // условие было `activeAfter == activeBefore` — оно срабатывало и тогда, когда
+            // выбор КОРРЕКТНО сохранён (id переиспользован), и сбрасывало его на первый
+            // (SMART-Нидерланды) при каждом обновлении подписки. Это и был баг «через время
+            // выбирается первый сервер».
             if (activeBefore != null &&
-                activeAfter == activeBefore &&
-                previousEntries.any { it.storageId == activeBefore }
+                previousEntries.any { it.storageId == activeBefore } &&
+                reassigned.none { it.storageId == activeBefore }
             ) {
                 activeAfter = reassigned.firstOrNull()?.storageId
             }
