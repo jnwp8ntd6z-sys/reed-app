@@ -65,6 +65,7 @@ import java.io.DataOutputStream
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.InetSocketAddress
+import java.net.Proxy
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URL
@@ -823,6 +824,23 @@ class OlcboxVpnService : VpnService() {
             markRtcConnected()
             addLog("VLESS SOCKS ready in ${System.currentTimeMillis() - tStart}ms")
             addLog("VLESS ready on $socksListenHost:$targetSocksPort")
+
+            // Обновляем кэш конфига ЧЕРЕЗ туннель. Приложение исключено из VPN, поэтому прямой
+            // фоновый запрос конфига на «зарезанных» сетях (белые списки РФ) НЕ доходит до
+            // нашего API → кэш не обновлялся, и серверные правки маршрутизации не долетали без
+            // ручной очистки кэша. Теперь тянем свежий конфиг через локальный SOCKS (= через
+            // VPN, где API всегда доступен) и пишем в кэш — следующее подключение уже свежее.
+            if (config.id != "reed-temp") {
+                scope.launch(Dispatchers.IO) {
+                    runCatching {
+                        val fresh = fetchSingboxConfigViaSocks(config, targetSocksPort)
+                        if (fresh != null) {
+                            writeSingboxCache(config.id, targetSocksPort, fresh)
+                            addLog("VLESS config refreshed via tunnel (cache updated)")
+                        }
+                    }
+                }
+            }
             true
         } catch (e: CancellationException) {
             withContext(NonCancellable) {
@@ -912,6 +930,31 @@ class OlcboxVpnService : VpnService() {
             }
             addLog("VLESS config unavailable (no cache, API unreachable)")
             null
+        }
+
+    /** Тот же конфиг, что fetchSingboxConfig, но запрос идёт ЧЕРЕЗ локальный SOCKS (= через
+     *  поднятый VPN-туннель), где наш API доступен даже на сетях с белым списком. Нужен для
+     *  обновления кэша после подключения — иначе серверные правки не долетали (прямой запрос
+     *  из исключённого из VPN приложения на «зарезанных» сетях не проходит). */
+    private suspend fun fetchSingboxConfigViaSocks(location: LocationConfig, socksPort: Int): String? =
+        withContext(Dispatchers.IO) {
+            if (location.id == "reed-temp") return@withContext null
+            val token = location.key
+            val server = URLEncoder.encode(location.id, "UTF-8")
+            val split = if (org.olcbox.app.data.reed.ReedSession.splitRouting) "1" else "0"
+            val url = "$REED_API_BASE/app/singbox?token=$token&socks_port=$socksPort&server=$server&split=$split"
+            val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", socksPort))
+            runCatching {
+                val conn = (URL(url).openConnection(proxy) as HttpURLConnection).apply {
+                    connectTimeout = 8_000
+                    readTimeout = 8_000
+                    requestMethod = "GET"
+                }
+                try {
+                    if (conn.responseCode !in 200..299) return@runCatching null
+                    conn.inputStream.bufferedReader().use { it.readText() }.takeIf { it.isNotBlank() }
+                } finally { conn.disconnect() }
+            }.getOrNull()
         }
 
     // Кэш sing-box-конфигов вынесен в общий SingboxConfigCache — тот же формат имени файла
