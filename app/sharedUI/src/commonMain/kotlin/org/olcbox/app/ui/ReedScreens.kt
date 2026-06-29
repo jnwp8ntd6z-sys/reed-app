@@ -408,46 +408,51 @@ private fun ReedIosOnboardingScreen(
 
     Box(Modifier.fillMaxSize().background(Color(0xFF0A0A0A))) {
         Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            modifier = Modifier.fillMaxSize()
                 .windowInsetsPadding(WindowInsets.safeDrawing).padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Spacer(Modifier.height(48.dp))
-            ReedBrandLogo(modifier = Modifier.size(96.dp).clip(RoundedCornerShape(22.dp)))
-            Spacer(Modifier.height(12.dp))
-            Text("REED", style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Black, color = Color.White)
-            Spacer(Modifier.height(8.dp))
-            Text("Клиент для ваших подписок", style = MaterialTheme.typography.bodyMedium,
-                color = Color.White.copy(alpha = 0.7f), textAlign = TextAlign.Center)
-
-            Spacer(Modifier.height(48.dp))
-
-            // Зелёная — вход по коду
-            ReedPrimaryButton(text = "Войти по коду") { showCode = true }
-            Spacer(Modifier.height(6.dp))
-            Text("Код из бота @reedvpnbot", style = MaterialTheme.typography.bodySmall,
-                color = Color.White.copy(alpha = 0.6f))
-
-            Spacer(Modifier.height(20.dp))
-
-            // Белая — вставить ключ подписки (режим как Happ: вставил ключ → пользуешься).
-            Button(
-                onClick = { showPaste = true },
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = Color.White, contentColor = Color(0xFF0A0A0A)),
-            ) { Text("Вставить ключ подписки", fontWeight = FontWeight.Black) }
-            if (pasteError.isNotEmpty()) {
+            // Основной контент (логотип + кнопки) — занимает всё пространство сверху,
+            // политика прижата к низу экрана (вес 1f отдаёт остаток высоты этому блоку).
+            Column(
+                modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Spacer(Modifier.height(48.dp))
+                ReedBrandLogo(modifier = Modifier.size(96.dp).clip(RoundedCornerShape(22.dp)))
+                Spacer(Modifier.height(12.dp))
+                Text("REED", style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Black, color = Color.White)
                 Spacer(Modifier.height(8.dp))
-                Text(pasteError, style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+                Text("Клиент для ваших подписок", style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.7f), textAlign = TextAlign.Center)
+
+                Spacer(Modifier.height(48.dp))
+
+                // Зелёная — вход по коду
+                ReedPrimaryButton(text = "Войти по коду") { showCode = true }
+                Spacer(Modifier.height(6.dp))
+                Text("Код из бота @reedvpnbot", style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.6f))
+
+                Spacer(Modifier.height(20.dp))
+
+                // Белая — вставить ключ подписки (режим как Happ: вставил ключ → пользуешься).
+                Button(
+                    onClick = { showPaste = true },
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.White, contentColor = Color(0xFF0A0A0A)),
+                ) { Text("Вставить ключ подписки", fontWeight = FontWeight.Black) }
+                if (pasteError.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(pasteError, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+                }
             }
 
-            Spacer(Modifier.height(28.dp))
-
-            // Мини-политика (без чекбоксов) — обязательна для прохождения ревью Apple.
+            // Мини-политика (без чекбоксов) — обязательна для ревью Apple. Внизу экрана.
             Text(
                 "Продолжая, вы принимаете политику конфиденциальности и условия использования.",
                 style = MaterialTheme.typography.bodySmall,
@@ -490,7 +495,7 @@ private fun ReedIosOnboardingScreen(
             onPaste = { text ->
                 pasteError = ""
                 homeViewModel.onImportFullConfig(
-                    rawText = text,
+                    rawText = reedLocationsUrlFromKey(text) ?: text,
                     onComplete = {
                         ReedSession.token = null
                         ReedSession.joinedViaCode = false
@@ -577,6 +582,19 @@ private fun AccountCodeDialog(
             }
         },
     )
+}
+
+// Reed-ссылка подписки (…/sub/<token>) → URL …/app/locations?token=…, который приложение
+// умеет распарсить. Содержимое /sub — это base64-список vless:// (формат HAPP), а парсер
+// импорта понимает только olcRTC-текст и JSON /app/locations, поэтому ключ-ссылку
+// переписываем в /app/locations. Если это не Reed-ссылка — возвращаем null (импортируем как есть).
+private fun reedLocationsUrlFromKey(raw: String): String? {
+    val t = raw.trim()
+    if (!t.contains("reed-vpn.duckdns.org") || !t.contains("/sub/")) return null
+    val token = t.substringBefore('?').substringBefore('#').trimEnd('/').substringAfterLast('/')
+    if (token.length !in 8..64) return null
+    if (!token.all { it.isLetterOrDigit() || it == '-' || it == '_' }) return null
+    return "https://reed-vpn.duckdns.org/app/locations?token=$token"
 }
 
 // Диалог вставки ключа подписки (сырой ключ/ссылка). При «Подключить» вызывает onPaste(text).
@@ -1617,9 +1635,9 @@ fun ReedHomeScreen(
             onPaste = { text ->
                 showPasteKey = false
                 homeViewModel.onImportFullConfig(
-                    rawText = text,
+                    rawText = reedLocationsUrlFromKey(text) ?: text,
                     onComplete = { locationViewModel.loadLocations { } },
-                    onError = { },
+                    onError = { msg -> loginMsg = "Не удалось распознать ключ. Проверьте и попробуйте снова." },
                 )
             },
         )
