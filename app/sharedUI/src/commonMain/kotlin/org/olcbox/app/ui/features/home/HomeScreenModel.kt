@@ -307,7 +307,7 @@ class HomeScreenViewModel(
                     )
                 }
                 if (!imported) {
-                    onError("No valid Reed VPN config found")
+                    onError("Ключ подписки не распознан")
                     return@launch
                 }
                 loadCurrentConfigNow()

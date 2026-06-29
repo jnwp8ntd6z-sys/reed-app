@@ -178,7 +178,7 @@ fun ReedOnboardingScreen(
     // Экран входа «прокси-клиента» (две кнопки «по коду»/«без кода», без temp-VPN и тяжёлых
     // согласий) — теперь на ВСЕХ платформах (единый UX, бренд Reed, вход по коду; без
     // Telegram-регистрации). Старый Android-экран ниже больше не используется.
-    ReedIosOnboardingScreen(locationViewModel = locationViewModel, onDone = onDone)
+    ReedIosOnboardingScreen(homeViewModel = homeViewModel, locationViewModel = locationViewModel, onDone = onDone)
     return
     val uri = LocalUriHandler.current
     val scope = rememberCoroutineScope()
@@ -397,11 +397,14 @@ fun ReedOnboardingScreen(
 // без кода» — режим как Happ (на главной будет «Вставить ключ подписки»).
 @Composable
 private fun ReedIosOnboardingScreen(
+    homeViewModel: HomeScreenViewModel,
     locationViewModel: LocationViewModel,
     onDone: () -> Unit,
 ) {
     val uri = LocalUriHandler.current
     var showCode by remember { mutableStateOf(false) }
+    var showPaste by remember { mutableStateOf(false) }
+    var pasteError by remember { mutableStateOf("") }
 
     Box(Modifier.fillMaxSize().background(Color(0xFF0A0A0A))) {
         Column(
@@ -428,21 +431,19 @@ private fun ReedIosOnboardingScreen(
 
             Spacer(Modifier.height(20.dp))
 
-            // Белая — вход без кода (режим как Happ)
+            // Белая — вставить ключ подписки (режим как Happ: вставил ключ → пользуешься).
             Button(
-                onClick = {
-                    ReedSession.token = null
-                    ReedSession.joinedViaCode = false
-                    ReedSession.noCodeMode = true
-                    ReedSession.consentAccepted = true
-                    ReedSession.onboardingDone = true
-                    onDone()
-                },
+                onClick = { showPaste = true },
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color.White, contentColor = Color(0xFF0A0A0A)),
-            ) { Text("Войти без кода", fontWeight = FontWeight.Black) }
+            ) { Text("Вставить ключ подписки", fontWeight = FontWeight.Black) }
+            if (pasteError.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text(pasteError, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+            }
 
             Spacer(Modifier.height(28.dp))
 
@@ -479,6 +480,31 @@ private fun ReedIosOnboardingScreen(
                 ReedSession.onboardingDone = true
                 showCode = false
                 onDone()
+            },
+        )
+    }
+
+    if (showPaste) {
+        PasteKeyDialog(
+            onDismiss = { showPaste = false },
+            onPaste = { text ->
+                pasteError = ""
+                homeViewModel.onImportFullConfig(
+                    rawText = text,
+                    onComplete = {
+                        ReedSession.token = null
+                        ReedSession.joinedViaCode = false
+                        ReedSession.noCodeMode = true
+                        ReedSession.consentAccepted = true
+                        ReedSession.onboardingDone = true
+                        showPaste = false
+                        onDone()
+                    },
+                    onError = { msg ->
+                        showPaste = false
+                        pasteError = "Не удалось распознать ключ. Проверьте и попробуйте снова."
+                    },
+                )
             },
         )
     }
