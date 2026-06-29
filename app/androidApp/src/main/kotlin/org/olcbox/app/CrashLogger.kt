@@ -46,7 +46,7 @@ object CrashLogger {
         }.toString()
 
         val report = buildString {
-            appendLine("=== REED VPN CRASH REPORT ===")
+            appendLine("=== REED CRASH REPORT ===")
             appendLine("Время: $ts")
             appendLine("Поток: ${thread.name}")
             appendLine("Устройство: ${Build.MANUFACTURER} ${Build.MODEL} (${Build.DEVICE})")

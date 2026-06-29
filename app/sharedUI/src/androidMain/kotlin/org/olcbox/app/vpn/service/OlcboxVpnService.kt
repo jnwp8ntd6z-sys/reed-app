@@ -1109,7 +1109,7 @@ class OlcboxVpnService : VpnService() {
     private fun establishSystemVpnTunnel(): ParcelFileDescriptor? {
         return try {
             val builder = Builder()
-                .setSession("Olcbox VPN")
+                .setSession("Reed")
                 .setMtu(TUN_MTU)
                 .addAddress(TUN_IPV4_ADDRESS, IPV4_PREFIX_LENGTH)
                 .addRoute("0.0.0.0", 0)
@@ -1131,8 +1131,8 @@ class OlcboxVpnService : VpnService() {
             builder.establish()
         } catch (e: Exception) {
             addLog("VPN establish failed: ${e.message}")
-            setStatus(VpnStatus.Error(e.message ?: "VPN establish failed"))
-            updateNotification("VPN tunnel error")
+            setStatus(VpnStatus.Error(e.message ?: "Не удалось подключиться"))
+            updateNotification("Ошибка подключения")
             null
         }
     }
@@ -1927,7 +1927,7 @@ class OlcboxVpnService : VpnService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 NOTIFICATION_CHANNEL_ID,
-                "Olcbox VPN",
+                "Reed",
                 NotificationManager.IMPORTANCE_LOW
             )
             (getSystemService(NOTIFICATION_SERVICE) as NotificationManager)
@@ -1953,7 +1953,7 @@ class OlcboxVpnService : VpnService() {
 
     private fun buildNotification(status: String) =
         NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
-            .setContentTitle("Olcbox ${activeModeLabel()}")
+            .setContentTitle("Reed")
             .setContentText(status)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true)
@@ -1986,12 +1986,12 @@ class OlcboxVpnService : VpnService() {
 
     private fun activeModeLabel(): String {
         return when (connectionMode) {
-            AndroidConnectionMode.Tun -> "VPN"
+            AndroidConnectionMode.Tun -> "Reed"
             AndroidConnectionMode.Proxy -> "Proxy"
         }
     }
 
-    private fun connectedNotificationText(): String = "${activeModeLabel()} Connected"
+    private fun connectedNotificationText(): String = "Подключено"
 
     private class AuthenticatedSocksProxy(
         private val listenPort: Int,

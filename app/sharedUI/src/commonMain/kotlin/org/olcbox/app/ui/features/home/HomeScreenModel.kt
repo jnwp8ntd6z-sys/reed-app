@@ -374,7 +374,7 @@ class HomeScreenViewModel(
 
     private fun buildLogsExport(logs: List<String>): String {
         return buildString {
-            appendLine("Reed VPN application logs")
+            appendLine("Reed application logs")
             appendLine("Entries: ${logs.size}")
             appendLine()
             logs.forEachIndexed { index, line ->

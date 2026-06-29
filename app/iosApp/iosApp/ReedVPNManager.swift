@@ -24,9 +24,9 @@ import Foundation
             let proto = (mgr.protocolConfiguration as? NETunnelProviderProtocol)
                 ?? NETunnelProviderProtocol()
             proto.providerBundleIdentifier = self.providerBundleID
-            proto.serverAddress = "Reed VPN"
+            proto.serverAddress = "Reed"
             mgr.protocolConfiguration = proto
-            mgr.localizedDescription = "Reed VPN"
+            mgr.localizedDescription = "Reed"
             mgr.isEnabled = true
             mgr.saveToPreferences { _ in
                 mgr.loadFromPreferences { _ in

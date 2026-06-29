@@ -23,7 +23,7 @@ private val reedLogoBitmap: ImageBitmap? by lazy {
 }
 
 @Composable
-fun ReedBrandLogo(modifier: Modifier = Modifier, contentDescription: String? = "Reed VPN") {
+fun ReedBrandLogo(modifier: Modifier = Modifier, contentDescription: String? = "Reed") {
     val bitmap = remember { reedLogoBitmap }
     if (bitmap != null) {
         Image(

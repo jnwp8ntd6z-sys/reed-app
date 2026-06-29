@@ -61,7 +61,7 @@ object ReedTempServer {
     const val STORAGE_ID = "reed-temp-vpn"
     const val LOCATION_ID = "reed-temp"
     const val NAME = "Только приложение и Telegram Bot @reedvpnbot"
-    const val DESC = "VPN для регистрации через Telegram. Работает только приложение и Telegram."
+    const val DESC = "Временный доступ для регистрации через Telegram. Работает только приложение и Telegram."
     const val LIMIT_BYTES = 5L * 1024 * 1024 * 1024  // 5 ГБ на устройство
     private const val HOST = "132.243.242.194"
     private const val PORT = 8443

@@ -175,12 +175,11 @@ fun ReedOnboardingScreen(
     onToggleClick: () -> Unit,
     onDone: () -> Unit,
 ) {
-    // iOS — отдельный экран входа «прокси-клиента» (две кнопки, без temp-VPN и тяжёлых
-    // согласий). На Android/Windows остаётся прежний экран (Telegram + код-приглашение).
-    if (reedIsIOS()) {
-        ReedIosOnboardingScreen(locationViewModel = locationViewModel, onDone = onDone)
-        return
-    }
+    // Экран входа «прокси-клиента» (две кнопки «по коду»/«без кода», без temp-VPN и тяжёлых
+    // согласий) — теперь на ВСЕХ платформах (единый UX, бренд Reed, вход по коду; без
+    // Telegram-регистрации). Старый Android-экран ниже больше не используется.
+    ReedIosOnboardingScreen(locationViewModel = locationViewModel, onDone = onDone)
+    return
     val uri = LocalUriHandler.current
     val scope = rememberCoroutineScope()
     var statusMsg by remember { mutableStateOf("") }
@@ -238,7 +237,7 @@ fun ReedOnboardingScreen(
                     modifier = Modifier.size(96.dp).clip(RoundedCornerShape(22.dp)),
                 )
                 Spacer(Modifier.height(12.dp))
-                Text("REED VPN", style = MaterialTheme.typography.headlineMedium,
+                Text("REED", style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Black, color = Color.White)
             }
 
@@ -246,7 +245,7 @@ fun ReedOnboardingScreen(
 
             // 1) Временный VPN — белая кнопка ВЫШЕ регистрации. Подключается здесь же,
             // чтобы через него дойти до Telegram и зарегистрироваться (вход → бот).
-            Text("VPN для регистрации через Telegram. Работает только приложение и Telegram — этого достаточно, чтобы войти. Полное управление подпиской — в Telegram-боте.",
+            Text("Временный доступ для регистрации через Telegram. Работает только приложение и Telegram — этого достаточно, чтобы войти. Полное управление подпиской — в Telegram-боте.",
                 style = MaterialTheme.typography.bodyMedium, color = Color.White)
             Spacer(Modifier.height(10.dp))
             Button(
@@ -270,10 +269,10 @@ fun ReedOnboardingScreen(
             ) {
                 Text(
                     when {
-                        tempConnected -> "Временный VPN подключён · ${formatSession(sessionSeconds)}"
+                        tempConnected -> "Временный доступ подключён · ${formatSession(sessionSeconds)}"
                         tempConnecting -> "Подключаюсь…"
-                        limitReached -> "Лимит временного VPN исчерпан"
-                        else -> "Подключить временный VPN"
+                        limitReached -> "Лимит временного доступа исчерпан"
+                        else -> "Подключить временный доступ"
                     },
                     fontWeight = FontWeight.Black)
             }
@@ -413,7 +412,7 @@ private fun ReedIosOnboardingScreen(
             Spacer(Modifier.height(48.dp))
             ReedBrandLogo(modifier = Modifier.size(96.dp).clip(RoundedCornerShape(22.dp)))
             Spacer(Modifier.height(12.dp))
-            Text("REED VPN", style = MaterialTheme.typography.headlineMedium,
+            Text("REED", style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Black, color = Color.White)
             Spacer(Modifier.height(8.dp))
             Text("Клиент для ваших подписок", style = MaterialTheme.typography.bodyMedium,
@@ -1198,14 +1197,14 @@ fun ReedHomeScreen(
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
     ) {
-        // Шапка: логотип + «REED VPN» + звоночек уведомлений (с красным кружком при новых).
+        // Шапка: логотип + «REED» + звоночек уведомлений (с красным кружком при новых).
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             ReedBrandLogo(
                 contentDescription = null,
                 modifier = Modifier.size(30.dp).clip(RoundedCornerShape(8.dp)),
             )
             Spacer(Modifier.width(10.dp))
-            Text("REED VPN", modifier = Modifier.weight(1f),
+            Text("REED", modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
             NotificationBell(hasUnread = hasUnread, onClick = { showNotifications = true })
         }
@@ -1265,7 +1264,7 @@ fun ReedHomeScreen(
                 Text("Загрузка аккаунта…", style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Black)
                 Spacer(Modifier.height(8.dp))
-                MutedText("Подключаемся к серверу Reed VPN.")
+                MutedText("Подключаемся к серверу Reed.")
             }
             Spacer(Modifier.height(20.dp))
         } else if (!hasSubscription) {
@@ -1894,7 +1893,7 @@ fun ReedSettingsScreen() {
             ReedSession.splitRouting = it
         }
         Spacer(Modifier.height(4.dp))
-        MutedText("Российские сайты идут напрямую, мимо VPN. Применяется при следующем подключении.")
+        MutedText("Российские сайты идут напрямую, мимо туннеля. Применяется при следующем подключении.")
         Spacer(Modifier.height(12.dp))
 
         TogglePlashka(Icons.Rounded.Bolt, "Авто-подключение", autoConnect) {
@@ -1947,7 +1946,7 @@ private fun MembersPlashka(ownerToken: String?) {
                 Icon(Icons.Rounded.Info, contentDescription = null,
                     tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
-                MutedText("Достигнут лимит участников. Расширить можно в Telegram-боте Reed VPN.")
+                MutedText("Достигнут лимит участников. Расширить можно в Telegram-боте Reed.")
             }
         } else {
             ReedPrimaryButton(if (busy) "Подождите…" else "Пригласить участника") {
@@ -2095,7 +2094,7 @@ private fun ReedMemberSettingsScreen() {
             splitRouting = it; ReedSession.splitRouting = it
         }
         Spacer(Modifier.height(4.dp))
-        MutedText("Российские сайты идут напрямую, мимо VPN. Применяется при следующем подключении.")
+        MutedText("Российские сайты идут напрямую, мимо туннеля. Применяется при следующем подключении.")
         Spacer(Modifier.height(12.dp))
         TogglePlashka(Icons.Rounded.Bolt, "Авто-подключение", autoConnect) {
             autoConnect = it; ReedSession.autoConnect = it

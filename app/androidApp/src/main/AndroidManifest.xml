@@ -26,7 +26,7 @@
     <application
         android:name=".App"
         android:icon="@mipmap/ic_launcher"
-        android:label="Reed VPN"
+        android:label="Reed"
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@style/Theme.Reed"
         android:usesCleartextTraffic="true">
