@@ -40,6 +40,13 @@ internal object SingBoxDesktopRunner {
     fun fetchConfig(location: LocationConfig, socksPort: Int): String {
         val config = location.normalized()
         val token = config.key
+        // «Любой» (чужой) ключ: key — это сам URI. Конфиг sing-box собираем локально.
+        if (token.contains("://")) {
+            val parsed = org.olcbox.app.data.datasource.ProxyKeyImport.parseUri(token)
+                ?: error("Imported key not recognized")
+            return org.olcbox.app.data.datasource.ProxyKeyImport
+                .buildSingboxConfig(parsed.outbound, socksPort)
+        }
         val server = URLEncoder.encode(config.id, "UTF-8")
         val split = if (ReedSession.splitRouting) "1" else "0"
         // Временный VPN (id=reed-temp) — БЕЗ токена с /app/temp (работает до входа).
@@ -86,6 +93,8 @@ internal object SingBoxDesktopRunner {
     fun prewarm(location: LocationConfig, socksPort: Int): Boolean {
         val config = location.normalized()
         if (config.id == "reed-temp") return true
+        // Локальный («чужой») ключ — предзагружать нечего, конфиг строится на устройстве.
+        if (config.key.contains("://")) return true
         if (isCached(config.id, socksPort)) return true
         val server = URLEncoder.encode(config.id, "UTF-8")
         val split = if (ReedSession.splitRouting) "1" else "0"

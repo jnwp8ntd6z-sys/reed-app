@@ -870,6 +870,19 @@ class OlcboxVpnService : VpnService() {
     private suspend fun fetchSingboxConfig(location: LocationConfig, socksPort: Int): String? =
         withContext(Dispatchers.IO) {
             val token = location.key
+            // «Любой» (чужой) ключ: key — это сам URI (vless/vmess/trojan/ss). Конфиг sing-box
+            // собираем ЛОКАЛЬНО на устройстве, без нашего сервера (чужие провайдеры + работа на
+            // заблокированных сетях РФ, где наш домен режут).
+            if (token.contains("://")) {
+                val parsed = org.olcbox.app.data.datasource.ProxyKeyImport.parseUri(token)
+                if (parsed != null) {
+                    addLog("VLESS config built locally from imported key (${location.id})")
+                    return@withContext org.olcbox.app.data.datasource.ProxyKeyImport
+                        .buildSingboxConfig(parsed.outbound, socksPort)
+                }
+                addLog("Imported key not recognized (${location.id})")
+                return@withContext null
+            }
             val server = URLEncoder.encode(location.id, "UTF-8")
             val split = if (org.olcbox.app.data.reed.ReedSession.splitRouting) "1" else "0"
             val url = if (location.id == "reed-temp") {
@@ -940,6 +953,8 @@ class OlcboxVpnService : VpnService() {
         withContext(Dispatchers.IO) {
             if (location.id == "reed-temp") return@withContext null
             val token = location.key
+            // Локальный («чужой») ключ — обновлять с сервера нечего (конфиг строится на устройстве).
+            if (token.contains("://")) return@withContext null
             val server = URLEncoder.encode(location.id, "UTF-8")
             val split = if (org.olcbox.app.data.reed.ReedSession.splitRouting) "1" else "0"
             val url = "$REED_API_BASE/app/singbox?token=$token&socks_port=$socksPort&server=$server&split=$split"

@@ -623,6 +623,10 @@ class LocationsRepositoryImpl(
             return ParsedImport(it, ImportMode.Additive)
         }
 
+        // «Любой» ключ/подписка чужого провайдера: vless/vmess/trojan/ss (+ base64-список).
+        // Локации хранят сам URI в key → конфиг sing-box собирается на устройстве (без сервера).
+        parseProxyKeys(text, subscriptionUrl)?.let { return it }
+
         if (!text.startsWith("{") || !text.endsWith("}")) return null
 
         val root = runCatching {
@@ -651,6 +655,42 @@ class LocationsRepositoryImpl(
                 ImportMode.Additive
             )
         }
+    }
+
+    /** Импорт «любых» ключей/подписок (vless/vmess/trojan/ss + base64-список) в VLESS-локации.
+     *  key = исходный URI — на устройстве по нему собирается конфиг sing-box, без нашего сервера. */
+    private fun parseProxyKeys(text: String, subscriptionUrl: String?): ParsedImport? {
+        val proxies = ProxyKeyImport.parseSubscription(text)
+        if (proxies.isEmpty()) return null
+        val used = mutableSetOf<String>()
+        val entries = proxies.mapIndexedNotNull { idx, px ->
+            val name = px.name.ifBlank { "Сервер ${idx + 1}" }
+            val config = LocationConfig(
+                name = name,
+                id = name,
+                key = px.uri,
+                engine = LocationConfig.ENGINE_VLESS,
+                host = px.host,
+                port = px.port
+            ).normalized()
+            if (!config.isComplete()) return@mapIndexedNotNull null
+            LocationEntry.from(
+                storageId = uniqueStorageId("imp_$name", used),
+                location = config,
+                subscriptionUrl = subscriptionUrl,
+                metadata = if (px.host.isNotBlank() && px.port > 0) {
+                    LocationMetadata(ip = "${px.host}:${px.port}")
+                } else null
+            )
+        }
+        if (entries.isEmpty()) return null
+        return ParsedImport(
+            LocationBundleV4(
+                activeLocationId = entries.first().storageId,
+                locations = entries
+            ).normalized(),
+            ImportMode.Additive
+        )
     }
 
     /**

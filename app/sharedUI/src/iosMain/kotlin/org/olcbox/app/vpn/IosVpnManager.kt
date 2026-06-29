@@ -205,6 +205,16 @@ class IosVpnManager(
     }
 
     private suspend fun fetchSingboxConfig(token: String, server: String, socksPort: Int): String? {
+        // «Любой» (чужой) ключ: token — это сам URI. Конфиг sing-box собираем локально.
+        if (token.contains("://")) {
+            val parsed = org.olcbox.app.data.datasource.ProxyKeyImport.parseUri(token)
+            if (parsed != null) {
+                return org.olcbox.app.data.datasource.ProxyKeyImport
+                    .buildSingboxConfig(parsed.outbound, socksPort)
+            }
+            addLog("Imported key not recognized ($server)")
+            return null
+        }
         val fetched = runCatching {
             withContext(Dispatchers.Default) {
                 // Временный VPN (id=reed-temp) — БЕЗ токена с /app/temp (работает до входа).
