@@ -125,7 +125,7 @@ fun OlcboxAppContent(
                         onToggleClick = onToggleClick,
                     )
                     1 -> ReedSettingsScreen()
-                    2 -> ReedAccountScreen(onLogout = backToLogin)
+                    2 -> ReedAccountScreen(locationViewModel = locationViewModel, onLogout = backToLogin)
                     else -> ReedSupportScreen()
                 }
             }

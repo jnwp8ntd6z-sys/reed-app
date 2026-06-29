@@ -553,6 +553,39 @@ private fun AccountCodeDialog(
     )
 }
 
+// Диалог вставки ключа подписки (сырой ключ/ссылка). При «Подключить» вызывает onPaste(text).
+@Composable
+private fun PasteKeyDialog(
+    onDismiss: () -> Unit,
+    onPaste: (String) -> Unit,
+) {
+    var text by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(enabled = text.trim().length >= 8, onClick = { onPaste(text.trim()) }) {
+                Text("Подключить")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } },
+        title = { Text("Вставить ключ подписки", fontWeight = FontWeight.Black) },
+        text = {
+            Column(Modifier.fillMaxWidth()) {
+                MutedText("Вставьте ключ подписки (ссылку), который вам выдали.")
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    label = { Text("Ключ подписки") },
+                    placeholder = { Text("vless://… или https://…") },
+                    minLines = 2,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+    )
+}
+
 // Строка согласия: чекбокс (✅) + название документа + иконка ℹ️ для открытия текста.
 @Composable
 private fun ConsentRow(
@@ -1010,6 +1043,9 @@ fun ReedHomeScreen(
 
     // Локальное зеркало токена — чтобы перерисовать экран после входа на главном экране.
     var token by remember { mutableStateOf(ReedSession.token) }
+    // Режим «без кода»: показываем «Вставить ключ» / «Войти по коду» вместо Telegram-входа.
+    var showCodeLogin by remember { mutableStateOf(false) }
+    var showPasteKey by remember { mutableStateOf(false) }
     var loginBusy by remember { mutableStateOf(false) }
     var loginMsg by remember { mutableStateOf("") }
     var logsMsg by remember { mutableStateOf("") }
@@ -1214,44 +1250,23 @@ fun ReedHomeScreen(
         // Личного кабинета (ReedAccountScreen).
 
         if (token == null) {
-            // Не вошёл через Telegram — даём рабочую кнопку регистрации прямо на главном.
+            // Режим без аккаунта (прокси-клиент, бренд Reed): вставить ключ подписки ИЛИ
+            // войти по коду из бота. Без Telegram-регистрации.
             ReedCard {
-                Text("Войдите через Telegram", style = MaterialTheme.typography.titleMedium,
+                Text("Подключите подписку", style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Black)
                 Spacer(Modifier.height(8.dp))
-                Text("Чтобы подтянуть подписку и серверы.",
+                Text("Вставьте ключ подписки или войдите по коду из бота @reedvpnbot.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(16.dp))
-                ReedPrimaryButton(
-                    text = if (loginBusy) "Подтвердите в Telegram…" else "Зарегистрироваться через Telegram",
-                    enabled = !loginBusy,
-                ) {
-                    if (loginBusy) return@ReedPrimaryButton
-                    loginBusy = true
-                    loginMsg = ""
-                    scope.launch {
-                        try {
-                            val start = ReedApi.authStart()
-                            uri.openUri(start.deeplink)
-                            loginMsg = "Подтвердите вход в Telegram…"
-                            repeat(60) {
-                                delay(2000)
-                                val poll = ReedApi.authPoll(start.nonce)
-                                if (poll.status == "ok") {
-                                    ReedSession.token = poll.token
-                                    token = poll.token
-                                    loginMsg = ""
-                                    return@launch
-                                }
-                            }
-                            loginMsg = "Вход не завершён, попробуйте снова"
-                        } catch (e: Throwable) {
-                            loginMsg = "Ошибка входа, попробуйте снова"
-                        }
-                        loginBusy = false
-                    }
-                }
+                ReedPrimaryButton(text = "🔑 Вставить ключ подписки") { showPasteKey = true }
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = { showCodeLogin = true },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(16.dp),
+                ) { Text("Войти по коду", fontWeight = FontWeight.SemiBold) }
                 if (loginMsg.isNotEmpty()) {
                     Spacer(Modifier.height(10.dp)); MutedText(loginMsg)
                 }
@@ -1466,7 +1481,10 @@ fun ReedHomeScreen(
         // по пингу, чтобы серверы не «прыгали» вверх/вниз при обновлении пинга.
         val realServers = locations
             .filter { !ReedTempServer.isTemp(it.storageId) }
-        val tempServer = locations.firstOrNull { ReedTempServer.isTemp(it.storageId) }
+        // В режиме «без кода» (token==null) временный сервер (для Telegram-регистрации) НЕ
+        // показываем — пользователь подключает подписку через «Вставить ключ» / «Войти по коду».
+        val tempServer = if (token == null) null
+            else locations.firstOrNull { ReedTempServer.isTemp(it.storageId) }
 
         // Общий onClick для выбора сервера.
         fun selectServer(loc: LocationItem) {
@@ -1552,6 +1570,34 @@ fun ReedHomeScreen(
         Spacer(Modifier.height(28.dp))
     }
     }  // AnimatedContent (главная ↔ уведомления)
+
+    // Вход по коду из режима «без кода» (та же логика, что на экране входа).
+    if (showCodeLogin) {
+        AccountCodeDialog(
+            locationViewModel = locationViewModel,
+            onDismiss = { showCodeLogin = false },
+            onLoggedIn = { subToken ->
+                ReedSession.token = subToken
+                ReedSession.noCodeMode = false
+                token = subToken
+                showCodeLogin = false
+            },
+        )
+    }
+    // Вставка ключа подписки (сырой ключ/ссылка) — импортируем как конфиг.
+    if (showPasteKey) {
+        PasteKeyDialog(
+            onDismiss = { showPasteKey = false },
+            onPaste = { text ->
+                showPasteKey = false
+                homeViewModel.onImportFullConfig(
+                    rawText = text,
+                    onComplete = { locationViewModel.loadLocations { } },
+                    onError = { },
+                )
+            },
+        )
+    }
 }
 
 // Звоночек уведомлений в шапке главной. Красный кружок — если есть непрочитанные.
@@ -2228,10 +2274,11 @@ fun ReedSupportScreen() {
 
 // ── Личный кабинет ───────────────────────────────────────────────────────────
 @Composable
-fun ReedAccountScreen(onLogout: () -> Unit = {}) {
+fun ReedAccountScreen(locationViewModel: LocationViewModel, onLogout: () -> Unit = {}) {
     val uri = LocalUriHandler.current
     val scope = rememberCoroutineScope()
     var token by remember { mutableStateOf(ReedSession.token) }
+    var showCodeLogin by remember { mutableStateOf(false) }
     // Документ для модального окна (внизу ЛК): title -> body; null = закрыто.
     var policyDialog by remember { mutableStateOf<Pair<String, String>?>(null) }
     policyDialog?.let { (title, body) ->
@@ -2265,36 +2312,30 @@ fun ReedAccountScreen(onLogout: () -> Unit = {}) {
         Spacer(Modifier.height(20.dp))
 
         if (token == null) {
+            // Режим без аккаунта: кабинет пустой, только вход по коду (без Telegram).
             ReedCard {
-                Text("Войдите через Telegram, чтобы увидеть подписку, трафик и реферальный код.",
-                    style = MaterialTheme.typography.bodyMedium)
+                Text("Войти по коду", style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Black)
+                Spacer(Modifier.height(8.dp))
+                Text("Чтобы увидеть подписку, трафик и устройства — войдите по коду из бота @reedvpnbot.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(16.dp))
-                ReedPrimaryButton("Зарегистрироваться через Telegram") {
-                    scope.launch {
-                        try {
-                            val start = ReedApi.authStart()
-                            uri.openUri(start.deeplink)
-                            statusMsg = "Подтвердите вход в Telegram…"
-                            repeat(60) {
-                                delay(2000)
-                                val poll = ReedApi.authPoll(start.nonce)
-                                if (poll.status == "ok") {
-                                    ReedSession.token = poll.token
-                                    token = poll.token
-                                    return@launch
-                                }
-                            }
-                            statusMsg = "Вход не завершён, попробуйте снова"
-                        } catch (e: Throwable) {
-                            statusMsg = "Ошибка входа, попробуйте снова"
-                        }
-                    }
-                }
-                if (statusMsg.isNotEmpty()) {
-                    Spacer(Modifier.height(10.dp)); MutedText(statusMsg)
-                }
+                ReedPrimaryButton("Войти по коду") { showCodeLogin = true }
             }
             Spacer(Modifier.height(28.dp))
+            if (showCodeLogin) {
+                AccountCodeDialog(
+                    locationViewModel = locationViewModel,
+                    onDismiss = { showCodeLogin = false },
+                    onLoggedIn = { subToken ->
+                        ReedSession.token = subToken
+                        ReedSession.noCodeMode = false
+                        token = subToken
+                        showCodeLogin = false
+                    },
+                )
+            }
             return@Column
         }
 
