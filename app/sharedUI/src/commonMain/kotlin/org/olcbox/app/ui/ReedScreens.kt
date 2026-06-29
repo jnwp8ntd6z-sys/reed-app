@@ -1097,39 +1097,41 @@ fun ReedHomeScreen(
         }
     }
 
-    // Авто-импорт серверов Reed после входа: один раз на токен, если серверов ещё нет.
-    // Тянем olcRTC-конфиги (родной транспорт движка) — кнопкой можно подключиться.
-    LaunchedEffect(ReedSession.token, locations.size) {
-        val t = ReedSession.token
-        // «Серверов ещё нет» = нет НИ ОДНОЙ не-временной локации (временный сервер
-        // присутствует всегда, поэтому isEmpty() тут не годится).
+    // Авто-импорт серверов Reed: если у пользователя НЕТ реальных серверов (первый вход
+    // ИЛИ не удалось загрузить из-за сети / окна перезапуска сервера) — тянем список и
+    // ПОВТОРЯЕМ с нарастающей задержкой, пока серверы не появятся. Так список не «пропадает»
+    // навсегда из-за одного неудачного запроса — стабильность как в HAPP. Когда реальные
+    // серверы загружены, эффект сразу выходит (hasRealServers=true) и больше ничего не шлёт.
+    var importAttempt by remember { mutableStateOf(0) }
+    LaunchedEffect(ReedSession.token, locations.size, importAttempt) {
+        val t = ReedSession.token ?: return@LaunchedEffect
+        // «Серверов ещё нет» = нет НИ ОДНОЙ не-временной локации (временный сервер есть всегда).
         val hasRealServers = locations.any { !ReedTempServer.isTemp(it.storageId) }
-        if (t != null && !hasRealServers && ReedSession.importedForToken != t) {
-            ReedSession.importedForToken = t
-            // Сначала olcRTC-локации (родной транспорт движка), затем VLESS из
-            // /app/locations. VLESS импортируется последним → именно быстрый VLESS
-            // становится сервером по умолчанию (parseReedLocations выставляет активным
-            // первый VLESS), а не запасной LTE-olcRTC.
-            // VLESS-импорт тянем ВСЕГДА (и при успехе, и при сбое olcRTC), иначе при
-            // сбое /app/olcconf серверы вообще не появлялись. loadLocations перечитывает
-            // диск в любом исходе — список не «пропадает». Флаг ретрая сбрасываем только
-            // если и VLESS не вышел (чтобы попробовать снова, когда вернётся сеть).
-            val importVless = {
-                homeViewModel.onImportFullConfig(
-                    rawText = "$REED_LOCATIONS_BASE$t",
-                    onComplete = { locationViewModel.loadLocations { } },
-                    onError = {
-                        ReedSession.importedForToken = null
-                        locationViewModel.loadLocations { }
-                    },
-                )
+        if (hasRealServers) return@LaunchedEffect
+        // Запланировать повтор с backoff (3с → +2с за попытку, максимум 20с), пока серверов нет.
+        val scheduleRetry: () -> Unit = {
+            scope.launch {
+                delay((3000L + importAttempt * 2000L).coerceAtMost(20000L))
+                importAttempt++   // меняет ключ эффекта → повторная попытка импорта
             }
+            Unit
+        }
+        // Сначала olcRTC (родной транспорт движка), затем VLESS из /app/locations
+        // (импортируется последним → быстрый VLESS становится сервером по умолчанию).
+        // VLESS тянем при любом исходе olcRTC. loadLocations перечитывает диск; при ошибке
+        // VLESS планируем повтор — список появится, как только сервер станет доступен.
+        val importVless: () -> Unit = {
             homeViewModel.onImportFullConfig(
-                rawText = "$REED_OLCCONF_BASE$t",
-                onComplete = { importVless() },
-                onError = { importVless() },
+                rawText = "$REED_LOCATIONS_BASE$t",
+                onComplete = { locationViewModel.loadLocations { } },
+                onError = { locationViewModel.loadLocations { }; scheduleRetry() },
             )
         }
+        homeViewModel.onImportFullConfig(
+            rawText = "$REED_OLCCONF_BASE$t",
+            onComplete = { importVless() },
+            onError = { importVless() },
+        )
     }
 
     // Авто-пинг и авто-подключение при запуске (фишки Happ).
