@@ -1320,9 +1320,35 @@ fun ReedHomeScreen(
         // Согласие/политики убраны с главного экрана — все документы теперь внизу
         // Личного кабинета (ReedAccountScreen).
 
-        if (token == null) {
-            // Режим без аккаунта (прокси-клиент, бренд Reed): вставить ключ подписки ИЛИ
-            // войти по коду из бота. Без Telegram-регистрации.
+        // Реальные серверы уже подтянуты (ключ вставлен / вошёл по коду)? Тогда показываем
+        // подключение и ПОЛНЫЙ список ниже, а не призыв «Подключите подписку».
+        val homeHasServers = locations.any { !ReedTempServer.isTemp(it.storageId) }
+
+        if (token == null && homeHasServers) {
+            // Режим «по ключу»: ключ уже подключён, серверы ниже. Компактная плашка + действия.
+            ReedCard {
+                Text("Ключ подписки подключён", style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Black)
+                Spacer(Modifier.height(8.dp))
+                MutedText("Серверы ниже. Нажмите большую кнопку, чтобы подключиться.")
+                Spacer(Modifier.height(14.dp))
+                Row(Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = { showPasteKey = true },
+                        modifier = Modifier.weight(1f).height(46.dp),
+                        shape = RoundedCornerShape(14.dp),
+                    ) { Text("Другой ключ", fontWeight = FontWeight.SemiBold) }
+                    Spacer(Modifier.width(10.dp))
+                    OutlinedButton(
+                        onClick = { showCodeLogin = true },
+                        modifier = Modifier.weight(1f).height(46.dp),
+                        shape = RoundedCornerShape(14.dp),
+                    ) { Text("Войти по коду", fontWeight = FontWeight.SemiBold) }
+                }
+            }
+            Spacer(Modifier.height(20.dp))
+        } else if (token == null) {
+            // Режим без аккаунта, серверов ещё нет: вставить ключ подписки ИЛИ войти по коду.
             ReedCard {
                 Text("Подключите подписку", style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Black)
@@ -1570,7 +1596,7 @@ fun ReedHomeScreen(
             ReedCard {
                 MutedText("Серверы появятся автоматически после входа. Полное управление подпиской — в Telegram-боте.")
             }
-        } else if (hasSubscription && realServers.isNotEmpty()) {
+        } else if ((hasSubscription || token == null) && realServers.isNotEmpty()) {
             realServers.forEach { loc ->
                 ReedServerRow(
                     loc = loc,
