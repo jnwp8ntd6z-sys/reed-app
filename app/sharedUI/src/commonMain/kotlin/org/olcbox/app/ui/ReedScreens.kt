@@ -404,6 +404,7 @@ private fun ReedIosOnboardingScreen(
     val uri = LocalUriHandler.current
     var showCode by remember { mutableStateOf(false) }
     var showPaste by remember { mutableStateOf(false) }
+    var showJoin by remember { mutableStateOf(false) }
     var pasteError by remember { mutableStateOf("") }
 
     Box(Modifier.fillMaxSize().background(Color(0xFF0A0A0A))) {
@@ -449,6 +450,16 @@ private fun ReedIosOnboardingScreen(
                     Spacer(Modifier.height(8.dp))
                     Text(pasteError, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+                }
+
+                Spacer(Modifier.height(14.dp))
+                // Вход для друга/члена семьи по коду-приглашению (присоединиться к чужой подписке).
+                TextButton(onClick = { showJoin = true }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Rounded.Key, contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.85f), modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Войти по приглашению друга",
+                        color = Color.White.copy(alpha = 0.85f), fontWeight = FontWeight.SemiBold)
                 }
             }
 
@@ -510,6 +521,22 @@ private fun ReedIosOnboardingScreen(
                         pasteError = "Не удалось распознать ключ. Проверьте и попробуйте снова."
                     },
                 )
+            },
+        )
+    }
+
+    if (showJoin) {
+        JoinByCodeDialog(
+            onDismiss = { showJoin = false },
+            onJoined = { memberToken, joinedName ->
+                ReedSession.token = memberToken
+                ReedSession.joinedViaCode = true
+                ReedSession.memberName = joinedName
+                ReedSession.noCodeMode = false
+                ReedSession.consentAccepted = true
+                ReedSession.onboardingDone = true
+                showJoin = false
+                onDone()
             },
         )
     }
