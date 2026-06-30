@@ -1152,11 +1152,18 @@ class OlcboxVpnService : VpnService() {
         }
     }
 
+    // Приложения, которые ВСЕГДА идут мимо VPN (даже в режиме «все через VPN»). MAX
+    // (ru.oneme.app) — гос-мессенджер, специально детектящий активный VPN на устройстве:
+    // выводим его полностью из туннеля → он видит реальную РФ-сеть и свой обычный IP, а не
+    // наш TUN. Работает он и так на РФ-сетях, тоннель ему не нужен.
+    private val alwaysBypassPackages = listOf("ru.oneme.app")
+
     private fun applySplitTunneling(builder: Builder): Boolean {
         return when (splitTunnelMode) {
             AndroidSplitTunnelMode.AllApps -> {
                 addDisallowedApp(builder, packageName, "Olcbox")
-                addLog("Split tunneling: all apps use TUN")
+                alwaysBypassPackages.forEach { addDisallowedApp(builder, it, "always-bypass") }
+                addLog("Split tunneling: all apps use TUN (MAX bypassed)")
                 true
             }
 
@@ -1186,6 +1193,7 @@ class OlcboxVpnService : VpnService() {
 
             AndroidSplitTunnelMode.BypassSelected -> {
                 addDisallowedApp(builder, packageName, "Olcbox")
+                alwaysBypassPackages.forEach { addDisallowedApp(builder, it, "always-bypass") }
                 val applied = splitTunnelBypassApps
                     .filter { it.isNotBlank() && it != packageName }
                     .distinct()
