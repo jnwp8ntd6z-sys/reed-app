@@ -18,6 +18,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -43,7 +44,6 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Bolt
-import androidx.compose.material.icons.rounded.BugReport
 import androidx.compose.material.icons.rounded.CardGiftcard
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ChevronRight
@@ -94,6 +94,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
@@ -1520,7 +1521,22 @@ fun ReedHomeScreen(
                 Icon(Icons.Rounded.Router, contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("СЕРВЕРЫ", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
+                // Экспорт логов подключения спрятан на долгое нажатие по заголовку
+                // (видимой кнопки нет, чтобы не пугать пользователей; для диагностики
+                // просим «подержать палец на слове СЕРВЕРЫ»).
+                Text(
+                    "СЕРВЕРЫ",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Black,
+                    modifier = Modifier.pointerInput(Unit) {
+                        detectTapGestures(onLongPress = {
+                            homeViewModel.onShareLogs(
+                                onShared = { logsMsg = it.ifBlank { "Логи готовы" } },
+                                onError = { logsMsg = "Не удалось выгрузить логи" },
+                            )
+                        })
+                    },
+                )
             }
             IconAction(Icons.Rounded.Refresh, "Обновить") {
                 if (serversRefreshing) return@IconAction
@@ -1546,17 +1562,6 @@ fun ReedHomeScreen(
                 locationViewModel.refreshPings(
                     targetLocationIds = null,
                     performPing = { config -> homeViewModel.performPingFor(config) },
-                )
-            }
-            Spacer(Modifier.width(6.dp))
-            // Экспорт логов подключения (для диагностики проблем с VPN) — открывает
-            // системное «Поделиться»: можно отправить лог в Telegram-бот/поддержку.
-            IconAction(Icons.Rounded.BugReport, "Логи") {
-                // Android/iOS — системное «Поделиться»; Windows — копирование в буфер.
-                // Показываем короткое подтверждение, чтобы на десктопе кнопка не «молчала».
-                homeViewModel.onShareLogs(
-                    onShared = { logsMsg = it.ifBlank { "Логи готовы" } },
-                    onError = { logsMsg = "Не удалось выгрузить логи" },
                 )
             }
         }
