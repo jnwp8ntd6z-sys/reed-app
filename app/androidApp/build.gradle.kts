@@ -69,10 +69,13 @@ android {
         create("direct") {
             dimension = "distribution"
             buildConfigField("boolean", "ENABLE_SELF_UPDATE", "true")
+            buildConfigField("boolean", "SHOW_BOT_LINKS", "true")
         }
         create("play") {
             dimension = "distribution"
             buildConfigField("boolean", "ENABLE_SELF_UPDATE", "false")
+            // Google Play запрещает вести из приложения на внешнюю оплату (Telegram-бот).
+            buildConfigField("boolean", "SHOW_BOT_LINKS", "false")
         }
     }
 

@@ -11,6 +11,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import org.olcbox.app.data.reed.ReedBuildFlags
 import org.olcbox.app.data.datasource.LocationsDataSourceImpl
 import org.olcbox.app.data.datasource.LocationsRepositoryImpl
 import org.olcbox.app.data.exporter.AndroidLogExporter
@@ -37,6 +38,10 @@ class AppActivity : ComponentActivity() {
 
         // Хранилище сессии Reed (токен/онбординг) — до обращения к ReedSession.
         reedStoreInitAndroid(applicationContext)
+
+        // Play-сборка: скрываем кликабельные переходы к Telegram-боту (Google Play
+        // запрещает вести из приложения на внешнюю оплату). direct-APK — оставляем.
+        ReedBuildFlags.showBotLinks = BuildConfig.SHOW_BOT_LINKS
 
         // Request notification permission for Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

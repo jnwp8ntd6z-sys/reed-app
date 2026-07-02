@@ -287,8 +287,15 @@ object ReedSession {
 }
 
 object ReedLinks {
-    const val PRIVACY_POLICY = "https://reedvpn.tilda.ws/privacy-policy"
-    const val TERMS_OF_SERVICE = "https://reedvpn.tilda.ws/terms-of-service"
+    const val PRIVACY_POLICY = "https://reedapp.ru/privacy-app"
+    const val TERMS_OF_SERVICE = "https://reedapp.ru/terms"
+}
+
+// Флаги дистрибуции. В Google Play-сборке нельзя вести из приложения на внешнюю
+// оплату (наш Telegram-бот) — androidApp (play-flavor) выставляет showBotLinks=false
+// при старте. По умолчанию true (direct-APK, desktop). Меняется до первой отрисовки UI.
+object ReedBuildFlags {
+    var showBotLinks: Boolean = true
 }
 
 @Serializable

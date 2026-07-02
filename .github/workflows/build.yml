@@ -20,8 +20,8 @@ permissions:
   contents: read
 
 env:
-  OLCBOX_VERSION: "1.0.1"
-  OLCBOX_VERSION_CODE: "2"
+  OLCBOX_VERSION: "1.0.2"
+  OLCBOX_VERSION_CODE: "3"
   OLCRTC_REF: "master"
   ANDROID_NDK_VERSION: "28.2.13676358"
 

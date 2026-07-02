@@ -114,7 +114,7 @@ import org.olcbox.app.data.reed.DevicesResponse
 import org.olcbox.app.data.reed.MemberItem
 import org.olcbox.app.data.reed.MembersResponse
 import org.olcbox.app.data.reed.ReedApi
-import org.olcbox.app.data.reed.ReedLinks
+import org.olcbox.app.data.reed.ReedBuildFlags
 import org.olcbox.app.data.reed.ReedSession
 import org.olcbox.app.data.reed.reedIsIOS
 import org.olcbox.app.data.reed.SubscriptionItem
@@ -461,25 +461,6 @@ private fun ReedIosOnboardingScreen(
                     Spacer(Modifier.width(8.dp))
                     Text("Войти по приглашению друга",
                         color = Color.White.copy(alpha = 0.85f), fontWeight = FontWeight.SemiBold)
-                }
-            }
-
-            // Мини-политика (без чекбоксов) — обязательна для ревью Apple. Внизу экрана.
-            Text(
-                "Продолжая, вы принимаете политику конфиденциальности и условия использования.",
-                style = MaterialTheme.typography.bodySmall,
-                color = Color.White.copy(alpha = 0.5f),
-                textAlign = TextAlign.Center,
-            )
-            Spacer(Modifier.height(4.dp))
-            Row {
-                TextButton(onClick = { uri.openUri(ReedLinks.PRIVACY_POLICY) }) {
-                    Text("Политика", style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary)
-                }
-                TextButton(onClick = { uri.openUri(ReedLinks.TERMS_OF_SERVICE) }) {
-                    Text("Условия", style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary)
                 }
             }
         }
@@ -1387,11 +1368,15 @@ fun ReedHomeScreen(
                 Text("Подписка закончилась", style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Black)
                 Spacer(Modifier.height(8.dp))
-                Text("Настройте в боте.",
+                Text(
+                    if (ReedBuildFlags.showBotLinks) "Настройте в боте."
+                    else "Продлите подписку, чтобы снова пользоваться сервисом.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(16.dp))
-                ReedPrimaryButton("Telegram бот") { uri.openUri(BOT_URL) }
+                if (ReedBuildFlags.showBotLinks) {
+                    Spacer(Modifier.height(16.dp))
+                    ReedPrimaryButton("Telegram бот") { uri.openUri(BOT_URL) }
+                }
             }
             Spacer(Modifier.height(20.dp))
         } else {
@@ -1405,15 +1390,17 @@ fun ReedHomeScreen(
                         .clip(RoundedCornerShape(16.dp))
                         .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f))
                         .border(1.dp, MaterialTheme.colorScheme.secondary, RoundedCornerShape(16.dp))
-                        .clickable { uri.openUri(BOT_URL) }
+                        .let { if (ReedBuildFlags.showBotLinks) it.clickable { uri.openUri(BOT_URL) } else it }
                         .padding(16.dp)
                 ) {
                     Column {
                         Text("Подписка заканчивается через $daysLeft дн.",
                             style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Black,
                             color = MaterialTheme.colorScheme.secondary)
-                        Spacer(Modifier.height(2.dp))
-                        MutedText("Полное управление подпиской — в Telegram-боте.")
+                        if (ReedBuildFlags.showBotLinks) {
+                            Spacer(Modifier.height(2.dp))
+                            MutedText("Полное управление подпиской — в Telegram-боте.")
+                        }
                     }
                 }
             }
@@ -2381,11 +2368,6 @@ fun ReedAccountScreen(locationViewModel: LocationViewModel, onLogout: () -> Unit
     val scope = rememberCoroutineScope()
     var token by remember { mutableStateOf(ReedSession.token) }
     var showCodeLogin by remember { mutableStateOf(false) }
-    // Документ для модального окна (внизу ЛК): title -> body; null = закрыто.
-    var policyDialog by remember { mutableStateOf<Pair<String, String>?>(null) }
-    policyDialog?.let { (title, body) ->
-        PolicyDialog(title = title, body = body, onDismiss = { policyDialog = null })
-    }
     var data by remember { mutableStateOf<SubscriptionResponse?>(null) }
     var statusMsg by remember { mutableStateOf("") }
     var friendCode by remember { mutableStateOf("") }
@@ -2490,15 +2472,17 @@ fun ReedAccountScreen(locationViewModel: LocationViewModel, onLogout: () -> Unit
         }
         Spacer(Modifier.height(14.dp))
 
-        // Управление подпиской — только в Telegram-боте (требование Apple App Store:
-        // в приложении не должно быть переходов на оплату).
-        ReedCard {
-            Text("Полное управление подпиской осуществляется в Telegram-Боте.",
-                style = MaterialTheme.typography.bodyMedium)
+        // Управление подпиской — только в Telegram-боте. В Play-сборке переход к боту
+        // скрыт (Google запрещает вести из приложения на внешнюю оплату).
+        if (ReedBuildFlags.showBotLinks) {
+            ReedCard {
+                Text("Полное управление подпиской осуществляется в Telegram-Боте.",
+                    style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(14.dp))
+                ReedPrimaryButton("Telegram бот") { uri.openUri(BOT_URL) }
+            }
             Spacer(Modifier.height(14.dp))
-            ReedPrimaryButton("Telegram бот") { uri.openUri(BOT_URL) }
         }
-        Spacer(Modifier.height(14.dp))
 
         // Реферальная программа
         ExpandablePlashka(Icons.Rounded.CardGiftcard, "Реферальная программа") {
@@ -2619,35 +2603,6 @@ fun ReedAccountScreen(locationViewModel: LocationViewModel, onLogout: () -> Unit
             }
         }
 
-        // Документы — открываются ВНУТРИ приложения модальным окном (требование Apple).
-        Spacer(Modifier.height(24.dp))
-        ReedSectionTitle("Документы")
-        Spacer(Modifier.height(8.dp))
-        PolicyLink(ReedPolicyTexts.TERMS_TITLE) {
-            policyDialog = ReedPolicyTexts.TERMS_TITLE to ReedPolicyTexts.TERMS_BODY
-        }
-        PolicyLink(ReedPolicyTexts.PRIVACY_TITLE) {
-            policyDialog = ReedPolicyTexts.PRIVACY_TITLE to ReedPolicyTexts.PRIVACY_BODY
-        }
-        PolicyLink(ReedPolicyTexts.CONSENT_TITLE) {
-            policyDialog = ReedPolicyTexts.CONSENT_TITLE to ReedPolicyTexts.CONSENT_BODY
-        }
-
         Spacer(Modifier.height(28.dp))
-    }
-}
-
-// Строка-ссылка на документ внизу ЛК: название + иконка ℹ️, открывает текст модалкой.
-@Composable
-private fun PolicyLink(title: String, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick)
-            .padding(vertical = 12.dp, horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(title, modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
-        Icon(Icons.Rounded.Info, contentDescription = "Открыть",
-            tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
     }
 }
