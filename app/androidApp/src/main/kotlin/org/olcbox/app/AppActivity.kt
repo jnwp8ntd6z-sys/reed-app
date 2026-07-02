@@ -48,9 +48,16 @@ class AppActivity : ComponentActivity() {
         val locationsRepository = LocationsRepositoryImpl(locationsDataSource)
         val configImporter = AndroidConfigImporter(this)
         val logExporter = AndroidLogExporter(this)
-        val updateService = AppUpdateService(
-            deviceIdentityProvider = PersistentDeviceIdentityProvider(locationsDataSource)
-        )
+        // Само-обновление (скачать+поставить APK) — только для direct-сборки. В play-сборке
+        // ENABLE_SELF_UPDATE=false → сервис не создаётся, апдейт-UI не показывается, APK не
+        // качается/ставится (требование Google Play; обновления идут через Play Store).
+        val updateService = if (BuildConfig.ENABLE_SELF_UPDATE) {
+            AppUpdateService(
+                deviceIdentityProvider = PersistentDeviceIdentityProvider(locationsDataSource)
+            )
+        } else {
+            null
+        }
 
         val viewModel = HomeScreenViewModel(
             vpnManager = vpnManager,

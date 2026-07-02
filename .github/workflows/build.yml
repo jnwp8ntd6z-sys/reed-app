@@ -56,13 +56,30 @@ jobs:
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
           export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
           gomobile init
-      - name: Build debug APK (unsigned)
+      - name: Build direct debug APK (для прямой раздачи/тестов)
         working-directory: app
         run: |
           export OLCRTC_REPO="${GITHUB_WORKSPACE}/olcrtc"
           export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
           export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
-          ./gradlew -Polcbox.version="${OLCBOX_VERSION}" -Polcbox.versionCode="${OLCBOX_VERSION_CODE}" :androidApp:assembleDebug --stacktrace
+          ./gradlew -Polcbox.version="${OLCBOX_VERSION}" -Polcbox.versionCode="${OLCBOX_VERSION_CODE}" :androidApp:assembleDirectDebug --stacktrace
+      - name: Build Play release AAB (подписанный, minify+shrink — для Google Play)
+        working-directory: app
+        run: |
+          export OLCRTC_REPO="${GITHUB_WORKSPACE}/olcrtc"
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+          ./gradlew -Polcbox.version="${OLCBOX_VERSION}" -Polcbox.versionCode="${OLCBOX_VERSION_CODE}" :androidApp:bundlePlayRelease --stacktrace
+      - name: Show Play AAB path
+        if: always()
+        run: |
+          aab=$(find app/androidApp/build/outputs/bundle -name '*.aab' | head -1)
+          if [ -n "$aab" ]; then echo "AAB: $aab ($(du -h "$aab" | cut -f1))" >> "$GITHUB_STEP_SUMMARY"; else echo "no AAB produced"; fi
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: reed-play-aab
+          path: app/androidApp/build/outputs/bundle/**/*.aab
       # Fallback delivery: GitHub artifact storage quota is account-wide and is
       # recalculated only every 6-12h, so upload-artifact can hard-fail even
       # after old artifacts are deleted. Mirror the APK to a throwaway file host
@@ -72,6 +89,7 @@ jobs:
         run: |
           apk=$(find app/androidApp/build/outputs/apk -name '*.apk' | head -1)
           if [ -z "$apk" ]; then echo "no APK produced"; exit 0; fi
+          # (direct debug APK — прямая раздача; Play-канал = AAB, см. отдельный шаг)
           echo "APK: $apk ($(du -h "$apk" | cut -f1))"
           emit() { echo "APK_MIRROR_URL=$1"; echo "APK mirror: $1" >> "$GITHUB_STEP_SUMMARY"; }
           # tmpfiles.org (JSON {data:{url}})

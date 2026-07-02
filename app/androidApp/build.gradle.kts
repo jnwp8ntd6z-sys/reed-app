@@ -55,6 +55,27 @@ android {
         }
     }
 
+    buildFeatures {
+        buildConfig = true
+    }
+
+    // Два канала распространения:
+    //  • direct — прямой APK (сайт/бот): есть само-обновление (качает и ставит APK).
+    //  • play   — Google Play: БЕЗ само-обновления и без REQUEST_INSTALL_PACKAGES
+    //             (Play запрещает скачивание/установку APK и это триггерит реджект).
+    //             Собирается как подписанный AAB (bundlePlayRelease).
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("direct") {
+            dimension = "distribution"
+            buildConfigField("boolean", "ENABLE_SELF_UPDATE", "true")
+        }
+        create("play") {
+            dimension = "distribution"
+            buildConfigField("boolean", "ENABLE_SELF_UPDATE", "false")
+        }
+    }
+
     signingConfigs {
         if (hasReleaseKeystore) {
             create("release") {
