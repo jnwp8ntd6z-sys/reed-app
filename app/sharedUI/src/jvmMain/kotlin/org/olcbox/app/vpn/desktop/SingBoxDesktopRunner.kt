@@ -17,7 +17,7 @@ import java.nio.file.Path
  */
 internal object SingBoxDesktopRunner {
     // Тот же базовый адрес Reed API, что и в Android/iOS (REED_API_BASE).
-    private const val REED_API_BASE = "https://reed-vpn.duckdns.org"
+    private const val REED_API_BASE = "https://reedapp.ru"
     private const val CONNECT_TIMEOUT_MS = 8_000
     private const val READ_TIMEOUT_MS = 8_000
 

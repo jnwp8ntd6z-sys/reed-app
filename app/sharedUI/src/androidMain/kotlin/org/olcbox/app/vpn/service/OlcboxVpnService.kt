@@ -2202,7 +2202,7 @@ class OlcboxVpnService : VpnService() {
         const val ACTION_STOP_VPN = OlcboxVpnActions.ACTION_STOP_VPN
 
         // База серверного API Reed (для скачивания sing-box-конфига VLESS на лету).
-        private const val REED_API_BASE = "https://reed-vpn.duckdns.org"
+        private const val REED_API_BASE = "https://reedapp.ru"
 
         private const val LOCAL_SOCKS_PORT_BASE = 10818
         private const val LOCAL_SOCKS_PORT_MAX = 10858

@@ -22,7 +22,7 @@ import kotlinx.serialization.json.Json
  * (okhttp на Android/JVM, darwin на iOS) — он уже в зависимостях olcbox.
  */
 object ReedApi {
-    private const val BASE = "https://reed-vpn.duckdns.org"
+    private const val BASE = "https://reedapp.ru"
     // Ключ кэша последнего успешного ответа /app/subscription (персист). Нужен, чтобы
     // без интернета приложение не выглядело как «вылет из аккаунта»: показываем кэш.
     private const val KEY_SUB_CACHE = "reed_sub_cache"

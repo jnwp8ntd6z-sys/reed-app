@@ -129,8 +129,8 @@ private const val BOT_URL = "https://t.me/ReedVPNbot"
 private const val SUPPORT_URL = "https://t.me/reedvps"
 // olcRTC-подписка Reed (формат olcbox, отдаётся text/plain). Это рабочий транспорт
 // приложения. VLESS-серверы потребуют отдельного ядра (sing-box) — в работе.
-private const val REED_OLCCONF_BASE = "https://reed-vpn.duckdns.org/app/olcconf?token="
-private const val REED_LOCATIONS_BASE = "https://reed-vpn.duckdns.org/app/locations?token="
+private const val REED_OLCCONF_BASE = "https://reedapp.ru/app/olcconf?token="
+private const val REED_LOCATIONS_BASE = "https://reedapp.ru/app/locations?token="
 
 private val OPERATORS = listOf("МТС", "Мегафон", "Yota", "Билайн", "Т2", "Т-Мобайл", "Ростелеком")
 
@@ -599,11 +599,13 @@ private fun AccountCodeDialog(
 // переписываем в /app/locations. Если это не Reed-ссылка — возвращаем null (импортируем как есть).
 private fun reedLocationsUrlFromKey(raw: String): String? {
     val t = raw.trim()
-    if (!t.contains("reed-vpn.duckdns.org") || !t.contains("/sub/")) return null
+    // Принимаем ссылки и с нового домена reedapp.ru, и со старого reed-vpn.duckdns.org
+    // (обратная совместимость: у существующих пользователей ссылки на duckdns).
+    if ((!t.contains("reedapp.ru") && !t.contains("reed-vpn.duckdns.org")) || !t.contains("/sub/")) return null
     val token = t.substringBefore('?').substringBefore('#').trimEnd('/').substringAfterLast('/')
     if (token.length !in 8..64) return null
     if (!token.all { it.isLetterOrDigit() || it == '-' || it == '_' }) return null
-    return "https://reed-vpn.duckdns.org/app/locations?token=$token"
+    return "https://reedapp.ru/app/locations?token=$token"
 }
 
 // Диалог вставки ключа подписки (сырой ключ/ссылка). При «Подключить» вызывает onPaste(text).

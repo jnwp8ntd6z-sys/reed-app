@@ -377,6 +377,6 @@ class IosVpnManager(
         const val CHECK_TIMEOUT_MS = 8_000L
         const val HTTP_PING_URL = "https://www.google.com/generate_204"
         const val CREDENTIAL_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
-        const val REED_API_BASE = "https://reed-vpn.duckdns.org"
+        const val REED_API_BASE = "https://reedapp.ru"
     }
 }

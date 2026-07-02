@@ -469,7 +469,7 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         const val PROXY_USERNAME_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
         const val PROXY_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
         const val DEFAULT_LOCATION_PING_PARALLELISM = 4
-        const val REED_API_BASE = "https://reed-vpn.duckdns.org"
+        const val REED_API_BASE = "https://reedapp.ru"
         const val PREWARM_PARALLELISM = 3
         const val PREWARM_TIMEOUT_MS = 8_000
         val random = SecureRandom()
