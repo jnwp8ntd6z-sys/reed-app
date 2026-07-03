@@ -274,7 +274,16 @@ class OlcboxVpnService : VpnService() {
                     }
                 }
 
-                else -> Unit
+                else -> {
+                    // Сеть сменилась ВО ВРЕМЯ подключения (Wi-Fi↔мобильный скачок): in-flight
+                    // старт прибит к УШЕДШЕЙ сети и раньше молча висел до 25с таймаута
+                    // (Mobile.waitReady), после чего ещё ждал очистку. Перезапускаем старт
+                    // сразу на новой сети — подключение «со второго раза» уходит.
+                    if (startupJob?.isActive == true) {
+                        addLog("Network changed during startup; restarting connect on ${getNetName(upstream)}")
+                        startTunnel(isMigration = false)
+                    }
+                }
             }
         }
     }
@@ -653,6 +662,14 @@ class OlcboxVpnService : VpnService() {
             resetRtcHealthState()
             olcSplitActive = false
 
+            // СВЕЖАЯ комната с сервера перед КАЖДЫМ стартом olcRTC. Комната/провайдер меняются
+            // на сервере (failover между Jitsi, пересоздание зависших комнат), а сам GET
+            // /app/olcconf ещё и поднимает комнату на exit-сервере. Раньше конфиг обновлялся
+            // только раз за запуск приложения → реконнект после обрыва висел в «waiting for
+            // peer» на залипшей кэшированной комнате. API недоступен (белые списки) → тихо
+            // работаем по кэшу, как раньше.
+            val olcConfig = fetchFreshOlcLocation(config) ?: config
+
             // SPLIT-ROUTING для olcRTC: ставим sing-box ПЕРЕД движком olcRTC. РФ-домены/РФ-IP
             // идут direct (банки/госуслуги видят настоящий РФ-IP → не палят VPN), остальное —
             // в olcRTC-туннель. Конфиг тянем CACHE-FIRST: на «зарезанных» сетях с белыми
@@ -679,22 +696,22 @@ class OlcboxVpnService : VpnService() {
                     throw IllegalStateException("olcRTC internal port $mobilePort is still in use")
                 }
             }
-            waitForJitsiRoomCleanup(config.bypassProvider, config.id)
+            waitForJitsiRoomCleanup(olcConfig.bypassProvider, olcConfig.id)
             bindProcessToNetwork(upstream, "Bound to ${getNetName(upstream)}")
-            configureMobileTransport(config)
+            configureMobileTransport(olcConfig)
             addLog(
-                "Starting olcRTC provider=${config.bypassProvider}, " +
-                    "transport=${config.transport}, room=${config.id}" +
+                "Starting olcRTC provider=${olcConfig.bypassProvider}, " +
+                    "transport=${olcConfig.transport}, room=${olcConfig.id}" +
                     if (useSplit) " (split-routing → :$mobilePort)" else ""
             )
-            lastMobileProvider = config.bypassProvider
-            lastMobileRoom = config.id
+            lastMobileProvider = olcConfig.bypassProvider
+            lastMobileRoom = olcConfig.id
             Mobile.startWithTransport(
-                config.bypassProvider,
-                config.transport,
-                config.id,
+                olcConfig.bypassProvider,
+                olcConfig.transport,
+                olcConfig.id,
                 deviceId,
-                config.key,
+                olcConfig.key,
                 mobilePort.toLong(),
                 socksUsername,
                 socksPassword
@@ -1029,6 +1046,58 @@ class OlcboxVpnService : VpnService() {
             }
             addLog("olcRTC split config unavailable → fallback to direct olcRTC")
             null
+        }
+
+    /** Перечитывает /app/olcconf и возвращает СВЕЖУЮ конфигурацию этой olcRTC-локации:
+     *  комната/ключ/провайдер могли смениться на сервере (failover Jitsi, пересоздание
+     *  зависшей комнаты). Сам запрос заодно поднимает комнату на exit-сервере, поэтому
+     *  зовём его перед каждым стартом движка. null = API недоступен или локация не
+     *  найдена в ответе → вызывающий остаётся на кэшированной конфигурации. */
+    private suspend fun fetchFreshOlcLocation(cached: LocationConfig): LocationConfig? =
+        withContext(Dispatchers.IO) {
+            val token = org.olcbox.app.data.reed.ReedSession.token ?: return@withContext null
+            val url = "$REED_API_BASE/app/olcconf?token=${URLEncoder.encode(token, "UTF-8")}"
+            val body = runCatching {
+                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 5_000
+                    readTimeout = 5_000
+                    requestMethod = "GET"
+                }
+                try {
+                    if (conn.responseCode !in 200..299) {
+                        null
+                    } else {
+                        conn.inputStream.bufferedReader().use { it.readText() }
+                            .takeIf { it.isNotBlank() }
+                    }
+                } finally {
+                    conn.disconnect()
+                }
+            }.getOrNull()
+            if (body == null) {
+                addLog("olcRTC room refresh unavailable → using cached room")
+                return@withContext null
+            }
+            val entries = body.lineSequence()
+                .map { it.trim() }
+                .mapNotNull { org.olcbox.app.data.datasource.OlcRtcUri.parse(it) }
+                .toList()
+            // Локацию ищем по имени (оно стабильно между обновлениями), потому что
+            // комната (id) и ключ как раз и меняются при failover/пересоздании.
+            val fresh = entries.firstOrNull { it.mimo != null && it.mimo == cached.name }?.location
+                ?: entries.firstOrNull { it.location.id == cached.id }?.location
+            if (fresh == null) {
+                addLog("olcRTC room refresh: '${cached.name}' not in server list → cached room")
+                return@withContext null
+            }
+            if (fresh.id != cached.id || fresh.key != cached.key ||
+                fresh.bypassProvider != cached.bypassProvider
+            ) {
+                addLog("olcRTC room refreshed from server: room=${fresh.id}")
+            } else {
+                addLog("olcRTC room confirmed by server")
+            }
+            fresh
         }
 
     /** Добавляет логин/пароль в socks-outbound «proxy» (выход на локальный движок olcRTC).
@@ -2211,7 +2280,10 @@ class OlcboxVpnService : VpnService() {
         // экземпляр движка за раз → фиксированный порт безопасен.
         private const val OLCRTC_INTERNAL_SOCKS_PORT = 10861
         private const val MOBILE_READY_TIMEOUT_MS = 25_000L
-        private const val PREVIOUS_STOP_WAIT_MS = 12_000L
+        // Сколько ждать «мягкого» завершения прошлой очистки перед принудительной.
+        // Было 12с — при переподключении юзер столько же смотрел на зависший старт;
+        // Mobile.stop() штатно отпускает за ~1-2с, дольше = завис → форсим очистку.
+        private const val PREVIOUS_STOP_WAIT_MS = 4_000L
         private const val JITSI_RESTART_SETTLE_MS = 2_000L
         private const val TUN2SOCKS_STOP_WAIT_MS = 1_000L
         private const val TUNNEL_HANDOFF_DELAY_MS = 300L

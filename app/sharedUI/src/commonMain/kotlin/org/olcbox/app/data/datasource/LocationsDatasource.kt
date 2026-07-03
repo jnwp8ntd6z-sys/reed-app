@@ -1053,54 +1053,8 @@ class LocationsRepositoryImpl(
     }
 
     private fun parseOlcRtcUri(line: String): ParsedOlcRtcUri? {
-        val payload = line.removePrefix(OLCRTC_URI_PREFIX)
-
-        val transportMarker = payload.indexOf('?')
-        val roomMarker = payload.indexOf('@', startIndex = transportMarker + 1)
-        val keyMarker = payload.indexOf('#', startIndex = roomMarker + 1)
-
-        if (transportMarker <= 0 || roomMarker <= transportMarker || keyMarker <= roomMarker) {
-            return null
-        }
-
-        val clientMarker = payload
-            .indexOf('%', startIndex = keyMarker + 1)
-            .takeIf { it >= 0 }
-
-        val mimoMarker = payload
-            .indexOf('$', startIndex = keyMarker + 1)
-            .takeIf { it >= 0 }
-
-        val keyEnd = listOfNotNull(clientMarker, mimoMarker).minOrNull() ?: payload.length
-
-        val provider = payload.substring(0, transportMarker).trim()
-        val transportToken = payload.substring(transportMarker + 1, roomMarker).trim()
-        val (transport, transportOptions) = parseTransportToken(transportToken)
-        val roomId = payload.substring(roomMarker + 1, keyMarker).trim()
-        val key = payload.substring(keyMarker + 1, keyEnd).trim()
-
-        val mimo = mimoMarker
-            ?.let { payload.substring(it + 1) }
-            .orEmpty()
-            .trim()
-
-        val location = LocationConfig(
-            name = mimo.ifBlank { roomId },
-            id = roomId,
-            key = key,
-            bypassProvider = provider,
-            transport = transport,
-            vp8Fps = transportOptions["vp8-fps"]
-                ?: transportOptions["fps"]
-                ?: LocationConfig.DEFAULT_VP8_FPS,
-            vp8Batch = transportOptions["vp8-batch"]
-                ?: transportOptions["batch"]
-                ?: LocationConfig.DEFAULT_VP8_BATCH
-        ).normalized()
-
-        return location
-            .takeIf { it.isComplete() }
-            ?.let { ParsedOlcRtcUri(it, mimo.takeIf { value -> value.isNotBlank() }) }
+        val parsed = OlcRtcUri.parse(line) ?: return null
+        return ParsedOlcRtcUri(parsed.location, parsed.mimo)
     }
 
     private fun buildSubscriptionMetadata(fields: Map<String, String>): SubscriptionMetadata? {
@@ -1131,28 +1085,6 @@ class LocationsRepositoryImpl(
             mimo = mimo,
             subscription = subscription
         ).normalized().takeUnless { it.isEmpty() }
-    }
-
-    private fun parseTransportToken(token: String): Pair<String, Map<String, Int>> {
-        val optionsStart = token.indexOf('<')
-        val optionsEnd = token.lastIndexOf('>')
-        if (optionsStart < 0 || optionsEnd <= optionsStart) {
-            return token to emptyMap()
-        }
-
-        val transport = token.substring(0, optionsStart).trim()
-        val options = token.substring(optionsStart + 1, optionsEnd)
-            .split('&')
-            .mapNotNull { part ->
-                val separator = part.indexOf('=')
-                if (separator <= 0) return@mapNotNull null
-                val key = part.substring(0, separator).trim().lowercase()
-                val value = part.substring(separator + 1).trim().toIntOrNull() ?: return@mapNotNull null
-                key to value
-            }
-            .toMap()
-
-        return transport to options
     }
 
     private fun parseSubscriptionField(value: String): Pair<String, String>? {
@@ -1318,7 +1250,96 @@ class LocationsRepositoryImpl(
     }
 
     private companion object {
-        const val OLCRTC_URI_PREFIX = "olcrtc://"
+        const val OLCRTC_URI_PREFIX = OlcRtcUri.PREFIX
         const val UTF8_BOM = "\uFEFF"
+    }
+}
+
+/**
+ * \u041F\u0430\u0440\u0441\u0435\u0440 olcrtc://-\u0441\u0442\u0440\u043E\u043A (\u0444\u043E\u0440\u043C\u0430\u0442 olcbox-\u0438\u043C\u043F\u043E\u0440\u0442\u0430: `olcrtc://<provider>?<transport>@<room>#<key>[%client][$name]`).
+ * \u041F\u0443\u0431\u043B\u0438\u0447\u043D\u044B\u0439, \u043F\u043E\u0442\u043E\u043C\u0443 \u0447\u0442\u043E \u043D\u0443\u0436\u0435\u043D \u043D\u0435 \u0442\u043E\u043B\u044C\u043A\u043E \u0438\u043C\u043F\u043E\u0440\u0442\u0443 \u043F\u043E\u0434\u043F\u0438\u0441\u043E\u043A: VPN-\u0441\u0435\u0440\u0432\u0438\u0441 \u043F\u0435\u0440\u0435\u0447\u0438\u0442\u044B\u0432\u0430\u0435\u0442
+ * /app/olcconf \u043F\u0440\u0438 \u043A\u0430\u0436\u0434\u043E\u043C (\u043F\u0435\u0440\u0435)\u043F\u043E\u0434\u043A\u043B\u044E\u0447\u0435\u043D\u0438\u0438, \u0447\u0442\u043E\u0431\u044B \u0432\u0437\u044F\u0442\u044C \u0421\u0412\u0415\u0416\u0423\u042E \u043A\u043E\u043C\u043D\u0430\u0442\u0443/\u043F\u0440\u043E\u0432\u0430\u0439\u0434\u0435\u0440\u0430
+ * (\u0441\u0435\u0440\u0432\u0435\u0440 \u043C\u0435\u043D\u044F\u0435\u0442 \u0438\u0445 \u043F\u0440\u0438 failover Jitsi \u0438 \u043F\u0440\u0438 \u043F\u0435\u0440\u0435\u0441\u043E\u0437\u0434\u0430\u043D\u0438\u0438 \u0437\u0430\u0432\u0438\u0441\u0448\u0438\u0445 \u043A\u043E\u043C\u043D\u0430\u0442).
+ */
+object OlcRtcUri {
+    const val PREFIX = "olcrtc://"
+
+    data class Parsed(
+        val location: LocationConfig,
+        val mimo: String? = null
+    )
+
+    fun parse(line: String): Parsed? {
+        if (!line.startsWith(PREFIX)) return null
+        val payload = line.removePrefix(PREFIX)
+
+        val transportMarker = payload.indexOf('?')
+        val roomMarker = payload.indexOf('@', startIndex = transportMarker + 1)
+        val keyMarker = payload.indexOf('#', startIndex = roomMarker + 1)
+
+        if (transportMarker <= 0 || roomMarker <= transportMarker || keyMarker <= roomMarker) {
+            return null
+        }
+
+        val clientMarker = payload
+            .indexOf('%', startIndex = keyMarker + 1)
+            .takeIf { it >= 0 }
+
+        val mimoMarker = payload
+            .indexOf('$', startIndex = keyMarker + 1)
+            .takeIf { it >= 0 }
+
+        val keyEnd = listOfNotNull(clientMarker, mimoMarker).minOrNull() ?: payload.length
+
+        val provider = payload.substring(0, transportMarker).trim()
+        val transportToken = payload.substring(transportMarker + 1, roomMarker).trim()
+        val (transport, transportOptions) = parseTransportToken(transportToken)
+        val roomId = payload.substring(roomMarker + 1, keyMarker).trim()
+        val key = payload.substring(keyMarker + 1, keyEnd).trim()
+
+        val mimo = mimoMarker
+            ?.let { payload.substring(it + 1) }
+            .orEmpty()
+            .trim()
+
+        val location = LocationConfig(
+            name = mimo.ifBlank { roomId },
+            id = roomId,
+            key = key,
+            bypassProvider = provider,
+            transport = transport,
+            vp8Fps = transportOptions["vp8-fps"]
+                ?: transportOptions["fps"]
+                ?: LocationConfig.DEFAULT_VP8_FPS,
+            vp8Batch = transportOptions["vp8-batch"]
+                ?: transportOptions["batch"]
+                ?: LocationConfig.DEFAULT_VP8_BATCH
+        ).normalized()
+
+        return location
+            .takeIf { it.isComplete() }
+            ?.let { Parsed(it, mimo.takeIf { value -> value.isNotBlank() }) }
+    }
+
+    private fun parseTransportToken(token: String): Pair<String, Map<String, Int>> {
+        val optionsStart = token.indexOf('<')
+        val optionsEnd = token.lastIndexOf('>')
+        if (optionsStart < 0 || optionsEnd <= optionsStart) {
+            return token to emptyMap()
+        }
+
+        val transport = token.substring(0, optionsStart).trim()
+        val options = token.substring(optionsStart + 1, optionsEnd)
+            .split('&')
+            .mapNotNull { part ->
+                val separator = part.indexOf('=')
+                if (separator <= 0) return@mapNotNull null
+                val key = part.substring(0, separator).trim().lowercase()
+                val value = part.substring(separator + 1).trim().toIntOrNull() ?: return@mapNotNull null
+                key to value
+            }
+            .toMap()
+
+        return transport to options
     }
 }
