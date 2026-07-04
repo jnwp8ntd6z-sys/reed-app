@@ -1060,7 +1060,9 @@ class OlcboxVpnService : VpnService() {
             val body = runCatching {
                 val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                     connectTimeout = 5_000
-                    readTimeout = 5_000
+                    // 8с (было 5с): сервер отдаёт конфиг <0.2с, но запас страхует от спайка
+                    // нагрузки — иначе таймаут → откат на возможно-мёртвую комнату из кэша.
+                    readTimeout = 8_000
                     requestMethod = "GET"
                 }
                 try {
