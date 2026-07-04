@@ -89,16 +89,19 @@ jobs:
           if [ -z "$aab" ]; then echo "no AAB produced"; exit 0; fi
           echo "AAB: $aab ($(du -h "$aab" | cut -f1))"
           emit() { echo "AAB_MIRROR_URL=$1"; echo "AAB mirror: $1" >> "$GITHUB_STEP_SUMMARY"; }
-          # bashupload первым — держит крупные файлы (AAB ~110MB, больше лимита tmpfiles)
-          u=$(curl -sS --max-time 300 --upload-file "${aab}" "https://bashupload.com/reed.aab" 2>/dev/null | grep -oE 'https://bashupload.com/[^ ]+' | head -1 || true)
-          if [ -n "$u" ]; then emit "${u}?download=1"; exit 0; fi
+          # litterbox (catbox temp, до 1GB, хранит 72ч) — держит крупный AAB (~106MB) и
+          # отдаёт прямую ссылку. tmpfiles(100MB)/bashupload на этом размере не сработали.
+          u=$(curl -sS --max-time 300 -F "reqtype=fileupload" -F "time=72h" -F "fileToUpload=@${aab}" "https://litterbox.catbox.moe/resources/internals/api.php" 2>/dev/null | grep -oE 'https?://[^ ]+' | head -1 || true)
+          if [ -n "$u" ]; then emit "${u}"; exit 0; fi
           # temp.sh
           u=$(curl -sS --max-time 300 --upload-file "${aab}" "https://temp.sh/reed.aab" 2>/dev/null | grep -oE 'https?://[^ ]+' | head -1 || true)
           if [ -n "$u" ]; then emit "${u}"; exit 0; fi
-          # tmpfiles.org (может отказать по размеру)
-          j=$(curl -sS --max-time 300 -F "file=@${aab}" https://tmpfiles.org/api/v1/upload 2>/dev/null || true)
-          u=$(printf '%s' "$j" | sed -n 's/.*"url":"\([^"]*\)".*/\1/p' | sed 's#\\/#/#g')
-          if [ -n "$u" ]; then emit "${u/tmpfiles.org\//tmpfiles.org/dl/}"; exit 0; fi
+          # gofile.io (отдаёт страницу скачивания, не прямую ссылку — крайний случай)
+          srv=$(curl -sS --max-time 30 "https://api.gofile.io/servers" 2>/dev/null | sed -n 's/.*"name":"\([a-z0-9]*\)".*/\1/p' | head -1)
+          if [ -n "$srv" ]; then
+            u=$(curl -sS --max-time 300 -F "file=@${aab}" "https://$srv.gofile.io/uploadFile" 2>/dev/null | sed -n 's/.*"downloadPage":"\([^"]*\)".*/\1/p')
+            if [ -n "$u" ]; then emit "${u}"; exit 0; fi
+          fi
           echo "all AAB mirrors failed"
       # Fallback delivery: GitHub artifact storage quota is account-wide and is
       # recalculated only every 6-12h, so upload-artifact can hard-fail even
