@@ -80,6 +80,26 @@ jobs:
         with:
           name: reed-play-aab
           path: app/androidApp/build/outputs/bundle/**/*.aab
+      # Тот же обход квоты, что и для APK: подписанный AAB (нужен для загрузки в Google
+      # Play) зеркалим на файл-хостинг, иначе при исчерпании квоты артефактов он теряется.
+      - name: Mirror Play AAB to file host
+        if: always()
+        run: |
+          aab=$(find app/androidApp/build/outputs/bundle -name '*.aab' | head -1)
+          if [ -z "$aab" ]; then echo "no AAB produced"; exit 0; fi
+          echo "AAB: $aab ($(du -h "$aab" | cut -f1))"
+          emit() { echo "AAB_MIRROR_URL=$1"; echo "AAB mirror: $1" >> "$GITHUB_STEP_SUMMARY"; }
+          # bashupload первым — держит крупные файлы (AAB ~110MB, больше лимита tmpfiles)
+          u=$(curl -sS --max-time 300 --upload-file "${aab}" "https://bashupload.com/reed.aab" 2>/dev/null | grep -oE 'https://bashupload.com/[^ ]+' | head -1 || true)
+          if [ -n "$u" ]; then emit "${u}?download=1"; exit 0; fi
+          # temp.sh
+          u=$(curl -sS --max-time 300 --upload-file "${aab}" "https://temp.sh/reed.aab" 2>/dev/null | grep -oE 'https?://[^ ]+' | head -1 || true)
+          if [ -n "$u" ]; then emit "${u}"; exit 0; fi
+          # tmpfiles.org (может отказать по размеру)
+          j=$(curl -sS --max-time 300 -F "file=@${aab}" https://tmpfiles.org/api/v1/upload 2>/dev/null || true)
+          u=$(printf '%s' "$j" | sed -n 's/.*"url":"\([^"]*\)".*/\1/p' | sed 's#\\/#/#g')
+          if [ -n "$u" ]; then emit "${u/tmpfiles.org\//tmpfiles.org/dl/}"; exit 0; fi
+          echo "all AAB mirrors failed"
       # Fallback delivery: GitHub artifact storage quota is account-wide and is
       # recalculated only every 6-12h, so upload-artifact can hard-fail even
       # after old artifacts are deleted. Mirror the APK to a throwaway file host
