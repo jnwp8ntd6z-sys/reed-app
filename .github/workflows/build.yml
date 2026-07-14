@@ -172,7 +172,11 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
-        run: fastlane ios beta
+        run: |
+          mkdir -p "$RUNNER_TEMP/asc"
+          printf '%s' "$ASC_KEY_CONTENT" | base64 --decode > "$RUNNER_TEMP/asc/AuthKey.p8"
+          export ASC_KEY_PATH="$RUNNER_TEMP/asc/AuthKey.p8"
+          fastlane ios beta
       # Fallback delivery (как у Android): artifact-квота аккаунта пересчитывается раз в
       # 6-12ч, поэтому upload-artifact может падать. Заливаем .ipa на файл-хостинг, чтобы
       # ссылка всегда была в логе/summary прогона.
