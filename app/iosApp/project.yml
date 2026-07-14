@@ -18,7 +18,10 @@ settings:
     "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
     ENABLE_USER_SCRIPT_SANDBOXING: false
     KOTLIN_FRAMEWORK_BUILD_TYPE: release
-    CODE_SIGN_STYLE: Automatic
+    # Ручная подпись App Store distribution (сертификат+профили создаёт fastlane cert/sigh
+    # по ASC API-ключу — device-free, без Development-профиля который требует устройств).
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "Apple Distribution"
 
 targets:
   iosApp:
@@ -35,6 +38,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ru.reedapp.app
+        PROVISIONING_PROFILE_SPECIFIER: "Reed AppStore"
         INFOPLIST_FILE: iosApp/Info.plist
         GENERATE_INFOPLIST_FILE: false
         CODE_SIGN_ENTITLEMENTS: iosApp/iosApp.entitlements
@@ -83,6 +87,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ru.reedapp.app.PacketTunnel
+        PROVISIONING_PROFILE_SPECIFIER: "Reed PacketTunnel AppStore"
         INFOPLIST_FILE: PacketTunnel/Info.plist
         GENERATE_INFOPLIST_FILE: false
         CODE_SIGN_ENTITLEMENTS: PacketTunnel/PacketTunnel.entitlements

@@ -1,11 +1,14 @@
 default_platform(:ios)
 
 platform :ios do
-  desc "Собрать подписанный iOS .ipa и залить в TestFlight (подпись через App Store Connect API key)"
+  desc "Собрать подписанный iOS .ipa (App Store) и залить в TestFlight через ASC API key"
   lane :beta do
     key_path = ENV["ASC_KEY_PATH"]
     key_id   = ENV["ASC_KEY_ID"]
     issuer   = ENV["ASC_ISSUER_ID"]
+
+    # Временный keychain для CI (иначе cert/подпись некуда ставить).
+    setup_ci
 
     api_key = app_store_connect_api_key(
       key_id: key_id,
@@ -14,20 +17,39 @@ platform :ios do
       in_house: false,
     )
 
-    # Аутентификация xcodebuild по ASC API-ключу нужна И для archive, И для export,
-    # чтобы -allowProvisioningUpdates мог создать/скачать профили (иначе "No Accounts").
-    auth = "-allowProvisioningUpdates " \
-           "-authenticationKeyPath #{key_path} " \
-           "-authenticationKeyID #{key_id} " \
-           "-authenticationKeyIssuerID #{issuer}"
+    # Distribution-сертификат (App Store) — создаётся/скачивается по API-ключу,
+    # ставится в CI-keychain. Device-free.
+    cert(
+      api_key: api_key,
+    )
+
+    # App Store provisioning-профили для обоих таргетов (без устройств).
+    # Имена ДОЛЖНЫ совпадать с PROVISIONING_PROFILE_SPECIFIER в project.yml.
+    get_provisioning_profile(
+      api_key: api_key,
+      app_identifier: "ru.reedapp.app",
+      provisioning_name: "Reed AppStore",
+      fail_on_name_taken: false,
+    )
+    get_provisioning_profile(
+      api_key: api_key,
+      app_identifier: "ru.reedapp.app.PacketTunnel",
+      provisioning_name: "Reed PacketTunnel AppStore",
+      fail_on_name_taken: false,
+    )
 
     build_app(
       project: "iosApp/iosApp.xcodeproj",
       scheme: "iosApp",
       configuration: "Release",
       export_method: "app-store",
-      xcargs: auth,
-      export_xcargs: auth,
+      export_options: {
+        signingStyle: "manual",
+        provisioningProfiles: {
+          "ru.reedapp.app" => "Reed AppStore",
+          "ru.reedapp.app.PacketTunnel" => "Reed PacketTunnel AppStore",
+        },
+      },
       output_directory: "dist",
       output_name: "Reed.ipa",
       clean: true,
