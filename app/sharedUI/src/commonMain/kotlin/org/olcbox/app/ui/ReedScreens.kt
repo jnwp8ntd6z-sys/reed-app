@@ -22,11 +22,13 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -839,6 +841,50 @@ private fun TogglePlashka(icon: ImageVector, label: String, checked: Boolean, on
     }
 }
 
+// Вкладки списка серверов: Wi-Fi (обычные VLESS) / LTE (olcRTC, обход белых списков).
+private enum class ServerMode { WIFI, LTE }
+
+// Мини-«таблетка» сегментного переключателя над списком серверов. Обе вкладки видны
+// всегда; активная плавно подсвечивается лаймом. Стиль как у тумблера split-routing,
+// но сплюснут-вытянут и без on/off — просто переключает, какой список показать.
+@Composable
+private fun ServerModeToggle(mode: ServerMode, onChange: (ServerMode) -> Unit) {
+    val shape = RoundedCornerShape(50)
+    Row(
+        Modifier.fillMaxWidth().height(38.dp).clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
+            .padding(3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ServerModeSegment("Wi-Fi", Icons.Rounded.Wifi, mode == ServerMode.WIFI,
+            Modifier.weight(1f)) { onChange(ServerMode.WIFI) }
+        ServerModeSegment("LTE", Icons.Rounded.Smartphone, mode == ServerMode.LTE,
+            Modifier.weight(1f)) { onChange(ServerMode.LTE) }
+    }
+}
+
+@Composable
+private fun ServerModeSegment(
+    label: String, icon: ImageVector, selected: Boolean,
+    modifier: Modifier, onClick: () -> Unit,
+) {
+    val bg by animateColorAsState(
+        if (selected) MaterialTheme.colorScheme.primary else Color.Transparent, label = "segBg")
+    val fg by animateColorAsState(
+        if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+        label = "segFg")
+    Row(
+        modifier.fillMaxHeight().clip(RoundedCornerShape(50)).background(bg)
+            .clickable(onClick = onClick),
+        horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(label, color = fg, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Black)
+    }
+}
+
 // Маленькая кликабельная иконка-действие с подписью (для «Обновить» / «Тест»).
 @Composable
 private fun IconAction(icon: ImageVector, label: String, onClick: () -> Unit) {
@@ -1107,6 +1153,8 @@ fun ReedHomeScreen(
     // Индикация кнопки «Обновить»: крутящийся спиннер у серверов → галочка → плавно гаснет.
     var serversRefreshing by remember { mutableStateOf(false) }
     var serversRefreshed by remember { mutableStateOf(false) }
+    // Вкладка списка серверов (Wi-Fi/LTE), переключается тумблером над списком.
+    var serverMode by remember { mutableStateOf(ServerMode.WIFI) }
 
     var data by remember { mutableStateOf<SubscriptionResponse?>(null) }
     // Первая загрузка подписки ещё не завершилась — чтобы не мигать «Подписка не
@@ -1591,7 +1639,20 @@ fun ReedHomeScreen(
                 MutedText("Серверы появятся автоматически после входа. Полное управление подпиской — в Telegram-боте.")
             }
         } else if ((hasSubscription || token == null) && realServers.isNotEmpty()) {
-            realServers.forEach { loc ->
+            val wifiServers = realServers.filter { it.config?.isVless() == true }
+            val lteServers = realServers.filter { it.config?.isVless() != true }
+            // Тумблер показываем только когда есть ОБА типа серверов — иначе он бесполезен.
+            val showModeToggle = wifiServers.isNotEmpty() && lteServers.isNotEmpty()
+            val shownServers = when {
+                !showModeToggle -> realServers
+                serverMode == ServerMode.WIFI -> wifiServers
+                else -> lteServers
+            }
+            if (showModeToggle) {
+                ServerModeToggle(serverMode) { serverMode = it }
+                Spacer(Modifier.height(12.dp))
+            }
+            shownServers.forEach { loc ->
                 ReedServerRow(
                     loc = loc,
                     isSelected = loc.storageId == selectedId,
