@@ -1,0 +1,33 @@
+default_platform(:ios)
+
+platform :ios do
+  desc "Собрать подписанный iOS .ipa и залить в TestFlight (подпись через App Store Connect API key)"
+  lane :beta do
+    api_key = app_store_connect_api_key(
+      key_id: ENV["ASC_KEY_ID"],
+      issuer_id: ENV["ASC_ISSUER_ID"],
+      key_content: ENV["ASC_KEY_CONTENT"],
+      is_key_content_base64: true,
+      in_house: false,
+    )
+
+    build_app(
+      project: "iosApp/iosApp.xcodeproj",
+      scheme: "iosApp",
+      configuration: "Release",
+      export_method: "app-store",
+      # автоматическая подпись: Xcode сам создаёт/скачивает профили под наш team,
+      # авторизуясь по ASC API-ключу (переданному через app_store_connect_api_key).
+      xcargs: "-allowProvisioningUpdates",
+      output_directory: "dist",
+      output_name: "Reed.ipa",
+      clean: true,
+    )
+
+    upload_to_testflight(
+      api_key: api_key,
+      skip_waiting_for_build_processing: true,
+      skip_submission: true,
+    )
+  end
+end

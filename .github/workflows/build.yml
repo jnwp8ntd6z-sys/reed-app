@@ -160,21 +160,19 @@ jobs:
       - name: gomobile init
         working-directory: olcrtc
         run: gomobile init
-      - name: Build unsigned iOS app
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project (app + PacketTunnel extension)
+        working-directory: app/iosApp
+        run: xcodegen generate
+      - name: Build signed IPA + upload to TestFlight
         working-directory: app
-        run: |
-          export OLCRTC_REPO="${GITHUB_WORKSPACE}/olcrtc"
-          xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -sdk iphoneos \
-            -configuration Release -derivedDataPath build/ios-ipa/DerivedData \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
-      - name: Package unsigned IPA
-        working-directory: app
-        run: |
-          app_path="build/ios-ipa/DerivedData/Build/Products/Release-iphoneos/iosApp.app"
-          [ -d "$app_path" ] || { echo "iOS .app not found at $app_path"; exit 1; }
-          rm -rf build/ios-ipa/package dist && mkdir -p build/ios-ipa/package/Payload dist
-          cp -R "$app_path" build/ios-ipa/package/Payload/
-          (cd build/ios-ipa/package && /usr/bin/zip -qry "${GITHUB_WORKSPACE}/app/dist/Reed-${OLCBOX_VERSION}-ios-unsigned.ipa" Payload)
+        env:
+          OLCRTC_REPO: ${{ github.workspace }}/olcrtc
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+        run: fastlane ios beta
       # Fallback delivery (как у Android): artifact-квота аккаунта пересчитывается раз в
       # 6-12ч, поэтому upload-artifact может падать. Заливаем .ipa на файл-хостинг, чтобы
       # ссылка всегда была в логе/summary прогона.

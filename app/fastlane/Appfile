@@ -1,0 +1,2 @@
+app_identifier("ru.reedapp.app")
+# team_id / apple_id берутся из App Store Connect API key (см. Fastfile).
