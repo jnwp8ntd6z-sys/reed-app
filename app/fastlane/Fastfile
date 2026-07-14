@@ -21,6 +21,8 @@ platform :ios do
     # ставится в CI-keychain. Device-free.
     cert(
       api_key: api_key,
+      keychain_path: ENV["KEYCHAIN_PATH"],
+      keychain_password: "",
     )
 
     # App Store provisioning-профили для обоих таргетов (без устройств).
