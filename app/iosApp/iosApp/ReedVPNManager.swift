@@ -13,7 +13,7 @@ import Foundation
     @objc static let shared = ReedVPNManager()
 
     // Заменить на реальный bundle id extension при настройке таргета в Xcode.
-    private let providerBundleID = "org.reedvpn.app.PacketTunnel"
+    private let providerBundleID = "ru.reedapp.app.PacketTunnel"
     private var manager: NETunnelProviderManager?
 
     /// Загружает существующий или создаёт новый VPN-менеджер и сохраняет его
