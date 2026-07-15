@@ -507,7 +507,7 @@ private fun ReedIosOnboardingScreen(
                     },
                     onError = { msg ->
                         showPaste = false
-                        pasteError = "Не удалось распознать ключ. Проверьте и попробуйте снова."
+                        pasteError = msg.ifBlank { "Не удалось распознать ключ. Проверьте и попробуйте снова." }
                     },
                 )
             },
@@ -1788,7 +1788,7 @@ fun ReedHomeScreen(
                 homeViewModel.onImportFullConfig(
                     rawText = reedLocationsUrlFromKey(text) ?: text,
                     onComplete = { locationViewModel.loadLocations { } },
-                    onError = { msg -> loginMsg = "Не удалось распознать ключ. Проверьте и попробуйте снова." },
+                    onError = { msg -> loginMsg = msg.ifBlank { "Не удалось распознать ключ. Проверьте и попробуйте снова." } },
                 )
             },
         )

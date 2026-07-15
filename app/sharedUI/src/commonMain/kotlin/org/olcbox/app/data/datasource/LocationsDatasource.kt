@@ -192,7 +192,19 @@ class LocationsRepositoryImpl(
         val resolved = resolveParsedImport(
             text = text,
             subscriptionProxy = subscriptionProxy
-        ) ?: return false
+        ) ?: run {
+            // Не молчим при провале: если конкретная причина не выставлена ниже по стеку
+            // (напр. неподдерживаемый транспорт), даём внятное сообщение — по ссылке или ключу.
+            if (lastImportError == null) {
+                lastImportError = if (text.normalizedImportText().isHttpUrl()) {
+                    "Не удалось загрузить подписку по ссылке. Проверьте ссылку и соединение " +
+                        "(на мобильной сети сайт подписки может быть недоступен без VPN)."
+                } else {
+                    "Ключ подписки не распознан. Проверьте, что вставлен полный ключ или ссылка."
+                }
+            }
+            return false
+        }
 
         mutationMutex.withLock {
             val merged = mergeImportedBundle(
