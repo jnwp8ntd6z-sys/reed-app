@@ -170,11 +170,11 @@ class IosVpnManager(
     private suspend fun startTransport(requestedGeneration: Long, isRestart: Boolean) {
         setStatus(if (isRestart) VpnStatus.Reconnecting else VpnStatus.Connecting)
 
-        // Extension пишет пошаговый лог в App Group; качаем его в логи приложения ~35с,
-        // чтобы видеть, что делает системный туннель (иначе внутренности extension не видны).
+        // Extension пишет пошаговый лог в App Group; качаем его в логи приложения ~42с,
+        // чтобы видеть весь подъём системного туннеля (олсRTC-хендшейк ~20с, окно .connected 38с).
         extLogLen = 0
         scope.launch {
-            repeat(35) {
+            repeat(42) {
                 pumpExtensionLog()
                 kotlinx.coroutines.delay(1000)
             }

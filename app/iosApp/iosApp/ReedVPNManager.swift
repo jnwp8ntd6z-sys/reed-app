@@ -55,7 +55,9 @@ import Foundation
                 mgr.loadFromPreferences { _ in
                     do {
                         try mgr.connection.startVPNTunnel()
-                        completion(true)
+                        // VLESS поднимается быстро, но всё равно рапортуем успех только когда
+                        // туннель реально встал (.connected), а не сразу после startVPNTunnel.
+                        self.awaitConnected(mgr.connection, timeout: 20, completion: completion)
                     } catch {
                         completion(false)
                     }
@@ -91,12 +93,53 @@ import Foundation
                 mgr.loadFromPreferences { _ in
                     do {
                         try mgr.connection.startVPNTunnel()
-                        completion(true)
+                        // LTE: extension поднимает olcRTC (WebRTC-хендшейк) + sing-box на TUN —
+                        // это ~20с. completionHandler extension (→ статус .connected) срабатывает
+                        // ТОЛЬКО когда туннель реально встал. Рапортуем успех именно тогда, чтобы
+                        // приложение держало «Подключаюсь…» весь подъём, а не «подключено» сразу.
+                        self.awaitConnected(mgr.connection, timeout: 38, completion: completion)
                     } catch {
                         completion(false)
                     }
                 }
             }
+        }
+    }
+
+    /// Ждёт реального подъёма системного туннеля: рапортует success только когда
+    /// `connection.status == .connected` (extension вызвал completionHandler(nil)). Провал —
+    /// когда после фазы .connecting туннель свалился в .disconnected/.invalid, либо по таймауту.
+    /// Наблюдатель и таймер живут на главной очереди; completion зовётся ровно один раз.
+    private func awaitConnected(_ connection: NEVPNConnection,
+                                timeout: TimeInterval,
+                                completion: @escaping (Bool) -> Void) {
+        DispatchQueue.main.async {
+            var finished = false
+            var sawActive = false
+            var token: NSObjectProtocol?
+            let finish: (Bool) -> Void = { ok in
+                if finished { return }
+                finished = true
+                if let t = token { NotificationCenter.default.removeObserver(t) }
+                completion(ok)
+            }
+            if connection.status == .connected { finish(true); return }
+            token = NotificationCenter.default.addObserver(
+                forName: .NEVPNStatusDidChange, object: connection, queue: .main) { _ in
+                switch connection.status {
+                case .connecting, .reasserting:
+                    sawActive = true
+                case .connected:
+                    finish(true)
+                case .disconnected, .invalid:
+                    // Ранний .disconnected до старта — не провал; провал только если туннель
+                    // уже пытался подняться (.connecting) и упал.
+                    if sawActive { finish(false) }
+                default:
+                    break
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { finish(false) }
         }
     }
 

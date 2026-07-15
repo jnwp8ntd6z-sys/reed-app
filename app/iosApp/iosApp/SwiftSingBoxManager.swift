@@ -122,8 +122,9 @@ final class SwiftSingBoxManager: NSObject, @unchecked Sendable, IosSingBoxBridge
             ok = success
             sem.signal()
         }
-        // Подъём olcRTC внутри extension дольше VLESS (WebRTC-хендшейк) — ждём с запасом.
-        _ = sem.wait(timeout: .now() + 35)
+        // Подъём olcRTC внутри extension дольше VLESS (WebRTC-хендшейк) — ждём с запасом,
+        // строго больше окна ожидания .connected в ReedVPNManager.startOlc (38с).
+        _ = sem.wait(timeout: .now() + 42)
         return IosBridgeResult(
             success: ok,
             message: ok ? nil : "Не удалось запустить системный туннель LTE"

@@ -1571,12 +1571,26 @@ fun ReedHomeScreen(
         }
 
         val canToggle = state.isVpnConnected || state.isVpnLoading || state.canStartVpn
+        // LTE (olcRTC) поднимается через WebRTC-хендшейк дольше обычного VLESS (~20с). Пока
+        // системный туннель реально не встал (isVpnLoading), предупреждаем, чтобы ожидание
+        // не выглядело зависанием. VLESS-серверы поднимаются быстро — для них подсказки нет.
+        val selectedIsLte = state.selectedLocation?.config?.isVless() == false
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             ReedConnectButton(
                 isConnected = state.isVpnConnected,
                 isLoading = state.isVpnLoading,
                 sessionSeconds = sessionSeconds,
                 onClick = { if (canToggle) onToggleClick() },
+            )
+        }
+        if (state.isVpnLoading && selectedIsLte) {
+            Spacer(Modifier.height(14.dp))
+            Text(
+                "Наши LTE-серверы поднимаются чуть дольше обычных — подождите ~20 секунд",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 28.dp),
             )
         }
         Spacer(Modifier.height(28.dp))
