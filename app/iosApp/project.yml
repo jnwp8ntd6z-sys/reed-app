@@ -18,10 +18,11 @@ settings:
     "EXCLUDED_ARCHS[sdk=iphonesimulator*]": x86_64
     ENABLE_USER_SCRIPT_SANDBOXING: false
     KOTLIN_FRAMEWORK_BUILD_TYPE: release
-    # Ручная подпись App Store distribution (сертификат+профили создаёт fastlane cert/sigh
+    # Ручная подпись App Store distribution (сертификат+профили — fastlane match
     # по ASC API-ключу — device-free, без Development-профиля который требует устройств).
     CODE_SIGN_STYLE: Manual
     CODE_SIGN_IDENTITY: "Apple Distribution"
+    "CODE_SIGN_IDENTITY[sdk=iphoneos*]": "Apple Distribution"
 
 targets:
   iosApp:
