@@ -8,7 +8,7 @@ import Foundation
 /// Заменяет in-app `SwiftSingBoxManager` для VLESS: вместо локального SOCKS в процессе
 /// приложения теперь настоящий системный туннель через extension.
 /// providerBundleID должен совпадать с bundle id таргета PacketTunnel.
-@objc final class ReedVPNManager: NSObject {
+@objc final class ReedVPNManager: NSObject, @unchecked Sendable {
 
     @objc static let shared = ReedVPNManager()
 
