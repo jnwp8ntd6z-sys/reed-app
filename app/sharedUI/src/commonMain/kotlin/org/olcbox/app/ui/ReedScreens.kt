@@ -20,12 +20,16 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.offset
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -845,22 +849,42 @@ private fun TogglePlashka(icon: ImageVector, label: String, checked: Boolean, on
 private enum class ServerMode { WIFI, LTE }
 
 // Мини-«таблетка» сегментного переключателя над списком серверов. Обе вкладки видны
-// всегда; активная плавно подсвечивается лаймом. Стиль как у тумблера split-routing,
-// но сплюснут-вытянут и без on/off — просто переключает, какой список показать.
+// всегда; лаймовая подложка ПЛАВНО ПЕРЕКАТЫВАЕТСЯ из одного края в другой при
+// переключении (единый индикатор едет по offset с пружиной), а не перепрыгивает.
 @Composable
 private fun ServerModeToggle(mode: ServerMode, onChange: (ServerMode) -> Unit) {
     val shape = RoundedCornerShape(50)
-    Row(
+    // 0 → Wi-Fi (левый край), 1 → LTE (правый). Пружина даёт «перекат» с лёгким доводом.
+    val slide by animateFloatAsState(
+        targetValue = if (mode == ServerMode.WIFI) 0f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioLowBouncy,
+            stiffness = Spring.StiffnessMediumLow,
+        ),
+        label = "segSlide",
+    )
+    BoxWithConstraints(
         Modifier.fillMaxWidth().height(38.dp).clip(shape)
             .background(MaterialTheme.colorScheme.surfaceContainer)
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
             .padding(3.dp),
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        ServerModeSegment("Wi-Fi", Icons.Rounded.Wifi, mode == ServerMode.WIFI,
-            Modifier.weight(1f)) { onChange(ServerMode.WIFI) }
-        ServerModeSegment("LTE", Icons.Rounded.Smartphone, mode == ServerMode.LTE,
-            Modifier.weight(1f)) { onChange(ServerMode.LTE) }
+        val segWidth = maxWidth / 2
+        // Едущая лаймовая подложка под активным сегментом.
+        Box(
+            Modifier
+                .offset(x = segWidth * slide)
+                .width(segWidth)
+                .fillMaxHeight()
+                .clip(shape)
+                .background(MaterialTheme.colorScheme.primary),
+        )
+        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+            ServerModeSegment("Wi-Fi", Icons.Rounded.Wifi, mode == ServerMode.WIFI,
+                Modifier.weight(1f)) { onChange(ServerMode.WIFI) }
+            ServerModeSegment("LTE", Icons.Rounded.Smartphone, mode == ServerMode.LTE,
+                Modifier.weight(1f)) { onChange(ServerMode.LTE) }
+        }
     }
 }
 
@@ -869,13 +893,13 @@ private fun ServerModeSegment(
     label: String, icon: ImageVector, selected: Boolean,
     modifier: Modifier, onClick: () -> Unit,
 ) {
-    val bg by animateColorAsState(
-        if (selected) MaterialTheme.colorScheme.primary else Color.Transparent, label = "segBg")
+    // Подложку рисует едущий индикатор в ServerModeToggle — сегмент лишь меняет цвет
+    // текста/иконки (тоже плавно) и ловит клик.
     val fg by animateColorAsState(
         if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
         label = "segFg")
     Row(
-        modifier.fillMaxHeight().clip(RoundedCornerShape(50)).background(bg)
+        modifier.fillMaxHeight().clip(RoundedCornerShape(50))
             .clickable(onClick = onClick),
         horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
     ) {
