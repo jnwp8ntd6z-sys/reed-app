@@ -17,27 +17,16 @@ platform :ios do
       in_house: false,
     )
 
-    # Distribution-сертификат (App Store) — создаётся/скачивается по API-ключу,
-    # ставится в CI-keychain. Device-free.
-    cert(
+    # Подпись через match: сертификат+ключ+профили лежат в приватном git-репо
+    # (reed-ios-certs) и переиспользуются каждым прогоном — cert/sigh на
+    # эфемерном раннере теряли приватный ключ после каждой сборки.
+    match(
       api_key: api_key,
-      keychain_path: ENV["KEYCHAIN_PATH"],
-      keychain_password: "",
-    )
-
-    # App Store provisioning-профили для обоих таргетов (без устройств).
-    # Имена ДОЛЖНЫ совпадать с PROVISIONING_PROFILE_SPECIFIER в project.yml.
-    get_provisioning_profile(
-      api_key: api_key,
-      app_identifier: "ru.reedapp.app",
-      provisioning_name: "Reed AppStore",
-      fail_on_name_taken: false,
-    )
-    get_provisioning_profile(
-      api_key: api_key,
-      app_identifier: "ru.reedapp.app.PacketTunnel",
-      provisioning_name: "Reed PacketTunnel AppStore",
-      fail_on_name_taken: false,
+      type: "appstore",
+      app_identifier: ["ru.reedapp.app", "ru.reedapp.app.PacketTunnel"],
+      git_url: "https://github.com/vikkioleynik09-code/reed-ios-certs.git",
+      git_basic_authorization: ENV["MATCH_GIT_BASIC_AUTHORIZATION"],
+      readonly: false,
     )
 
     build_app(
@@ -48,8 +37,8 @@ platform :ios do
       export_options: {
         signingStyle: "manual",
         provisioningProfiles: {
-          "ru.reedapp.app" => "Reed AppStore",
-          "ru.reedapp.app.PacketTunnel" => "Reed PacketTunnel AppStore",
+          "ru.reedapp.app" => "match AppStore ru.reedapp.app",
+          "ru.reedapp.app.PacketTunnel" => "match AppStore ru.reedapp.app.PacketTunnel",
         },
       },
       output_directory: "dist",
