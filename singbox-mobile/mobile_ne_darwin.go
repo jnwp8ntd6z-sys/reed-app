@@ -165,7 +165,7 @@ func (m *neInterfaceMonitor) UnregisterCallback(element *list.Element[tun.Defaul
 }
 
 func (m *neInterfaceMonitor) RegisterMyInterface(interfaceName string) {}
-func (m *neInterfaceMonitor) MyInterface() string                      { return "" }
+func (m *neInterfaceMonitor) MyInterfaces() []string                   { return nil }
 
 // getTunnelName — имя utun-интерфейса по его fd (как в libbox/tun_name_darwin.go).
 func getTunnelName(fd int32) (string, error) {
