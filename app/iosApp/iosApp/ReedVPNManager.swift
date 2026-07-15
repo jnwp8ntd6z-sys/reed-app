@@ -109,38 +109,12 @@ import Foundation
     /// Ждёт реального подъёма системного туннеля: рапортует success только когда
     /// `connection.status == .connected` (extension вызвал completionHandler(nil)). Провал —
     /// когда после фазы .connecting туннель свалился в .disconnected/.invalid, либо по таймауту.
-    /// Наблюдатель и таймер живут на главной очереди; completion зовётся ровно один раз.
+    /// Логика вынесена в ConnectWaiter (@unchecked Sendable), чтобы non-Sendable connection/
+    /// completion не «пересылались» напрямую в @Sendable-замыкания (strict concurrency).
     private func awaitConnected(_ connection: NEVPNConnection,
                                 timeout: TimeInterval,
                                 completion: @escaping (Bool) -> Void) {
-        DispatchQueue.main.async {
-            var finished = false
-            var sawActive = false
-            var token: NSObjectProtocol?
-            let finish: (Bool) -> Void = { ok in
-                if finished { return }
-                finished = true
-                if let t = token { NotificationCenter.default.removeObserver(t) }
-                completion(ok)
-            }
-            if connection.status == .connected { finish(true); return }
-            token = NotificationCenter.default.addObserver(
-                forName: .NEVPNStatusDidChange, object: connection, queue: .main) { _ in
-                switch connection.status {
-                case .connecting, .reasserting:
-                    sawActive = true
-                case .connected:
-                    finish(true)
-                case .disconnected, .invalid:
-                    // Ранний .disconnected до старта — не провал; провал только если туннель
-                    // уже пытался подняться (.connecting) и упал.
-                    if sawActive { finish(false) }
-                default:
-                    break
-                }
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { finish(false) }
-        }
+        ConnectWaiter(connection, completion: completion).start(timeout: timeout)
     }
 
     @objc func stop() {
@@ -152,5 +126,58 @@ import Foundation
 
     @objc func isConnected() -> Bool {
         return manager?.connection.status == .connected
+    }
+}
+
+/// Одноразовый наблюдатель за подъёмом системного туннеля. non-Sendable connection/completion
+/// спрятаны за @unchecked Sendable-классом (доступ сериализован на главной очереди + NSLock),
+/// поэтому в @Sendable-замыкания «пересылается» только Sendable-ссылка на сам объект — без
+/// ошибок strict concurrency. completion зовётся ровно один раз: либо при .connected, либо при
+/// падении в .disconnected/.invalid после фазы .connecting, либо по таймауту. Держит себя живым
+/// сильными self-захватами до срабатывания таймера (он гарантированно наступает и освобождает).
+private final class ConnectWaiter: @unchecked Sendable {
+    private let connection: NEVPNConnection
+    private let completion: (Bool) -> Void
+    private let lock = NSLock()
+    private var finished = false
+    private var sawActive = false
+    private var token: NSObjectProtocol?
+
+    init(_ connection: NEVPNConnection, completion: @escaping (Bool) -> Void) {
+        self.connection = connection
+        self.completion = completion
+    }
+
+    func start(timeout: TimeInterval) {
+        DispatchQueue.main.async {
+            if self.connection.status == .connected { self.finish(true); return }
+            self.token = NotificationCenter.default.addObserver(
+                forName: .NEVPNStatusDidChange, object: self.connection, queue: .main) { _ in
+                switch self.connection.status {
+                case .connecting, .reasserting:
+                    self.sawActive = true
+                case .connected:
+                    self.finish(true)
+                case .disconnected, .invalid:
+                    // Ранний .disconnected до старта — не провал; провал только если туннель
+                    // уже пытался подняться (.connecting) и упал.
+                    if self.sawActive { self.finish(false) }
+                default:
+                    break
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + timeout) { self.finish(false) }
+        }
+    }
+
+    private func finish(_ ok: Bool) {
+        lock.lock()
+        if finished { lock.unlock(); return }
+        finished = true
+        let t = token
+        token = nil
+        lock.unlock()
+        if let t = t { NotificationCenter.default.removeObserver(t) }
+        completion(ok)
     }
 }
