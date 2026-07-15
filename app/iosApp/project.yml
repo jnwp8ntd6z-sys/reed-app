@@ -108,6 +108,9 @@ targets:
           - "$(inherited)"
           - "-framework"
           - "OlcRtcMobile"
+          # go-рантайм gomobile тянет res_9_* из libresolv; app-таргет получает их
+          # через SharedUI, extension линкует OlcRtcMobile напрямую.
+          - "-lresolv"
         "FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]":
           - "$(inherited)"
           - "$(SRCROOT)/../sharedUI/build/generated/olcrtc/ios/OlcRtcMobile.xcframework/ios-arm64"
