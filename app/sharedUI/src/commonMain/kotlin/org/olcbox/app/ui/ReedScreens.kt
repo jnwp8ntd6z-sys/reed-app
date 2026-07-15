@@ -2470,7 +2470,6 @@ fun ReedSupportScreen() {
 // ── Личный кабинет ───────────────────────────────────────────────────────────
 @Composable
 fun ReedAccountScreen(locationViewModel: LocationViewModel, onLogout: () -> Unit = {}) {
-    val uri = LocalUriHandler.current
     val scope = rememberCoroutineScope()
     var token by remember { mutableStateOf(ReedSession.token) }
     var showCodeLogin by remember { mutableStateOf(false) }
@@ -2577,18 +2576,6 @@ fun ReedAccountScreen(locationViewModel: LocationViewModel, onLogout: () -> Unit
             }
         }
         Spacer(Modifier.height(14.dp))
-
-        // Управление подпиской — только в Telegram-боте. В Play-сборке переход к боту
-        // скрыт (Google запрещает вести из приложения на внешнюю оплату).
-        if (ReedBuildFlags.showBotLinks) {
-            ReedCard {
-                Text("Полное управление подпиской осуществляется в Telegram-Боте.",
-                    style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(14.dp))
-                ReedPrimaryButton("Telegram бот") { uri.openUri(BOT_URL) }
-            }
-            Spacer(Modifier.height(14.dp))
-        }
 
         // Реферальная программа
         ExpandablePlashka(Icons.Rounded.CardGiftcard, "Реферальная программа") {
