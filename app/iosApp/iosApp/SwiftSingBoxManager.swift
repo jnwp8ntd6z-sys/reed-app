@@ -83,6 +83,14 @@ final class SwiftSingBoxManager: NSObject, @unchecked Sendable, IosSingBoxBridge
         ReedVPNManager.shared.stop()
     }
 
+    // Диагностика: читаем пошаговый лог extension из общего контейнера App Group.
+    func readExtensionLog() -> String? {
+        guard let dir = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: "group.ru.reedapp.app") else { return nil }
+        let url = dir.appendingPathComponent("extension.log")
+        return try? String(contentsOf: url, encoding: .utf8)
+    }
+
     func isSystemTunnelConnected() -> Bool {
         ReedVPNManager.shared.isConnected()
     }

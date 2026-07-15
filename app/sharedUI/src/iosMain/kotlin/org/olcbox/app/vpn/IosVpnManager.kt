@@ -156,8 +156,29 @@ class IosVpnManager(
         scope.cancel()
     }
 
+    // Диагностика: сколько символов лога extension уже показано (App Group-файл растёт).
+    private var extLogLen = 0
+
+    private fun pumpExtensionLog() {
+        val content = singBoxBridge.readExtensionLog() ?: return
+        if (content.length <= extLogLen) return
+        val fresh = content.substring(extLogLen)
+        extLogLen = content.length
+        fresh.split("\n").forEach { if (it.isNotBlank()) addLog("ext: ${it.trim()}") }
+    }
+
     private suspend fun startTransport(requestedGeneration: Long, isRestart: Boolean) {
         setStatus(if (isRestart) VpnStatus.Reconnecting else VpnStatus.Connecting)
+
+        // Extension пишет пошаговый лог в App Group; качаем его в логи приложения ~35с,
+        // чтобы видеть, что делает системный туннель (иначе внутренности extension не видны).
+        extLogLen = 0
+        scope.launch {
+            repeat(35) {
+                pumpExtensionLog()
+                kotlinx.coroutines.delay(1000)
+            }
+        }
 
         val active = locationsRepository.getActiveLocation()
         val location = active?.location?.normalized()

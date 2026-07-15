@@ -98,6 +98,10 @@ interface IosSingBoxBridge {
         vp8Fps: Int,
         vp8BatchSize: Int
     ): IosBridgeResult
+
+    /** Диагностика: полный текст пошагового лога extension (App Group-файл), чтобы показать
+     * его в логах приложения — extension это отдельный процесс, его os_log приложению не виден. */
+    fun readExtensionLog(): String?
 }
 
 interface IosPlatformBridge {
