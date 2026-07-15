@@ -64,6 +64,42 @@ import Foundation
         }
     }
 
+    /// Запуск системного туннеля для LTE (olcRTC внутри extension). Параметры движка передаём
+    /// в providerConfiguration с mode=olc — PacketTunnelProvider поднимет olcRTC + sing-box tun→socks.
+    @objc func startOlc(carrier: String, transport: String, room: String, clientId: String,
+                        keyHex: String, split: Bool, vp8Fps: Int, vp8Batch: Int,
+                        completion: @escaping (Bool) -> Void) {
+        loadOrCreate { mgr in
+            guard let mgr = mgr,
+                  let proto = mgr.protocolConfiguration as? NETunnelProviderProtocol else {
+                completion(false); return
+            }
+            proto.providerConfiguration = [
+                "mode": "olc",
+                "carrier": carrier,
+                "transport": transport,
+                "room": room,
+                "clientId": clientId,
+                "keyHex": keyHex,
+                "split": split,
+                "vp8Fps": vp8Fps,
+                "vp8Batch": vp8Batch,
+                "olcPort": 10861,
+            ]
+            mgr.protocolConfiguration = proto
+            mgr.saveToPreferences { _ in
+                mgr.loadFromPreferences { _ in
+                    do {
+                        try mgr.connection.startVPNTunnel()
+                        completion(true)
+                    } catch {
+                        completion(false)
+                    }
+                }
+            }
+        }
+    }
+
     @objc func stop() {
         (manager ?? nil)?.connection.stopVPNTunnel()
         NETunnelProviderManager.loadAllFromPreferences { managers, _ in

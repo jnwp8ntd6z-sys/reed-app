@@ -80,6 +80,24 @@ interface IosSingBoxBridge {
     fun startSystemTunnel(token: String, server: String, split: Boolean): IosBridgeResult
     fun stopSystemTunnel()
     fun isSystemTunnelConnected(): Boolean
+
+    /**
+     * СИСТЕМНЫЙ туннель для LTE (olcRTC). В отличие от startSystemTunnel (VLESS): расширение
+     * поднимает движок olcRTC на 127.0.0.1:<olcPort> и прогоняет весь трафик через него —
+     * tun → sing-box (split РФ, конфиг /app/olcsingbox?inbound=tun) → socks(olcRTC) → WebRTC.
+     * Даёт значок VPN и реальный захват трафика на сотовой (раньше olcRTC жил как in-app SOCKS
+     * без туннеля). Параметры движка (carrier/transport/room/key/vp8) те же, что у [IosOlcRtcBridge].
+     */
+    fun startSystemTunnelOlc(
+        carrier: String,
+        transport: String,
+        roomId: String,
+        clientId: String,
+        keyHex: String,
+        split: Boolean,
+        vp8Fps: Int,
+        vp8BatchSize: Int
+    ): IosBridgeResult
 }
 
 interface IosPlatformBridge {

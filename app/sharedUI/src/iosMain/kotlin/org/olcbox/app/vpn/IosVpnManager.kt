@@ -173,20 +173,35 @@ class IosVpnManager(
         val result = if (location.isVless()) {
             startVless(location, socksSettings.port)
         } else {
-            val deviceId = locationsRepository.getDeviceIdentity()
-            val request = location.startRequest(deviceId, socksSettings)
+            // LTE (olcRTC) — СИСТЕМНЫЙ туннель (значок VPN + захват всего трафика), а не in-app
+            // SOCKS. Расширение поднимает olcRTC-движок и прогоняет tun→sing-box(split)→socks(olcRTC).
+            val config = location.normalized()
+            val split = org.olcbox.app.data.reed.ReedSession.splitRouting
             addLog(
-                "Starting iOS SOCKS provider=${location.bypassProvider}, " +
-                    "transport=${location.transport}, room=${location.id}, port=${socksSettings.port}"
+                "Starting iOS LTE system tunnel provider=${config.bypassProvider}, " +
+                    "transport=${config.transport}, room=${config.id}, split=$split"
             )
-            withContext(Dispatchers.Default) { olcRtcBridge.start(request) }
+            val r = withContext(Dispatchers.Default) {
+                singBoxBridge.startSystemTunnelOlc(
+                    carrier = config.bypassProvider,
+                    transport = config.transport,
+                    roomId = config.id,
+                    clientId = locationsRepository.getDeviceIdentity(),
+                    keyHex = config.key,
+                    split = split,
+                    vp8Fps = config.vp8Fps,
+                    vp8BatchSize = config.vp8Batch
+                )
+            }
+            if (r.success) systemTunnelActive = true
+            r
         }
 
         if (requestedGeneration != generation) return
 
         if (result.success) {
             setStatus(VpnStatus.Connected)
-            addLog("iOS SOCKS ready on 127.0.0.1:${socksSettings.port}")
+            addLog(if (systemTunnelActive) "iOS системный туннель поднят" else "iOS SOCKS ready on 127.0.0.1:${socksSettings.port}")
         } else {
             val message = result.message ?: "transport start failed"
             setStatus(VpnStatus.Error(message))

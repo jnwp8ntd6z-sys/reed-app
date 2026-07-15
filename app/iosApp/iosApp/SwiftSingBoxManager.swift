@@ -87,6 +87,41 @@ final class SwiftSingBoxManager: NSObject, @unchecked Sendable, IosSingBoxBridge
         ReedVPNManager.shared.isConnected()
     }
 
+    // Системный туннель для LTE (olcRTC внутри extension). Расширение само поднимает движок
+    // olcRTC и прогоняет через него весь трафик TUN (см. PacketTunnelProvider mode=olc).
+    func startSystemTunnelOlc(
+        carrier: String,
+        transport: String,
+        roomId: String,
+        clientId: String,
+        keyHex: String,
+        split: Bool,
+        vp8Fps: Int32,
+        vp8BatchSize: Int32
+    ) -> IosBridgeResult {
+        let sem = DispatchSemaphore(value: 0)
+        var ok = false
+        ReedVPNManager.shared.startOlc(
+            carrier: carrier,
+            transport: transport,
+            room: roomId,
+            clientId: clientId,
+            keyHex: keyHex,
+            split: split,
+            vp8Fps: Int(vp8Fps),
+            vp8Batch: Int(vp8BatchSize)
+        ) { success in
+            ok = success
+            sem.signal()
+        }
+        // Подъём olcRTC внутри extension дольше VLESS (WebRTC-хендшейк) — ждём с запасом.
+        _ = sem.wait(timeout: .now() + 35)
+        return IosBridgeResult(
+            success: ok,
+            message: ok ? nil : "Не удалось запустить системный туннель LTE"
+        )
+    }
+
     private func beginBackgroundTaskIfNeeded() {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }

@@ -1,63 +1,49 @@
 import NetworkExtension
 import Foundation
-import OlcRtcMobile   // Singboxmobile* / libbox функции (тот же combined XCFramework)
+import OlcRtcMobile   // Singboxmobile* (sing-box/libbox) + Mobile* (olcRTC) — один combined XCFramework
 
 /// Packet Tunnel Provider — системный VPN Reed на iOS.
 /// Запускается системой при старте VPN. Создаёт TUN, передаёт его sing-box (libbox),
-/// sing-box маршрутизирует трафик по конфигу (split-routing РФ уже в конфиге сервера).
+/// sing-box маршрутизирует трафик по конфигу.
 ///
-/// ВАЖНО (см. docs/IOS_NETWORK_EXTENSION.md):
-///  - параметры (token/server/split) приходят из приложения через providerConfiguration
-///    (NETunnelProviderProtocol) либо через App Group;
-///  - запуск sing-box с TUN требует доработки gomobile-обёртки (StartWithTun / libbox
-///    PlatformInterface). Места отмечены TODO.
+/// Два режима (providerConfiguration["mode"]):
+///  - "vless" (по умолчанию): наш VLESS по токену. Конфиг /app/singbox?inbound=tun.
+///  - "olc": LTE. Внутри extension поднимаем движок olcRTC (127.0.0.1:olcPort), затем
+///    sing-box tun→socks(olcRTC) со split-РФ (/app/olcsingbox?inbound=tun). Так весь трафик
+///    системы идёт через WebRTC-туннель и в статус-баре появляется значок VPN.
 final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private let apiBase = "https://reedapp.ru"
 
+    // olcRTC внутри extension активен → на stop надо остановить и его.
+    private var olcActive = false
+    // Локальный SOCKS движка olcRTC поднимаем С авторизацией (как на Android): 127.0.0.1 доступен
+    // другим приложениям устройства, auth не даёт им бесплатно тоннелить через наш LTE. Те же
+    // креды инъектим в socks-outbound конфига sing-box (injectOlcAuth).
+    private let olcSocksUser = "reedlte"
+    private let olcSocksPass = "reedlte-9f3a1c7b"
+
     override func startTunnel(options: [String: NSObject]?,
                               completionHandler: @escaping (Error?) -> Void) {
-        // 1. Параметры из providerConfiguration.
         let proto = (protocolConfiguration as? NETunnelProviderProtocol)
         let conf = proto?.providerConfiguration ?? [:]
-        let token = (conf["token"] as? String) ?? ""
-        let server = (conf["server"] as? String) ?? ""
-        let split = (conf["split"] as? Bool) ?? true
-        guard !token.isEmpty else {
-            completionHandler(NSError(domain: "ReedVPN", code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "no token"]))
-            return
-        }
+        let mode = (conf["mode"] as? String) ?? "vless"
 
-        // 2. Сетевые настройки TUN.
+        // Сетевые настройки TUN (общие для обоих режимов).
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
         let ipv4 = NEIPv4Settings(addresses: ["172.19.0.1"], subnetMasks: ["255.255.255.0"])
         ipv4.includedRoutes = [NEIPv4Route.default()]   // весь трафик в TUN; split делает sing-box
         settings.ipv4Settings = ipv4
-        let dns = NEDNSSettings(servers: ["8.8.8.8", "1.1.1.1"])
-        settings.dnsSettings = dns
+        settings.dnsSettings = NEDNSSettings(servers: ["8.8.8.8", "1.1.1.1"])
         settings.mtu = 9000
 
         setTunnelNetworkSettings(settings) { [weak self] error in
             if let error = error { completionHandler(error); return }
             guard let self = self else { return }
-            // 3. Скачиваем sing-box конфиг (tun-inbound) и запускаем ядро на TUN этого extension.
-            self.fetchConfig(token: token, server: server, split: split) { configJson in
-                guard let configJson = configJson else {
-                    completionHandler(NSError(domain: "ReedVPN", code: 2,
-                        userInfo: [NSLocalizedDescriptionKey: "config fetch failed"]))
-                    return
-                }
-                let fd = self.tunnelFileDescriptor()
-                guard fd >= 0 else {
-                    completionHandler(NSError(domain: "ReedVPN", code: 3,
-                        userInfo: [NSLocalizedDescriptionKey: "tun fd not found"]))
-                    return
-                }
-                // sing-box сам владеет TUN (fd этого extension) и маршрутизирует по конфигу.
-                var nsErr: NSError?
-                let ok = SingboxmobileStartTun(configJson, fd, &nsErr)
-                completionHandler(ok ? nil : nsErr)
+            if mode == "olc" {
+                self.startOlcTunnel(conf: conf, completionHandler: completionHandler)
+            } else {
+                self.startVlessTunnel(conf: conf, completionHandler: completionHandler)
             }
         }
     }
@@ -66,12 +52,129 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                              completionHandler: @escaping () -> Void) {
         var err: NSError?
         SingboxmobileStop(&err)
+        if olcActive { MobileStop(); olcActive = false }
         completionHandler()
     }
 
-    /// Дескриптор utun-интерфейса этого extension. NEPacketTunnelProvider не отдаёт его
-    /// публично, поэтому находим перебором открытых fd: только utun-сокеты отвечают на
-    /// getsockopt(SYSPROTO_CONTROL, UTUN_OPT_IFNAME) именем вида "utunN" (приём WireGuard-Apple).
+    // MARK: - VLESS (наш сервер по токену)
+
+    private func startVlessTunnel(conf: [String: Any], completionHandler: @escaping (Error?) -> Void) {
+        let token = (conf["token"] as? String) ?? ""
+        let server = (conf["server"] as? String) ?? ""
+        let split = (conf["split"] as? Bool) ?? true
+        guard !token.isEmpty else {
+            completionHandler(NSError(domain: "ReedVPN", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "no token"]))
+            return
+        }
+        // Скачиваем sing-box конфиг (tun-inbound) и запускаем ядро на TUN этого extension.
+        fetchConfig(token: token, server: server, split: split) { [weak self] configJson in
+            guard let self = self else { return }
+            guard let configJson = configJson else {
+                completionHandler(NSError(domain: "ReedVPN", code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: "config fetch failed"]))
+                return
+            }
+            let fd = self.tunnelFileDescriptor()
+            guard fd >= 0 else {
+                completionHandler(NSError(domain: "ReedVPN", code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: "tun fd not found"]))
+                return
+            }
+            var nsErr: NSError?
+            let ok = SingboxmobileStartTun(configJson, fd, &nsErr)
+            completionHandler(ok ? nil : nsErr)
+        }
+    }
+
+    // MARK: - LTE (olcRTC внутри extension)
+
+    private func startOlcTunnel(conf: [String: Any], completionHandler: @escaping (Error?) -> Void) {
+        let carrier = (conf["carrier"] as? String) ?? ""
+        let transport = (conf["transport"] as? String) ?? "datachannel"
+        let room = (conf["room"] as? String) ?? ""
+        let clientId = (conf["clientId"] as? String) ?? ""
+        let keyHex = (conf["keyHex"] as? String) ?? ""
+        let split = (conf["split"] as? Bool) ?? true
+        let olcPort = (conf["olcPort"] as? Int) ?? 10861
+        let vp8Fps = (conf["vp8Fps"] as? Int) ?? 0
+        let vp8Batch = (conf["vp8Batch"] as? Int) ?? 0
+        guard !room.isEmpty, !keyHex.isEmpty else {
+            completionHandler(NSError(domain: "ReedVPN", code: 4,
+                userInfo: [NSLocalizedDescriptionKey: "no olc room/key"]))
+            return
+        }
+
+        // 1. Движок olcRTC → локальный SOCKS5 (127.0.0.1:olcPort) с авторизацией.
+        MobileSetProviders()
+        MobileSetTransport(transport)
+        MobileSetDNS("1.1.1.1:53")
+        MobileSetVP8Options(vp8Fps, vp8Batch)
+        if MobileIsRunning() { MobileStop() }
+        var err: NSError?
+        let started = MobileStartWithTransport(carrier, transport, room, clientId, keyHex,
+                                               olcPort, olcSocksUser, olcSocksPass, &err)
+        guard started else {
+            completionHandler(err ?? NSError(domain: "ReedVPN", code: 5,
+                userInfo: [NSLocalizedDescriptionKey: "olcRTC start failed"]))
+            return
+        }
+        // Бюджет старта 25с — рукопожатие к Jitsi 5–7с (паритет с приложением и Android).
+        let ready = MobileWaitReady(25_000, &err)
+        guard ready else {
+            MobileStop()
+            completionHandler(err ?? NSError(domain: "ReedVPN", code: 6,
+                userInfo: [NSLocalizedDescriptionKey: "olcRTC start timed out"]))
+            return
+        }
+        olcActive = true
+
+        // 2. sing-box tun→socks(olcRTC) со split-РФ. Инъектим креды в socks-outbound.
+        fetchOlcConfig(olcPort: olcPort, split: split) { [weak self] rawConfig in
+            guard let self = self else { return }
+            guard let raw = rawConfig else {
+                MobileStop(); self.olcActive = false
+                completionHandler(NSError(domain: "ReedVPN", code: 7,
+                    userInfo: [NSLocalizedDescriptionKey: "olc config fetch failed"]))
+                return
+            }
+            let configJson = self.injectOlcAuth(raw, user: self.olcSocksUser, pass: self.olcSocksPass)
+            let fd = self.tunnelFileDescriptor()
+            guard fd >= 0 else {
+                MobileStop(); self.olcActive = false
+                completionHandler(NSError(domain: "ReedVPN", code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: "tun fd not found"]))
+                return
+            }
+            var nsErr: NSError?
+            let ok = SingboxmobileStartTun(configJson, fd, &nsErr)
+            if !ok { MobileStop(); self.olcActive = false }
+            completionHandler(ok ? nil : nsErr)
+        }
+    }
+
+    /// Добавляет username/password в socks-outbound (tag=proxy) конфига olcsingbox —
+    /// движок olcRTC поднят с этими же кредами. Если распарсить не удалось — отдаём как есть.
+    private func injectOlcAuth(_ configJson: String, user: String, pass: String) -> String {
+        guard let data = configJson.data(using: .utf8),
+              var root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              var outbounds = root["outbounds"] as? [[String: Any]] else {
+            return configJson
+        }
+        for i in outbounds.indices {
+            if (outbounds[i]["tag"] as? String) == "proxy" &&
+               (outbounds[i]["type"] as? String) == "socks" {
+                outbounds[i]["username"] = user
+                outbounds[i]["password"] = pass
+            }
+        }
+        root["outbounds"] = outbounds
+        guard let out = try? JSONSerialization.data(withJSONObject: root),
+              let s = String(data: out, encoding: .utf8) else { return configJson }
+        return s
+    }
+
+    /// Дескриптор utun-интерфейса этого extension (getsockopt UTUN_OPT_IFNAME — приём WireGuard-Apple).
     private func tunnelFileDescriptor() -> Int {
         var buf = [CChar](repeating: 0, count: Int(IFNAMSIZ))
         for fd: Int32 in 0..<1024 {
@@ -84,12 +187,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         return -1
     }
 
-    /// Конфиг sing-box: /app/singbox?token=&server=&split=  (inbound=tun — см. серверную доработку).
-    ///
-    /// CACHE-FIRST (как на Android, см. OlcboxVpnService): на «зарезанных» мобильных сетях РФ
-    /// наш API недоступен, поэтому при наличии кэша отдаём его СРАЗУ (свежий тянем в фоне) —
-    /// иначе extension не поднимет туннель там, где он нужнее всего. Сеть блокирующе нужна
-    /// только при ПЕРВОМ подключении к серверу.
+    // MARK: - Конфиги (cache-first: на «зарезанных» сетях РФ наш API недоступен → отдаём кэш сразу)
+
+    /// VLESS: /app/singbox?token=&server=&split=&inbound=tun
     private func fetchConfig(token: String, server: String, split: Bool,
                              completion: @escaping (String?) -> Void) {
         var comps = URLComponents(string: "\(apiBase)/app/singbox")!
@@ -99,9 +199,23 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             URLQueryItem(name: "split", value: split ? "1" : "0"),
             URLQueryItem(name: "inbound", value: "tun"),
         ]
-        let url = comps.url!
-        let cacheURL = configCacheURL(server: server, split: split)
+        cacheFirstGet(url: comps.url!, cacheURL: configCacheURL(server: server, split: split),
+                      completion: completion)
+    }
 
+    /// LTE: /app/olcsingbox?inbound=tun&olc_port=&split=  (split-РФ поверх локального olcRTC).
+    private func fetchOlcConfig(olcPort: Int, split: Bool, completion: @escaping (String?) -> Void) {
+        var comps = URLComponents(string: "\(apiBase)/app/olcsingbox")!
+        comps.queryItems = [
+            URLQueryItem(name: "inbound", value: "tun"),
+            URLQueryItem(name: "olc_port", value: String(olcPort)),
+            URLQueryItem(name: "split", value: split ? "1" : "0"),
+        ]
+        cacheFirstGet(url: comps.url!, cacheURL: olcConfigCacheURL(split: split),
+                      completion: completion)
+    }
+
+    private func cacheFirstGet(url: URL, cacheURL: URL, completion: @escaping (String?) -> Void) {
         func httpGet(_ done: @escaping (String?) -> Void) {
             let task = URLSession.shared.dataTask(with: url) { data, _, _ in
                 guard let data = data, let s = String(data: data, encoding: .utf8), !s.isEmpty else {
@@ -112,23 +226,24 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             task.resume()
         }
-
         if let cached = try? String(contentsOf: cacheURL, encoding: .utf8), !cached.isEmpty {
-            // Есть кэш — отдаём сразу, свежий конфиг обновляем в фоне для следующего раза.
-            httpGet { _ in }
+            httpGet { _ in }          // свежий конфиг обновляем в фоне для следующего раза
             completion(cached)
             return
         }
-        // Кэша ещё нет (первое подключение к серверу) — тянем с сети и сохраняем.
         httpGet(completion)
     }
 
-    /// Файл кэша конфига для (сервер, split) в контейнере extension.
     private func configCacheURL(server: String, split: Bool) -> URL {
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         let safe = String(server.unicodeScalars.map {
             CharacterSet.alphanumerics.contains($0) ? Character($0) : "_"
         })
         return dir.appendingPathComponent("singbox_cache_\(safe)_\(split ? "1" : "0").json")
+    }
+
+    private func olcConfigCacheURL(split: Bool) -> URL {
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        return dir.appendingPathComponent("olcsingbox_tun_\(split ? "1" : "0").json")
     }
 }
