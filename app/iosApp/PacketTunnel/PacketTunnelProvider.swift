@@ -13,7 +13,7 @@ import OlcRtcMobile   // Singboxmobile* / libbox функции (тот же com
 ///    PlatformInterface). Места отмечены TODO.
 final class PacketTunnelProvider: NEPacketTunnelProvider {
 
-    private let apiBase = "https://reed-vpn.duckdns.org"
+    private let apiBase = "https://reedapp.ru"
 
     override func startTunnel(options: [String: NSObject]?,
                               completionHandler: @escaping (Error?) -> Void) {
@@ -41,19 +41,22 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         setTunnelNetworkSettings(settings) { [weak self] error in
             if let error = error { completionHandler(error); return }
             guard let self = self else { return }
-            // 3. Скачиваем sing-box конфиг и запускаем ядро с TUN.
+            // 3. Скачиваем sing-box конфиг (tun-inbound) и запускаем ядро на TUN этого extension.
             self.fetchConfig(token: token, server: server, split: split) { configJson in
                 guard let configJson = configJson else {
                     completionHandler(NSError(domain: "ReedVPN", code: 2,
                         userInfo: [NSLocalizedDescriptionKey: "config fetch failed"]))
                     return
                 }
-                // TODO(binding): запустить sing-box с TUN-дескриптором этого extension.
-                // Вариант A (после доработки обёртки): SingboxmobileStartWithTun(configJson, self.tunFd(), &err)
-                // Вариант B (libbox PlatformInterface): LibboxNewService(configJson, platformInterface)
-                // Пока — заглушка успешного старта (заменить на реальный вызов в Xcode):
+                let fd = self.tunnelFileDescriptor()
+                guard fd >= 0 else {
+                    completionHandler(NSError(domain: "ReedVPN", code: 3,
+                        userInfo: [NSLocalizedDescriptionKey: "tun fd not found"]))
+                    return
+                }
+                // sing-box сам владеет TUN (fd этого extension) и маршрутизирует по конфигу.
                 var nsErr: NSError?
-                let ok = SingboxmobileStart(configJson, &nsErr)   // ВРЕМЕННО (socks); заменить на TUN-вариант
+                let ok = SingboxmobileStartTun(configJson, fd, &nsErr)
                 completionHandler(ok ? nil : nsErr)
             }
         }
@@ -64,6 +67,21 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         var err: NSError?
         SingboxmobileStop(&err)
         completionHandler()
+    }
+
+    /// Дескриптор utun-интерфейса этого extension. NEPacketTunnelProvider не отдаёт его
+    /// публично, поэтому находим перебором открытых fd: только utun-сокеты отвечают на
+    /// getsockopt(SYSPROTO_CONTROL, UTUN_OPT_IFNAME) именем вида "utunN" (приём WireGuard-Apple).
+    private func tunnelFileDescriptor() -> Int {
+        var buf = [CChar](repeating: 0, count: Int(IFNAMSIZ))
+        for fd: Int32 in 0..<1024 {
+            var len = socklen_t(buf.count)
+            let ret = getsockopt(fd, 2 /* SYSPROTO_CONTROL */, 2 /* UTUN_OPT_IFNAME */, &buf, &len)
+            if ret == 0, String(cString: buf).hasPrefix("utun") {
+                return Int(fd)
+            }
+        }
+        return -1
     }
 
     /// Конфиг sing-box: /app/singbox?token=&server=&split=  (inbound=tun — см. серверную доработку).

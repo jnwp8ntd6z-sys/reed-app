@@ -39,6 +39,9 @@ class IosVpnManager(
 
     // Активен ли VLESS (sing-box) вместо olcRTC в текущей сессии.
     private var vlessActive = false
+    // Активен ли СИСТЕМНЫЙ туннель (NEPacketTunnelProvider) — наш VLESS по токену.
+    // Отдельно от vlessActive: у него другой stop/isConnected (не встроенный SOCKS).
+    private var systemTunnelActive = false
     private val httpClient by lazy { HttpClient(Darwin) }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -148,6 +151,7 @@ class IosVpnManager(
         runCatching { olcRtcBridge.stop() }
         runCatching { singBoxBridge.setLogWriter(null) }
         runCatching { singBoxBridge.stop() }
+        if (systemTunnelActive) runCatching { singBoxBridge.stopSystemTunnel() }
         runCatching { httpClient.close() }
         scope.cancel()
     }
@@ -191,13 +195,29 @@ class IosVpnManager(
         }
     }
 
-    /** Запуск VLESS на iOS: качаем sing-box-конфиг и поднимаем ядро на локальном SOCKS5. */
+    /**
+     * Запуск VLESS на iOS.
+     *  - НАШ сервер (token — не URI): СИСТЕМНЫЙ туннель (NEPacketTunnelProvider). Трафик всей
+     *    системы идёт через TUN, extension сам качает /app/singbox?inbound=tun. Настоящий VPN.
+     *  - Чужой ключ (token содержит "://"): пока встроенный локальный SOCKS (как раньше).
+     */
     private suspend fun startVless(
         location: LocationConfig,
         socksPort: Int
     ): IosBridgeResult {
-        addLog("Starting iOS VLESS server=${location.id}, port=$socksPort")
-        val configJson = fetchSingboxConfig(location.key, location.id, socksPort)
+        val token = location.key
+        val server = location.id
+        if (!token.contains("://")) {
+            val split = org.olcbox.app.data.reed.ReedSession.splitRouting
+            addLog("Starting iOS VLESS system tunnel server=$server, split=$split")
+            val result = withContext(Dispatchers.Default) {
+                singBoxBridge.startSystemTunnel(token, server, split)
+            }
+            if (result.success) systemTunnelActive = true
+            return result
+        }
+        addLog("Starting iOS VLESS (imported key) server=$server, port=$socksPort")
+        val configJson = fetchSingboxConfig(token, server, socksPort)
             ?: return IosBridgeResult(success = false, message = "Failed to fetch VLESS config")
         val result = withContext(Dispatchers.Default) { singBoxBridge.start(configJson) }
         if (result.success) vlessActive = true
@@ -265,15 +285,23 @@ class IosVpnManager(
         return "singbox_cache_${safe}_$socksPort"
     }
 
-    private fun transportRunning(): Boolean =
-        if (vlessActive) singBoxBridge.isRunning() else olcRtcBridge.isRunning()
+    private fun transportRunning(): Boolean = when {
+        systemTunnelActive -> singBoxBridge.isSystemTunnelConnected()
+        vlessActive -> singBoxBridge.isRunning()
+        else -> olcRtcBridge.isRunning()
+    }
 
     private fun stopTransport() {
-        if (vlessActive) {
-            runCatching { singBoxBridge.stop() }
-            vlessActive = false
-        } else {
-            runCatching { olcRtcBridge.stop() }
+        when {
+            systemTunnelActive -> {
+                runCatching { singBoxBridge.stopSystemTunnel() }
+                systemTunnelActive = false
+            }
+            vlessActive -> {
+                runCatching { singBoxBridge.stop() }
+                vlessActive = false
+            }
+            else -> runCatching { olcRtcBridge.stop() }
         }
     }
 

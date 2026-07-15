@@ -70,6 +70,16 @@ interface IosSingBoxBridge {
     fun start(configJson: String): IosBridgeResult
     fun stop()
     fun isRunning(): Boolean
+
+    /**
+     * Системный VPN-туннель (NEPacketTunnelProvider) для НАШИХ VLESS-серверов (по токену
+     * подписки). В отличие от start() (локальный SOCKS в процессе), здесь трафик всей системы
+     * реально идёт через туннель: extension качает /app/singbox?inbound=tun и поднимает sing-box
+     * на TUN. Первый запуск вызывает системный запрос «Разрешить VPN-конфигурацию».
+     */
+    fun startSystemTunnel(token: String, server: String, split: Boolean): IosBridgeResult
+    fun stopSystemTunnel()
+    fun isSystemTunnelConnected(): Boolean
 }
 
 interface IosPlatformBridge {

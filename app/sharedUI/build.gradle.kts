@@ -94,8 +94,9 @@ val buildOlcrtcIosXcframework by tasks.registering(Exec::class) {
             "go get github.com/openlibrecommunity/olcrtc@master; " +
             "go get golang.org/x/mobile/bind@latest; " +
             "go mod tidy; " +
-            // -tags with_utls ОБЯЗАТЕЛЕН для REALITY-клиента sing-box (иначе VLESS падает).
-            "gomobile bind -target=ios -tags with_utls -ldflags \"-s -w -checklinkname=0\" " +
+            // -tags with_utls ОБЯЗАТЕЛЕН для REALITY-клиента sing-box (иначе VLESS падает);
+            // with_gvisor — для tun-inbound stack:gvisor (iOS Network Extension, StartTun).
+            "gomobile bind -target=ios -tags with_utls,with_gvisor -ldflags \"-s -w -checklinkname=0\" " +
             "-o \"${olcrtcIosXcframeworkDir.absolutePath}\" " +
             "github.com/openlibrecommunity/olcrtc/mobile ."
     )

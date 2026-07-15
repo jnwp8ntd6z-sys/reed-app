@@ -60,6 +60,33 @@ final class SwiftSingBoxManager: NSObject, @unchecked Sendable, IosSingBoxBridge
         return SingboxmobileIsRunning()
     }
 
+    // MARK: - Системный туннель (NEPacketTunnelProvider) для Reed-VLESS
+
+    func startSystemTunnel(token: String, server: String, split: Bool) -> IosBridgeResult {
+        let sem = DispatchSemaphore(value: 0)
+        var ok = false
+        // start() возвращается быстро (после startVPNTunnel); само подключение туннеля —
+        // асинхронно, его статус читает isSystemTunnelConnected(). Ждём с запасом на первый
+        // показ системного запроса «Разрешить VPN-конфигурацию».
+        ReedVPNManager.shared.start(token: token, server: server, split: split) { success in
+            ok = success
+            sem.signal()
+        }
+        _ = sem.wait(timeout: .now() + 25)
+        return IosBridgeResult(
+            success: ok,
+            message: ok ? nil : "Не удалось запустить системный туннель"
+        )
+    }
+
+    func stopSystemTunnel() {
+        ReedVPNManager.shared.stop()
+    }
+
+    func isSystemTunnelConnected() -> Bool {
+        ReedVPNManager.shared.isConnected()
+    }
+
     private func beginBackgroundTaskIfNeeded() {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
