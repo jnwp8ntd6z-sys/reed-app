@@ -114,6 +114,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.olcbox.app.data.reed.AppNotification
+import org.olcbox.app.data.datasource.REED_ACCOUNT_SUBSCRIPTION_PREFIX
 import org.olcbox.app.data.datasource.ReedTempServer
 import org.olcbox.app.data.reed.DeviceInfo
 import org.olcbox.app.data.reed.DevicesResponse
@@ -1267,9 +1268,13 @@ fun ReedHomeScreen(
     var importAttempt by remember { mutableStateOf(0) }
     LaunchedEffect(ReedSession.token, locations.size, importAttempt) {
         val t = ReedSession.token ?: return@LaunchedEffect
-        // «Серверов ещё нет» = нет НИ ОДНОЙ не-временной локации (временный сервер есть всегда).
-        val hasRealServers = locations.any { !ReedTempServer.isTemp(it.storageId) }
-        if (hasRealServers) return@LaunchedEffect
+        // «Серверов ещё нет» = нет ни одной локации Reed-аккаунта. Чужие подписки и
+        // одиночные ключи не в счёт: после выхода из аккаунта Reed-серверы удаляются,
+        // и при новом входе их надо переимпортировать, даже если чужие серверы остались.
+        val hasReedServers = locations.any {
+            it.subscriptionUrl?.startsWith(REED_ACCOUNT_SUBSCRIPTION_PREFIX) == true
+        }
+        if (hasReedServers) return@LaunchedEffect
         // Запланировать повтор с backoff (3с → +2с за попытку, максимум 20с), пока серверов нет.
         val scheduleRetry: () -> Unit = {
             scope.launch {

@@ -492,6 +492,16 @@ class LocationViewModel(
         }
     }
 
+    // Выход из Reed-аккаунта: серверы аккаунта не должны оставаться на устройстве
+    // (иначе следующий человек получит их без входа). Чужие подписки и одиночные
+    // ключи не трогаем.
+    fun deleteReedAccountLocations(onComplete: () -> Unit = {}) {
+        viewModelScope.launch {
+            locationsRepository.deleteReedAccountLocations()
+            loadLocations(onComplete)
+        }
+    }
+
     private companion object {
         const val LOCATION_PING_ATTEMPTS = 1
         const val LOCATION_PING_TIMEOUT_MS = 12_000L

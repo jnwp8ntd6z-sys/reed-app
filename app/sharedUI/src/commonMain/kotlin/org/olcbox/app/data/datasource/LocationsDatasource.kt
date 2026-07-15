@@ -83,6 +83,11 @@ object ReedTempServer {
     fun isTempConfig(config: LocationConfig?): Boolean = config?.id == LOCATION_ID
 }
 
+// Серверы Reed-аккаунта импортируются с subscriptionUrl вида
+// https://reedapp.ru/app/locations?token=… (VLESS) и …/app/olcconf?token=… (olcRTC/LTE) —
+// по этому префиксу они отличаются от чужих подписок и одиночных ключей.
+internal const val REED_ACCOUNT_SUBSCRIPTION_PREFIX = "https://reedapp.ru/app/"
+
 private fun LocationBundleV4.withTempServer(): LocationBundleV4 {
     // Свежий temp всегда последним; убираем возможный персистнутый старый дубль.
     val others = locations.filterNot { it.storageId == ReedTempServer.STORAGE_ID }
@@ -136,6 +141,11 @@ class LocationsRepositoryImpl(
     private val _changes = MutableStateFlow(0L)
     override val changes: StateFlow<Long> = _changes.asStateFlow()
 
+    // Причина последнего неудачного importText — чтобы UI показал «транспорт xhttp не
+    // поддерживается» вместо общего «ключ не распознан».
+    override var lastImportError: String? = null
+        private set
+
     private val json = Json {
         ignoreUnknownKeys = true
         coerceInputValues = true
@@ -178,6 +188,7 @@ class LocationsRepositoryImpl(
     }
 
     override suspend fun importText(text: String, subscriptionProxy: SubscriptionFetchProxy?): Boolean {
+        lastImportError = null
         val resolved = resolveParsedImport(
             text = text,
             subscriptionProxy = subscriptionProxy
@@ -410,6 +421,26 @@ class LocationsRepositoryImpl(
                 bundle.copy(
                     activeLocationId = bundle.activeLocationId?.takeUnless { it == storageId },
                     locations = bundle.locations.filterNot { it.storageId == storageId }
+                )
+            )
+        }
+    }
+
+    override suspend fun deleteReedAccountLocations() {
+        mutationMutex.withLock {
+            val bundle = getBundleUnlocked()
+            val removedIds = bundle.locations
+                .filter { entry ->
+                    val url = entry.subscriptionUrl ?: entry.legacySubscriptionUrl
+                    url?.startsWith(REED_ACCOUNT_SUBSCRIPTION_PREFIX) == true
+                }
+                .map { it.storageId }
+                .toSet()
+            if (removedIds.isEmpty()) return@withLock
+            saveBundleUnlocked(
+                bundle.copy(
+                    activeLocationId = bundle.activeLocationId?.takeUnless { it in removedIds },
+                    locations = bundle.locations.filterNot { it.storageId in removedIds }
                 )
             )
         }
@@ -660,8 +691,17 @@ class LocationsRepositoryImpl(
     /** Импорт «любых» ключей/подписок (vless/vmess/trojan/ss + base64-список) в VLESS-локации.
      *  key = исходный URI — на устройстве по нему собирается конфиг sing-box, без нашего сервера. */
     private fun parseProxyKeys(text: String, subscriptionUrl: String?): ParsedImport? {
-        val proxies = ProxyKeyImport.parseSubscription(text)
-        if (proxies.isEmpty()) return null
+        val unsupported = mutableSetOf<String>()
+        val proxies = ProxyKeyImport.parseSubscription(text, unsupported)
+        if (proxies.isEmpty()) {
+            // Ключи распознаны, но все на транспортах, которых движок не умеет (xhttp и т.п.) —
+            // объясняем причину вместо молчаливого «не распознан».
+            if (unsupported.isNotEmpty()) {
+                lastImportError = "Ключ использует транспорт «${unsupported.joinToString("», «")}» — " +
+                    "приложение его не поддерживает. Поддерживаются: tcp, ws, grpc, http/h2."
+            }
+            return null
+        }
         val used = mutableSetOf<String>()
         val entries = proxies.mapIndexedNotNull { idx, px ->
             val name = px.name.ifBlank { "Сервер ${idx + 1}" }

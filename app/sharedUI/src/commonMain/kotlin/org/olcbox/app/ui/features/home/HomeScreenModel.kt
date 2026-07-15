@@ -307,7 +307,7 @@ class HomeScreenViewModel(
                     )
                 }
                 if (!imported) {
-                    onError("Ключ подписки не распознан")
+                    onError(locationsRepository.lastImportError ?: "Ключ подписки не распознан")
                     return@launch
                 }
                 loadCurrentConfigNow()

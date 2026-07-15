@@ -48,8 +48,14 @@ object ProxyKeyImport {
     /**
      * Разбирает содержимое подписки/ключа в список прокси. Принимает: одну ссылку, несколько
      * ссылок построчно, либо base64-список (как отдаёт большинство панелей).
+     * unsupportedTransports (если передан) собирает транспорты ключей, которые пришлось
+     * пропустить (xhttp, quic, kcp, …) — движок их не умеет, а молча импортировать как tcp
+     * значит получить «сервер есть, но не заведётся».
      */
-    fun parseSubscription(content: String): List<ParsedProxy> {
+    fun parseSubscription(
+        content: String,
+        unsupportedTransports: MutableSet<String>? = null
+    ): List<ParsedProxy> {
         val raw = content.trim()
         if (raw.isEmpty()) return emptyList()
         // Если в тексте уже есть схемы — берём как есть; иначе пробуем base64-декод.
@@ -59,19 +65,22 @@ object ProxyKeyImport {
         for (lineRaw in body.split('\n', '\r')) {
             val line = lineRaw.trim()
             if (line.isEmpty()) continue
-            parseUri(line)?.let { result.add(it) }
+            parseUri(line, unsupportedTransports)?.let { result.add(it) }
         }
         return result
     }
 
     /** Разбор одной ссылки в outbound sing-box. null — если формат не распознан. */
-    fun parseUri(uriRaw: String): ParsedProxy? {
+    fun parseUri(
+        uriRaw: String,
+        unsupportedTransports: MutableSet<String>? = null
+    ): ParsedProxy? {
         val uri = uriRaw.trim()
         return runCatching {
             when {
-                uri.startsWith("vless://", true) -> parseVless(uri)
-                uri.startsWith("trojan://", true) -> parseTrojan(uri)
-                uri.startsWith("vmess://", true) -> parseVmess(uri)
+                uri.startsWith("vless://", true) -> parseVless(uri, unsupportedTransports)
+                uri.startsWith("trojan://", true) -> parseTrojan(uri, unsupportedTransports)
+                uri.startsWith("vmess://", true) -> parseVmess(uri, unsupportedTransports)
                 uri.startsWith("ss://", true) -> parseShadowsocks(uri)
                 else -> null
             }
@@ -126,11 +135,12 @@ object ProxyKeyImport {
 
     // ── Разбор протоколов ─────────────────────────────────────────────────────
 
-    private fun parseVless(uri: String): ParsedProxy? {
+    private fun parseVless(uri: String, unsupportedTransports: MutableSet<String>? = null): ParsedProxy? {
         val p = splitUserHostQueryFragment(uri.removePrefixIgnoreCase("vless://")) ?: return null
         val uuid = p.user.ifBlank { return null }
         val q = p.query
         val net = q["type"]?.lowercase() ?: "tcp"
+        if (!isTransportSupported(net)) { unsupportedTransports?.add(net); return null }
         val security = q["security"]?.lowercase() ?: "none"
         val name = p.fragment.ifBlank { p.host }
         val outbound = buildJsonObject {
@@ -149,11 +159,12 @@ object ProxyKeyImport {
         return ParsedProxy(name, p.host, p.port, outbound)
     }
 
-    private fun parseTrojan(uri: String): ParsedProxy? {
+    private fun parseTrojan(uri: String, unsupportedTransports: MutableSet<String>? = null): ParsedProxy? {
         val p = splitUserHostQueryFragment(uri.removePrefixIgnoreCase("trojan://")) ?: return null
         val password = p.user.ifBlank { return null }
         val q = p.query
         val net = q["type"]?.lowercase() ?: "tcp"
+        if (!isTransportSupported(net)) { unsupportedTransports?.add(net); return null }
         val name = p.fragment.ifBlank { p.host }
         val outbound = buildJsonObject {
             put("type", "trojan")
@@ -168,7 +179,7 @@ object ProxyKeyImport {
         return ParsedProxy(name, p.host, p.port, outbound)
     }
 
-    private fun parseVmess(uri: String): ParsedProxy? {
+    private fun parseVmess(uri: String, unsupportedTransports: MutableSet<String>? = null): ParsedProxy? {
         val b64 = uri.removePrefixIgnoreCase("vmess://").substringBefore('#').trim()
         val jsonText = tryDecodeBase64ToText(b64) ?: return null
         val o = runCatching { json.parseToJsonElement(jsonText).jsonObject }.getOrNull() ?: return null
@@ -177,6 +188,7 @@ object ProxyKeyImport {
         val port = s("port").toIntOrNull() ?: o["port"]?.jsonPrimitive?.intOrNull ?: return null
         val uuid = s("id").ifBlank { return null }
         val net = s("net").lowercase().ifBlank { "tcp" }
+        if (!isTransportSupported(net)) { unsupportedTransports?.add(net); return null }
         val tls = s("tls").lowercase()
         val aid = s("aid").toIntOrNull() ?: 0
         val scy = s("scy").ifBlank { "auto" }
@@ -265,6 +277,13 @@ object ProxyKeyImport {
                 }
             }
         }
+
+    // Транспорты, которые умеет собрать transportBlock (+ tcp/raw = без блока transport).
+    // Всё остальное (xhttp, splithttp, httpupgrade, quic, kcp, …) движок не поддерживает —
+    // такие ключи пропускаем с внятной ошибкой, а не импортируем молча как tcp.
+    private val SUPPORTED_TRANSPORTS = setOf("", "tcp", "raw", "none", "ws", "grpc", "http", "h2")
+
+    private fun isTransportSupported(net: String): Boolean = net in SUPPORTED_TRANSPORTS
 
     private fun transportBlock(net: String, q: Map<String, String>): JsonObject? = when (net) {
         "ws" -> buildJsonObject {

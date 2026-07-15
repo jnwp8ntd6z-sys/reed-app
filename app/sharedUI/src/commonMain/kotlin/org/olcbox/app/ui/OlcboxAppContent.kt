@@ -71,6 +71,8 @@ fun OlcboxAppContent(
     // оставались на главном экране с «пустым»/странным меню. Теперь — назад на вход.
     val backToLogin: () -> Unit = {
         ReedSession.logout()
+        // Серверы Reed-аккаунта уходят вместе с сессией; чужие подписки остаются.
+        locationViewModel.deleteReedAccountLocations()
         showOnboarding = true
     }
     if (showOnboarding) {
