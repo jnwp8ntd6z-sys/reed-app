@@ -46,6 +46,10 @@ class IosAppFactory {
         olcRtcBridge: IosOlcRtcBridge,
         singBoxBridge: IosSingBoxBridge
     ): IosAppSession {
+        // App Store-сборка (iOS всегда App Store): Apple запрещает вести из приложения на
+        // внешнюю оплату/управление подпиской. Прячем ВСЕ кликабельные переходы к Telegram-боту
+        // (кнопки/ссылки). Некликабельный текст «код в @reedvpnbot» остаётся — это разрешено.
+        org.olcbox.app.data.reed.ReedBuildFlags.showBotLinks = false
         return IosAppSession(platformBridge, olcRtcBridge, singBoxBridge)
     }
 
