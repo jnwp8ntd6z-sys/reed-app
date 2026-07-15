@@ -55,7 +55,12 @@ final class SwiftOlcRtcManager: NSObject, @unchecked Sendable, IosOlcRtcBridge {
             return IosBridgeResult(success: false, message: error?.localizedDescription ?? "olcRTC start failed")
         }
 
-        let ready = MobileWaitReady(8_000, &error)
+        // 2026-07-15: было 8_000. Разбор живого лога owner: рукопожатие к публичному Jitsi
+        // (join MUC ~5с + ICE ~2с; у части провайдеров TURN отвечает 401 и тормозит) не
+        // укладывалось в 8с → «olcRTC start timed out» ДО того, как туннель понесёт данные.
+        // Android давно держит 25с (MOBILE_READY_TIMEOUT_MS) и LTE там работает — выравниваем
+        // iOS под тот же бюджет. Именно 8с здесь и рвали старт LTE на айфоне.
+        let ready = MobileWaitReady(25_000, &error)
         guard ready else {
             MobileStop()
             endBackgroundTaskIfNeeded()
