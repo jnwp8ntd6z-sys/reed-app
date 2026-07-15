@@ -40,6 +40,11 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ru.reedapp.app
         PROVISIONING_PROFILE_SPECIFIER: "match AppStore ru.reedapp.app"
+        # Перебиваем target-level пресет XcodeGen (iPhone Developer) — иначе
+        # archive требует Development-сертификат, которого в CI нет.
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "Apple Distribution"
+        "CODE_SIGN_IDENTITY[sdk=iphoneos*]": "Apple Distribution"
         INFOPLIST_FILE: iosApp/Info.plist
         GENERATE_INFOPLIST_FILE: false
         CODE_SIGN_ENTITLEMENTS: iosApp/iosApp.entitlements
@@ -89,6 +94,9 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ru.reedapp.app.PacketTunnel
         PROVISIONING_PROFILE_SPECIFIER: "match AppStore ru.reedapp.app.PacketTunnel"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "Apple Distribution"
+        "CODE_SIGN_IDENTITY[sdk=iphoneos*]": "Apple Distribution"
         INFOPLIST_FILE: PacketTunnel/Info.plist
         GENERATE_INFOPLIST_FILE: false
         CODE_SIGN_ENTITLEMENTS: PacketTunnel/PacketTunnel.entitlements
