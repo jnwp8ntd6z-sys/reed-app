@@ -1811,7 +1811,10 @@ fun ReedHomeScreen(
                     subtitle = serverCountLabel(reedServers.size),
                     accent = MaterialTheme.colorScheme.primary,
                     initiallyExpanded = true,
-                    onRefresh = { homeViewModel.refreshSubscriptions { locationViewModel.loadLocations { } } },
+                    // «Обновить» у блока Reed убрана — дублирует глобальную «Обновить» в шапке
+                    // СЕРВЕРЫ (та обновляет все подписки, включая наши). Удаление тоже нет:
+                    // серверы аккаунта управляются входом/выходом.
+                    onRefresh = null,
                     onDelete = null,
                 ) {
                     val wifi = reedServers.filter { it.config?.isVless() == true }
