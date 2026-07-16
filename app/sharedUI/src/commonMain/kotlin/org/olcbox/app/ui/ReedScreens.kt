@@ -215,11 +215,16 @@ fun ReedOnboardingScreen(
     val tempConnecting = state.isVpnLoading
     val limitReached = ReedSession.tempUsedBytes >= ReedTempServer.LIMIT_BYTES
 
-    // Таймер сессии временного VPN.
+    // Таймер сессии временного VPN — по стенным часам (метка старта), устойчив к сворачиванию.
     var sessionSeconds by remember { mutableStateOf(0L) }
     LaunchedEffect(tempConnected) {
-        if (tempConnected) { sessionSeconds = 0L; while (true) { delay(1000); sessionSeconds += 1 } }
-        else sessionSeconds = 0L
+        if (tempConnected) {
+            val startMs = kotlin.time.Clock.System.now().toEpochMilliseconds()
+            while (true) {
+                sessionSeconds = (kotlin.time.Clock.System.now().toEpochMilliseconds() - startMs) / 1000
+                delay(1000)
+            }
+        } else sessionSeconds = 0L
     }
 
     // Плавный переход цвета кнопки: белая → зелёная при подключении.
@@ -1419,12 +1424,18 @@ fun ReedHomeScreen(
         }
     }
 
-    // Локальный таймер сессии: считаем секунды, пока VPN подключён.
+    // Локальный таймер сессии: считаем по СТЕННЫМ ЧАСАМ (метка старта), а не по «тикам».
+    // На iOS при сворачивании приложения корутина замирает — счётчик тиков вставал бы и
+    // «терял» фоновое время. С меткой старта после возврата сразу показывается корректное
+    // общее время подключения.
     var sessionSeconds by remember { mutableStateOf(0L) }
     LaunchedEffect(state.isVpnConnected) {
         if (state.isVpnConnected) {
-            sessionSeconds = 0L
-            while (true) { delay(1000); sessionSeconds += 1 }
+            val startMs = kotlin.time.Clock.System.now().toEpochMilliseconds()
+            while (true) {
+                sessionSeconds = (kotlin.time.Clock.System.now().toEpochMilliseconds() - startMs) / 1000
+                delay(1000)
+            }
         } else {
             sessionSeconds = 0L
         }
@@ -1753,10 +1764,6 @@ fun ReedHomeScreen(
         // по пингу, чтобы серверы не «прыгали» вверх/вниз при обновлении пинга.
         val realServers = locations
             .filter { !ReedTempServer.isTemp(it.storageId) }
-        // В режиме «без кода» (token==null) временный сервер (для Telegram-регистрации) НЕ
-        // показываем — пользователь подключает подписку через «Вставить ключ» / «Войти по коду».
-        val tempServer = if (token == null) null
-            else locations.firstOrNull { ReedTempServer.isTemp(it.storageId) }
 
         // Общий onClick для выбора сервера.
         fun selectServer(loc: LocationItem) {
@@ -1863,45 +1870,10 @@ fun ReedHomeScreen(
                 }
             }
 
-            if (tempServer != null) {
-                // Временный сервер спрятан в конце; раскрыт, если он сейчас выбран/подключён.
-                var showTemp by remember {
-                    mutableStateOf(state.isVpnConnected && selectedId == tempServer.storageId)
-                }
-                val rot by animateFloatAsState(if (showTemp) 90f else 0f, label = "tempChevron")
-                Spacer(Modifier.height(4.dp))
-                Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                        .clickable { showTemp = !showTemp }
-                        .padding(horizontal = 6.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.Rounded.ChevronRight, contentDescription = null,
-                        tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.rotate(rot))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Временный сервер для регистрации",
-                        style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Black,
-                        color = MaterialTheme.colorScheme.secondary)
-                }
-                Spacer(Modifier.height(8.dp))
-                AnimatedVisibility(visible = showTemp,
-                    enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-                    ReedServerRow(
-                        loc = tempServer,
-                        isSelected = tempServer.storageId == selectedId,
-                        isConnectedHere = state.isVpnConnected && tempServer.storageId == selectedId,
-                        ping = pingFor(pingsState, tempServer.storageId),
-                        pingLoading = pingLoadingFor(pingsState, tempServer.storageId),
-                        serversRefreshing = serversRefreshing,
-                        serversRefreshed = serversRefreshed,
-                        desc = ReedTempServer.DESC,
-                        onClick = { selectServer(tempServer) },
-                    )
-                }
-            }
         } else {
-            // Нет активной подписки → показываем ТОЛЬКО временный сервер (вместо всех).
-            val onlyTemp = tempServer ?: realServers.firstOrNull()
+            // Нет активной подписки → показываем первый доступный сервер (временный
+            // сервер регистрации убран из списка по просьбе owner — он только мешал).
+            val onlyTemp = realServers.firstOrNull()
             if (onlyTemp != null) {
                 ReedServerRow(
                     loc = onlyTemp,
