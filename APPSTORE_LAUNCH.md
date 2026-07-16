@@ -17,17 +17,22 @@ Apple 3.1.1 обычно требует IAP для цифровых подпис
 - **А (текущий):** вход по коду, оплата в боте, в приложении никаких цен/ссылок на оплату. Риск отклонения, но проходят как «доступ по аккаунту».
 - **Б:** добавить IAP (комиссия Apple 15–30%).
 
-## Записка ревьюеру (App Review Notes)
+## Записка ревьюеру (App Review Notes) — EN
 ```
-Reed — VPN-сервис. Доступ предоставляется по коду аккаунта.
-Демо-доступ для ревью: код входа — <ВСТАВИТЬ РАБОЧИЙ КОД>.
-Как проверить: откройте приложение → «Войти по коду» → введите код →
-появится список серверов → нажмите большую кнопку подключения.
-Оплата и управление подпиской выполняются вне приложения (это сервис с
-аккаунтом; в приложении покупок нет). Приложение не собирает данные для
-рекламы и не отслеживает пользователей. Логи трафика не ведутся.
-Экспорт-комплаенс: используется только стандартное шифрование (TLS).
+Reed is a proxy client. Users connect using access they already have — either an
+access CODE or by pasting a config KEY (VLESS/VMess/Trojan/Shadowsocks/SOCKS).
+The app does not sell or provide servers and has NO in-app purchases.
+
+Demo access code: REED-MX4ZBBV5
+Steps to test: open the app → "Sign in with code" → enter the code →
+a server list appears → tap the big round button to connect.
+(You can also tap "Paste subscription key" to import a config manually.)
+
+Reed collects no data, keeps no traffic logs, and does not track users.
+Export compliance: standard encryption (TLS) only.
 ```
+Демо-аккаунт: имя в кабинете «TEST CODE», без Telegram/аватара, подписка бессрочная,
+рефералка в приложении отсутствует. Код: **REED-MX4ZBBV5** (sub_token 2akxYLYkwrMwRfaqW4MBm5VCGgA0jhI-, tg_id 8888888888, sub_id 519).
 
 ## Описание (адаптировано из Happ — «прокси-клиент», обсуждается с owner)
 

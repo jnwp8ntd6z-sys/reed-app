@@ -2602,8 +2602,6 @@ fun ReedAccountScreen(locationViewModel: LocationViewModel, onLogout: () -> Unit
     var showCodeLogin by remember { mutableStateOf(false) }
     var data by remember { mutableStateOf<SubscriptionResponse?>(null) }
     var statusMsg by remember { mutableStateOf("") }
-    var friendCode by remember { mutableStateOf("") }
-    var friendSaved by remember { mutableStateOf(false) }
     var avatar by remember { mutableStateOf<ImageBitmap?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
@@ -2704,42 +2702,8 @@ fun ReedAccountScreen(locationViewModel: LocationViewModel, onLogout: () -> Unit
         }
         Spacer(Modifier.height(14.dp))
 
-        // Реферальная программа
-        ExpandablePlashka(Icons.Rounded.CardGiftcard, "Реферальная программа") {
-            MutedText("Ваш реферальный код")
-            Spacer(Modifier.height(2.dp))
-            Text(d?.referral?.code ?: "—", style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
-            MutedText("Делитесь кодом — вам начисляются бонусы за приглашённых друзей.")
-            Spacer(Modifier.height(14.dp))
-            MutedText("Реферальный код друга")
-            Spacer(Modifier.height(6.dp))
-            if (friendSaved) {
-                Text(friendCode, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black)
-                MutedText("Изменить код нельзя")
-            } else {
-                OutlinedTextField(
-                    value = friendCode,
-                    onValueChange = { friendCode = it },
-                    label = { Text("Введите код друга") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(8.dp))
-                ReedPrimaryButton("Применить") {
-                    if (friendCode.isNotBlank()) friendSaved = true
-                }
-            }
-            Spacer(Modifier.height(14.dp))
-            MutedText("Ваш бонусный баланс")
-            Spacer(Modifier.height(2.dp))
-            Text("${d?.referral?.bonus_balance ?: 0} бонусов", style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.height(4.dp))
-            MutedText("Подробности — в Telegram-боте и поддержке.")
-        }
-        Spacer(Modifier.height(14.dp))
+        // Блок «Реферальная программа» убран из приложения (бонусы/рефералы могут ввести
+        // ревьюера App Store в заблуждение). Реферальная механика остаётся в Telegram-боте.
 
         // Уведомления переехали на главный экран (звоночек в шапке) — здесь их больше нет.
 
