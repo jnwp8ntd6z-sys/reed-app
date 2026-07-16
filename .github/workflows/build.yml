@@ -34,7 +34,7 @@ jobs:
       - name: Checkout olcrtc
         uses: actions/checkout@v4
         with:
-          repository: lltvutll-max/olcrtc
+          repository: reedvpnbot/olcrtc
           ref: ${{ env.OLCRTC_REF }}
           path: olcrtc
           submodules: recursive
@@ -143,7 +143,7 @@ jobs:
       - name: Checkout olcrtc
         uses: actions/checkout@v4
         with:
-          repository: lltvutll-max/olcrtc
+          repository: reedvpnbot/olcrtc
           ref: ${{ env.OLCRTC_REF }}
           path: olcrtc
           submodules: recursive
@@ -213,7 +213,7 @@ jobs:
       - name: Checkout olcrtc
         uses: actions/checkout@v4
         with:
-          repository: lltvutll-max/olcrtc
+          repository: reedvpnbot/olcrtc
           ref: ${{ env.OLCRTC_REF }}
           path: olcrtc
           submodules: recursive
