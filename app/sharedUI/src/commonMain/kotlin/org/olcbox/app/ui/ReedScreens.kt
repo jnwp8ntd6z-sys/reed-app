@@ -1057,6 +1057,96 @@ private fun ReedConnectButton(
     }
 }
 
+// Блок «Подписки»: сворачиваемая карточка с заголовком (источник + число серверов) и
+// действиями Обновить/Удалить; внутри — серверы этого источника (content). Наш блок «Reed VPN»
+// идёт первым и без «Удалить» (серверы аккаунта управляются входом/выходом). Чужие подписки по
+// URL — с «Обновить» и «Удалить»; вставленные вручную ключи — только «Удалить».
+@Composable
+private fun SubscriptionBlock(
+    title: String,
+    subtitle: String,
+    accent: Color,
+    initiallyExpanded: Boolean,
+    onRefresh: (() -> Unit)?,
+    onDelete: (() -> Unit)?,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    var expanded by remember { mutableStateOf(initiallyExpanded) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    val rot by animateFloatAsState(if (expanded) 90f else 0f, label = "subBlockChevron")
+    ReedCard {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.weight(1f).clip(RoundedCornerShape(10.dp))
+                    .clickable { expanded = !expanded }
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Rounded.ChevronRight, contentDescription = null,
+                    tint = accent, modifier = Modifier.rotate(rot))
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(title, style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Black, color = accent)
+                    MutedText(subtitle)
+                }
+            }
+            if (onRefresh != null) {
+                IconAction(Icons.Rounded.Refresh, "Обновить") { onRefresh() }
+                Spacer(Modifier.width(4.dp))
+            }
+            if (onDelete != null) {
+                IconAction(Icons.Rounded.DeleteForever, "Удалить") { confirmDelete = true }
+            }
+        }
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut(),
+        ) {
+            Column {
+                Spacer(Modifier.height(12.dp))
+                content()
+            }
+        }
+    }
+    Spacer(Modifier.height(12.dp))
+
+    if (confirmDelete && onDelete != null) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            confirmButton = {
+                TextButton(onClick = { confirmDelete = false; onDelete() }) {
+                    Text("Удалить", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Отмена") } },
+            title = { Text("Удалить «$title»?", fontWeight = FontWeight.Black) },
+            text = { Text("Серверы этой подписки будут удалены из приложения. Саму подписку в боте это не отменяет.") },
+        )
+    }
+}
+
+// Русское склонение «N серверов».
+private fun serverCountLabel(n: Int): String {
+    val mod100 = n % 100
+    val mod10 = n % 10
+    val word = when {
+        mod100 in 11..14 -> "серверов"
+        mod10 == 1 -> "сервер"
+        mod10 in 2..4 -> "сервера"
+        else -> "серверов"
+    }
+    return "$n $word"
+}
+
+// Заголовок блока чужой подписки: хост из URL (напр. «swaga.moscow»), иначе «Подписка N».
+private fun subscriptionTitle(url: String, index: Int): String {
+    val host = url.substringAfter("://", "").substringBefore('/').substringBefore('?')
+        .substringAfter('@').substringBefore(':').trim()
+    return host.ifBlank { "Подписка ${index + 1}" }
+}
+
 // Плашка одного сервера в списке. Временный сервер (для регистрации) — оранжевый акцент
 // и трафик «x/5 ГБ» прямо в названии; остальные — лаймовый акцент.
 @Composable
@@ -1682,20 +1772,12 @@ fun ReedHomeScreen(
                 MutedText("Серверы появятся автоматически после входа. Полное управление подпиской — в Telegram-боте.")
             }
         } else if ((hasSubscription || token == null) && realServers.isNotEmpty()) {
-            val wifiServers = realServers.filter { it.config?.isVless() == true }
-            val lteServers = realServers.filter { it.config?.isVless() != true }
-            // Тумблер показываем только когда есть ОБА типа серверов — иначе он бесполезен.
-            val showModeToggle = wifiServers.isNotEmpty() && lteServers.isNotEmpty()
-            val shownServers = when {
-                !showModeToggle -> realServers
-                serverMode == ServerMode.WIFI -> wifiServers
-                else -> lteServers
-            }
-            if (showModeToggle) {
-                ServerModeToggle(serverMode) { serverMode = it }
-                Spacer(Modifier.height(12.dp))
-            }
-            shownServers.forEach { loc ->
+            // Серверы сгруппированы по ИСТОЧНИКУ (подписке), а не по транспорту:
+            //  • «Reed VPN» — наши серверы (subscriptionUrl = наш префикс), ВСЕГДА первым блоком;
+            //  • каждая чужая подписка (URL) — свой независимый блок (Обновить/Удалить);
+            //  • вставленные вручную ключи — один блок «Импортированные ключи».
+            // Так наши серверы не уезжают в конец и не смешиваются с чужим ключом.
+            val renderRow: @Composable (LocationItem) -> Unit = { loc ->
                 ReedServerRow(
                     loc = loc,
                     isSelected = loc.storageId == selectedId,
@@ -1704,10 +1786,80 @@ fun ReedHomeScreen(
                     pingLoading = pingLoadingFor(pingsState, loc.storageId),
                     serversRefreshing = serversRefreshing,
                     serversRefreshed = serversRefreshed,
-                    desc = serverDescByName[loc.fullName],
+                    desc = if (ReedTempServer.isTemp(loc.storageId)) ReedTempServer.DESC
+                        else serverDescByName[loc.fullName],
                     onClick = { selectServer(loc) },
                 )
             }
+
+            val reedServers = realServers.filter {
+                it.subscriptionUrl?.startsWith(REED_ACCOUNT_SUBSCRIPTION_PREFIX) == true
+            }
+            val foreignByUrl = realServers
+                .filter { item ->
+                    val url = item.subscriptionUrl
+                    url != null && url.isNotBlank() &&
+                        !url.startsWith(REED_ACCOUNT_SUBSCRIPTION_PREFIX)
+                }
+                .groupBy { it.subscriptionUrl!! }
+            val manualServers = realServers.filter { it.subscriptionUrl.isNullOrBlank() }
+
+            // 1) Наши серверы — ВСЕГДА первым блоком (сверху). Тумблер Wi-Fi/LTE внутри блока.
+            if (reedServers.isNotEmpty()) {
+                SubscriptionBlock(
+                    title = "Reed VPN",
+                    subtitle = serverCountLabel(reedServers.size),
+                    accent = MaterialTheme.colorScheme.primary,
+                    initiallyExpanded = true,
+                    onRefresh = { homeViewModel.refreshSubscriptions { locationViewModel.loadLocations { } } },
+                    onDelete = null,
+                ) {
+                    val wifi = reedServers.filter { it.config?.isVless() == true }
+                    val lte = reedServers.filter { it.config?.isVless() != true }
+                    val showToggle = wifi.isNotEmpty() && lte.isNotEmpty()
+                    val shown = when {
+                        !showToggle -> reedServers
+                        serverMode == ServerMode.WIFI -> wifi
+                        else -> lte
+                    }
+                    if (showToggle) {
+                        ServerModeToggle(serverMode) { serverMode = it }
+                        Spacer(Modifier.height(12.dp))
+                    }
+                    shown.forEach { renderRow(it) }
+                }
+            }
+
+            // 2) Чужие подписки по URL — каждая своим независимым блоком.
+            foreignByUrl.entries.forEachIndexed { idx, entry ->
+                val url = entry.key
+                val servers = entry.value
+                SubscriptionBlock(
+                    title = subscriptionTitle(url, idx),
+                    subtitle = serverCountLabel(servers.size),
+                    accent = MaterialTheme.colorScheme.secondary,
+                    initiallyExpanded = servers.any { it.storageId == selectedId },
+                    onRefresh = { homeViewModel.refreshSubscription(url) { locationViewModel.loadLocations { } } },
+                    onDelete = { locationViewModel.deleteLocations(servers.map { it.storageId }) { locationViewModel.loadLocations { } } },
+                ) {
+                    servers.forEach { renderRow(it) }
+                }
+            }
+
+            // 3) Вставленные вручную ключи (без URL подписки) — одним блоком.
+            if (manualServers.isNotEmpty()) {
+                SubscriptionBlock(
+                    title = "Импортированные ключи",
+                    subtitle = serverCountLabel(manualServers.size),
+                    accent = MaterialTheme.colorScheme.secondary,
+                    initiallyExpanded = manualServers.any { it.storageId == selectedId },
+                    onRefresh = null,
+                    onDelete = { locationViewModel.deleteLocations(manualServers.map { it.storageId }) { locationViewModel.loadLocations { } } },
+                ) {
+                    manualServers.forEach { renderRow(it) }
+                }
+            }
+
             if (tempServer != null) {
                 // Временный сервер спрятан в конце; раскрыт, если он сейчас выбран/подключён.
                 var showTemp by remember {

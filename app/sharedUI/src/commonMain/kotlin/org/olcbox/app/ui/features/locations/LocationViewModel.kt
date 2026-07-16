@@ -492,6 +492,14 @@ class LocationViewModel(
         }
     }
 
+    /** Удаляет все локации одной подписки/ключа (кнопка «Удалить» у блока «Подписки»). */
+    fun deleteLocations(ids: List<String>, onComplete: () -> Unit = {}) {
+        viewModelScope.launch {
+            ids.forEach { locationsRepository.deleteLocation(it) }
+            loadLocations(onComplete)
+        }
+    }
+
     // Выход из Reed-аккаунта: серверы аккаунта не должны оставаться на устройстве
     // (иначе следующий человек получит их без входа). Чужие подписки и одиночные
     // ключи не трогаем.
