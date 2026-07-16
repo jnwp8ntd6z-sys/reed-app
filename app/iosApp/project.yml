@@ -41,6 +41,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: ru.reedapp.app
         PROVISIONING_PROFILE_SPECIFIER: "match AppStore ru.reedapp.app"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # iPhone-only: XcodeGen-пресет ставит "1,2" на таргете и перебивает
+        # project-base — поэтому дублируем здесь.
+        TARGETED_DEVICE_FAMILY: "1"
         # Перебиваем target-level пресет XcodeGen (iPhone Developer) — иначе
         # archive требует Development-сертификат, которого в CI нет.
         CODE_SIGN_STYLE: Manual
@@ -95,6 +98,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ru.reedapp.app.PacketTunnel
         PROVISIONING_PROFILE_SPECIFIER: "match AppStore ru.reedapp.app.PacketTunnel"
+        TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "Apple Distribution"
         "CODE_SIGN_IDENTITY[sdk=iphoneos*]": "Apple Distribution"
