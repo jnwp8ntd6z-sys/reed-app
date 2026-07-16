@@ -155,27 +155,12 @@ final class SwiftSingBoxManager: NSObject, @unchecked Sendable, IosSingBoxBridge
         }
     }
 
-    private func activatePlaybackSession() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            do {
-                let session = AVAudioSession.sharedInstance()
-                try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-                try session.setActive(true)
-            } catch {
-                self.lock.lock()
-                let writer = self.logWriter
-                self.lock.unlock()
-                writer?.writeLog(message: "iOS playback background mode unavailable: \(error.localizedDescription)")
-            }
-        }
-    }
+    // Фон-режим «audio» убран для App Store (без реального звука Apple отклоняет). Reed-серверы
+    // (VLESS/LTE) работают через системный туннель (NEPacketTunnelProvider), который держит фон
+    // сам. Встроенный SOCKS остаётся только для импортированных ключей и в фоне не удерживается.
+    private func activatePlaybackSession() {}
 
-    private func deactivatePlaybackSession() {
-        DispatchQueue.main.async {
-            try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
-        }
-    }
+    private func deactivatePlaybackSession() {}
 
     private func endBackgroundTaskIfNeeded() {
         DispatchQueue.main.async { [weak self] in

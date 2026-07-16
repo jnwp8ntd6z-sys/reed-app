@@ -205,35 +205,12 @@ final class SwiftOlcRtcManager: NSObject, @unchecked Sendable, IosOlcRtcBridge {
         }
     }
 
-    private func activatePlaybackSession() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
+    // Фон-режим «audio» убран для App Store (Apple отклоняет audio-mode без реального звука).
+    // LTE идёт через системный туннель (NEPacketTunnelProvider), который держит фон сам; этот
+    // встроенный olcRTC-SOCKS — легаси и в фоне не удерживается.
+    private func activatePlaybackSession() {}
 
-            do {
-                let session = AVAudioSession.sharedInstance()
-                try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-                try session.setActive(true)
-            } catch {
-                self.lock.lock()
-                let writer = self.logWriter
-                self.lock.unlock()
-                writer?.writeLog(message: "iOS playback background mode unavailable: \(error.localizedDescription)")
-            }
-        }
-    }
-
-    private func deactivatePlaybackSession() {
-        DispatchQueue.main.async { [weak self] in
-            do {
-                try AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
-            } catch {
-                self?.lock.lock()
-                let writer = self?.logWriter
-                self?.lock.unlock()
-                writer?.writeLog(message: "iOS playback session cleanup failed: \(error.localizedDescription)")
-            }
-        }
-    }
+    private func deactivatePlaybackSession() {}
 
     private func endBackgroundTaskIfNeeded() {
         DispatchQueue.main.async { [weak self] in
