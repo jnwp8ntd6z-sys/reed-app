@@ -446,7 +446,7 @@ private fun ReedIosOnboardingScreen(
                 // Зелёная — вход по коду
                 ReedPrimaryButton(text = "Войти по коду") { showCode = true }
                 Spacer(Modifier.height(6.dp))
-                Text("Код из бота @reedvpnbot", style = MaterialTheme.typography.bodySmall,
+                Text("Ваш код доступа", style = MaterialTheme.typography.bodySmall,
                     color = Color.White.copy(alpha = 0.6f))
 
                 Spacer(Modifier.height(20.dp))
@@ -580,7 +580,7 @@ private fun AccountCodeDialog(
         title = { Text("Вход по коду", fontWeight = FontWeight.Black) },
         text = {
             Column(Modifier.fillMaxWidth()) {
-                MutedText("Введите ваш код из бота @reedvpnbot (раздел «🆔 Код приложения»).")
+                MutedText("Введите ваш код доступа.")
                 Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
                     value = code,
@@ -1515,7 +1515,7 @@ fun ReedHomeScreen(
                 Text("Подключите подписку", style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Black)
                 Spacer(Modifier.height(8.dp))
-                Text("Вставьте ключ подписки или войдите по коду из бота @reedvpnbot.",
+                Text("Вставьте ключ подписки или войдите по коду доступа.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(16.dp))
@@ -1814,7 +1814,7 @@ fun ReedHomeScreen(
             // 1) Наши серверы — ВСЕГДА первым блоком (сверху). Тумблер Wi-Fi/LTE внутри блока.
             if (reedServers.isNotEmpty()) {
                 SubscriptionBlock(
-                    title = "Reed VPN",
+                    title = "Reed",
                     subtitle = serverCountLabel(reedServers.size),
                     accent = MaterialTheme.colorScheme.primary,
                     initiallyExpanded = true,
@@ -2633,7 +2633,7 @@ fun ReedAccountScreen(locationViewModel: LocationViewModel, onLogout: () -> Unit
                 Text("Войти по коду", style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Black)
                 Spacer(Modifier.height(8.dp))
-                Text("Чтобы увидеть подписку, трафик и устройства — войдите по коду из бота @reedvpnbot.",
+                Text("Чтобы увидеть подписку, трафик и устройства — войдите по коду доступа.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(16.dp))

@@ -60,7 +60,7 @@ internal expect suspend fun <T> withProxyAuthentication(
 object ReedTempServer {
     const val STORAGE_ID = "reed-temp-vpn"
     const val LOCATION_ID = "reed-temp"
-    const val NAME = "Только приложение и Telegram Bot @reedvpnbot"
+    const val NAME = "Только приложение и Telegram"
     const val DESC = "Временный доступ для регистрации через Telegram. Работает только приложение и Telegram."
     const val LIMIT_BYTES = 5L * 1024 * 1024 * 1024  // 5 ГБ на устройство
     private const val HOST = "132.243.242.194"
@@ -198,7 +198,7 @@ class LocationsRepositoryImpl(
             if (lastImportError == null) {
                 lastImportError = if (text.normalizedImportText().isHttpUrl()) {
                     "Не удалось загрузить подписку по ссылке. Проверьте ссылку и соединение " +
-                        "(на мобильной сети сайт подписки может быть недоступен без VPN)."
+                        "(на мобильной сети сайт подписки может быть недоступен)."
                 } else {
                     "Ключ подписки не распознан. Проверьте, что вставлен полный ключ или ссылка."
                 }
