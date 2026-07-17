@@ -19,16 +19,24 @@ Apple 3.1.1 обычно требует IAP для цифровых подпис
 
 ## Записка ревьюеру (App Review Notes) — EN
 ```
-Reed is a proxy client. Users connect using access they already have — either an
-access CODE or by pasting a config KEY (VLESS/VMess/Trojan/Shadowsocks/SOCKS).
-The app does not sell or provide servers and has NO in-app purchases.
+Reed is a universal proxy client. It does NOT provide or sell any servers and has
+NO in-app purchases. The user brings their own configuration (from any provider)
+and pastes it into the app; Reed only applies that configuration. The app accepts
+any standard config: VLESS, VMess, Trojan, Shadowsocks, SOCKS, and subscription
+links.
 
-Demo access code: REED-MX4ZBBV5
-Steps to test: open the app → "Sign in with code" → enter the code →
-a server list appears → tap the big round button to connect.
-(You can also tap "Paste subscription key" to import a config manually.)
+What makes Reed different: it includes a WebRTC-based transport (data channel
+tunneling) in addition to standard protocols — useful on restrictive networks.
+This transport is not offered by other clients on the App Store.
 
-Reed collects no data, keeps no traffic logs, and does not track users.
+How to test (paste a sample config):
+1. Open the app → tap "Paste subscription key" (the main button).
+2. Paste this sample subscription link:
+   https://reedapp.ru/sub/2akxYLYkwrMwRfaqW4MBm5VCGgA0jhI-
+3. A server list loads from that config → tap the big round button to connect.
+
+There is no login, no account, and no way to purchase or unlock anything inside
+the app. Reed collects no data, keeps no traffic logs, does not track users.
 Export compliance: standard encryption (TLS) only.
 ```
 Демо-аккаунт: имя в кабинете «TEST CODE», без Telegram/аватара, подписка бессрочная,

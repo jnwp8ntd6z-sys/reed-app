@@ -296,6 +296,13 @@ object ReedLinks {
 // при старте. По умолчанию true (direct-APK, desktop). Меняется до первой отрисовки UI.
 object ReedBuildFlags {
     var showBotLinks: Boolean = true
+
+    // BYOC-режим («bring your own config»): на входе ведущий сценарий — вставка любого
+    // стандартного конфига (VLESS/VMess/Trojan/SS/SOCKS), без входа по коду/приглашению.
+    // iOS/App Store выставляет true: приложение позиционируется как универсальный
+    // клиент, который не разблокирует платный функционал внутри себя (гайдлайн 3.1.1),
+    // а лишь применяет конфиг, полученный пользователем самостоятельно.
+    var byocOnly: Boolean = false
 }
 
 @Serializable

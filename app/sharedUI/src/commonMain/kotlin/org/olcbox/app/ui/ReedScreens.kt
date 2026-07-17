@@ -438,41 +438,62 @@ private fun ReedIosOnboardingScreen(
                 Text("REED", style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Black, color = Color.White)
                 Spacer(Modifier.height(8.dp))
-                Text("Клиент для ваших подписок", style = MaterialTheme.typography.bodyMedium,
+                Text(
+                    if (ReedBuildFlags.byocOnly)
+                        "Универсальный клиент с WebRTC-транспортом"
+                    else "Клиент для ваших подписок",
+                    style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.7f), textAlign = TextAlign.Center)
 
                 Spacer(Modifier.height(48.dp))
 
-                // Зелёная — вход по коду
-                ReedPrimaryButton(text = "Войти по коду") { showCode = true }
-                Spacer(Modifier.height(6.dp))
-                Text("Ваш код доступа", style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.6f))
+                // BYOC-режим (iOS/App Store): универсальный клиент. Ведущий и единственный
+                // сценарий входа — вставка любого стандартного конфига. Вход по коду и по
+                // приглашению скрыты: приложение ничего не разблокирует внутри себя (3.1.1).
+                if (ReedBuildFlags.byocOnly) {
+                    // Зелёная — вставить конфиг (главный сценарий).
+                    ReedPrimaryButton(text = "Вставить ключ подписки") { showPaste = true }
+                    Spacer(Modifier.height(6.dp))
+                    Text("Вставьте свой конфиг: VLESS, VMess, Trojan, Shadowsocks, SOCKS",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.6f), textAlign = TextAlign.Center)
+                    if (pasteError.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(pasteError, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+                    }
+                } else {
+                    // Зелёная — вход по коду
+                    ReedPrimaryButton(text = "Войти по коду") { showCode = true }
+                    Spacer(Modifier.height(6.dp))
+                    Text("Ваш код доступа", style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.6f))
 
-                Spacer(Modifier.height(20.dp))
+                    Spacer(Modifier.height(20.dp))
 
-                // Белая — вставить ключ подписки (режим как Happ: вставил ключ → пользуешься).
-                Button(
-                    onClick = { showPaste = true },
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White, contentColor = Color(0xFF0A0A0A)),
-                ) { Text("Вставить ключ подписки", fontWeight = FontWeight.Black) }
-                if (pasteError.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(pasteError, style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
-                }
+                    // Белая — вставить ключ подписки (режим как Happ: вставил ключ → пользуешься).
+                    Button(
+                        onClick = { showPaste = true },
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.White, contentColor = Color(0xFF0A0A0A)),
+                    ) { Text("Вставить ключ подписки", fontWeight = FontWeight.Black) }
+                    if (pasteError.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(pasteError, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+                    }
 
-                Spacer(Modifier.height(14.dp))
-                // Вход для друга/члена семьи по коду-приглашению (присоединиться к чужой подписке).
-                TextButton(onClick = { showJoin = true }, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Rounded.Key, contentDescription = null,
-                        tint = Color.White.copy(alpha = 0.85f), modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Войти по приглашению друга",
-                        color = Color.White.copy(alpha = 0.85f), fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(14.dp))
+                    // Вход для друга/члена семьи по коду-приглашению (присоединиться к чужой подписке).
+                    TextButton(onClick = { showJoin = true }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Rounded.Key, contentDescription = null,
+                            tint = Color.White.copy(alpha = 0.85f), modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Войти по приглашению друга",
+                            color = Color.White.copy(alpha = 0.85f), fontWeight = FontWeight.SemiBold)
+                    }
                 }
             }
         }
