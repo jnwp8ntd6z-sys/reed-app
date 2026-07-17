@@ -2646,6 +2646,21 @@ fun ReedAccountScreen(locationViewModel: LocationViewModel, onLogout: () -> Unit
         ScreenTitle("Личный кабинет")
         Spacer(Modifier.height(20.dp))
 
+        if (token == null && ReedBuildFlags.byocOnly) {
+            // BYOC-режим: аккаунта/кода нет вообще. Приложение работает по вставленному
+            // конфигу — кабинет показывает нейтральную справку, без входа по коду.
+            ReedCard {
+                Text("Работа по конфигу", style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Black)
+                Spacer(Modifier.height(8.dp))
+                Text("Reed — универсальный клиент. Вставьте свой конфиг на главном экране, " +
+                    "и приложение подключится по нему. Никакой регистрации и аккаунта не требуется.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            return@Column
+        }
+
         if (token == null) {
             // Режим без аккаунта: кабинет пустой, только вход по коду (без Telegram).
             ReedCard {
