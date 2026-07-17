@@ -415,10 +415,11 @@ private fun ReedIosOnboardingScreen(
     onDone: () -> Unit,
 ) {
     val uri = LocalUriHandler.current
+    val scope = rememberCoroutineScope()
     var showCode by remember { mutableStateOf(false) }
-    var showPaste by remember { mutableStateOf(false) }
     var showJoin by remember { mutableStateOf(false) }
-    var pasteError by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var statusMsg by remember { mutableStateOf("") }
 
     Box(Modifier.fillMaxSize().background(Color(0xFF0A0A0A))) {
         Column(
@@ -438,62 +439,75 @@ private fun ReedIosOnboardingScreen(
                 Text("REED", style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Black, color = Color.White)
                 Spacer(Modifier.height(8.dp))
-                Text(
-                    if (ReedBuildFlags.byocOnly)
-                        "Универсальный клиент с WebRTC-транспортом"
-                    else "Клиент для ваших подписок",
+                Text("Быстрый доступ к открытому интернету",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.7f), textAlign = TextAlign.Center)
 
                 Spacer(Modifier.height(48.dp))
 
-                // BYOC-режим (iOS/App Store): универсальный клиент. Ведущий и единственный
-                // сценарий входа — вставка любого стандартного конфига. Вход по коду и по
-                // приглашению скрыты: приложение ничего не разблокирует внутри себя (3.1.1).
-                if (ReedBuildFlags.byocOnly) {
-                    // Зелёная — вставить конфиг (главный сценарий).
-                    ReedPrimaryButton(text = "Вставить ключ подписки") { showPaste = true }
-                    Spacer(Modifier.height(6.dp))
-                    Text("Вставьте свой конфиг: VLESS, VMess, Trojan, Shadowsocks, SOCKS",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.6f), textAlign = TextAlign.Center)
-                    if (pasteError.isNotEmpty()) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(pasteError, style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+                // Основной вход — через Telegram (регистрация/вход по аккаунту бота).
+                // authStart → открыть deeplink бота → poll до подтверждения.
+                ReedPrimaryButton(
+                    text = if (busy) "Подтвердите в Telegram…" else "Войти через Telegram",
+                    enabled = !busy,
+                ) {
+                    if (busy) return@ReedPrimaryButton
+                    busy = true
+                    statusMsg = ""
+                    scope.launch {
+                        try {
+                            val start = ReedApi.authStart()
+                            uri.openUri(start.deeplink)
+                            statusMsg = "Подтвердите вход в Telegram…"
+                            repeat(60) {
+                                delay(2000)
+                                val poll = ReedApi.authPoll(start.nonce)
+                                if (poll.status == "ok") {
+                                    ReedSession.token = poll.token
+                                    ReedSession.joinedViaCode = false
+                                    ReedSession.noCodeMode = false
+                                    ReedSession.consentAccepted = true
+                                    ReedSession.onboardingDone = true
+                                    onDone()
+                                    return@launch
+                                }
+                            }
+                            statusMsg = "Вход не завершён, попробуйте снова"
+                        } catch (e: Throwable) {
+                            statusMsg = "Ошибка входа, попробуйте снова"
+                        }
+                        busy = false
                     }
-                } else {
-                    // Зелёная — вход по коду
-                    ReedPrimaryButton(text = "Войти по коду") { showCode = true }
-                    Spacer(Modifier.height(6.dp))
-                    Text("Ваш код доступа", style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.6f))
+                }
+                if (statusMsg.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(statusMsg, style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.8f), textAlign = TextAlign.Center)
+                }
 
-                    Spacer(Modifier.height(20.dp))
+                Spacer(Modifier.height(20.dp))
+                Text("— или —", style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+                Spacer(Modifier.height(12.dp))
 
-                    // Белая — вставить ключ подписки (режим как Happ: вставил ключ → пользуешься).
-                    Button(
-                        onClick = { showPaste = true },
-                        modifier = Modifier.fillMaxWidth().height(52.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.White, contentColor = Color(0xFF0A0A0A)),
-                    ) { Text("Вставить ключ подписки", fontWeight = FontWeight.Black) }
-                    if (pasteError.isNotEmpty()) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(pasteError, style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
-                    }
+                // Вход по коду доступа (без Telegram) — для тех, кому выдали код.
+                Button(
+                    onClick = { showCode = true },
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.White, contentColor = Color(0xFF0A0A0A)),
+                ) { Text("Войти по коду", fontWeight = FontWeight.Black) }
 
-                    Spacer(Modifier.height(14.dp))
-                    // Вход для друга/члена семьи по коду-приглашению (присоединиться к чужой подписке).
-                    TextButton(onClick = { showJoin = true }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Rounded.Key, contentDescription = null,
-                            tint = Color.White.copy(alpha = 0.85f), modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Войти по приглашению друга",
-                            color = Color.White.copy(alpha = 0.85f), fontWeight = FontWeight.SemiBold)
-                    }
+                Spacer(Modifier.height(14.dp))
+                // Вход для друга/члена семьи по коду-приглашению (присоединиться к чужой подписке).
+                TextButton(onClick = { showJoin = true }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Rounded.Key, contentDescription = null,
+                        tint = Color.White.copy(alpha = 0.85f), modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Войти по приглашению друга",
+                        color = Color.White.copy(alpha = 0.85f), fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -511,31 +525,6 @@ private fun ReedIosOnboardingScreen(
                 ReedSession.onboardingDone = true
                 showCode = false
                 onDone()
-            },
-        )
-    }
-
-    if (showPaste) {
-        PasteKeyDialog(
-            onDismiss = { showPaste = false },
-            onPaste = { text ->
-                pasteError = ""
-                homeViewModel.onImportFullConfig(
-                    rawText = reedLocationsUrlFromKey(text) ?: text,
-                    onComplete = {
-                        ReedSession.token = null
-                        ReedSession.joinedViaCode = false
-                        ReedSession.noCodeMode = true
-                        ReedSession.consentAccepted = true
-                        ReedSession.onboardingDone = true
-                        showPaste = false
-                        onDone()
-                    },
-                    onError = { msg ->
-                        showPaste = false
-                        pasteError = msg.ifBlank { "Не удалось распознать ключ. Проверьте и попробуйте снова." }
-                    },
-                )
             },
         )
     }
@@ -2645,21 +2634,6 @@ fun ReedAccountScreen(locationViewModel: LocationViewModel, onLogout: () -> Unit
     ) {
         ScreenTitle("Личный кабинет")
         Spacer(Modifier.height(20.dp))
-
-        if (token == null && ReedBuildFlags.byocOnly) {
-            // BYOC-режим: аккаунта/кода нет вообще. Приложение работает по вставленному
-            // конфигу — кабинет показывает нейтральную справку, без входа по коду.
-            ReedCard {
-                Text("Работа по конфигу", style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Black)
-                Spacer(Modifier.height(8.dp))
-                Text("Reed — универсальный клиент. Вставьте свой конфиг на главном экране, " +
-                    "и приложение подключится по нему. Никакой регистрации и аккаунта не требуется.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            return@Column
-        }
 
         if (token == null) {
             // Режим без аккаунта: кабинет пустой, только вход по коду (без Telegram).

@@ -49,10 +49,11 @@ class IosAppFactory {
         // App Store-сборка (iOS всегда App Store): Apple запрещает вести из приложения на
         // внешнюю оплату/управление подпиской. Прячем ВСЕ кликабельные переходы к Telegram-боту
         // (кнопки/ссылки). Некликабельный текст «код в @reedvpnbot» остаётся — это разрешено.
-        org.olcbox.app.data.reed.ReedBuildFlags.showBotLinks = false
-        // App Store: универсальный прокси-клиент. Ведущий сценарий — вставка конфига,
-        // без внутренней разблокировки платного (см. byocOnly).
-        org.olcbox.app.data.reed.ReedBuildFlags.byocOnly = true
+        // Дистрибуция через публичный TestFlight (не App Store) — это наше приложение
+        // для наших пользователей. Показываем управление через Telegram-бот и даём вход
+        // по Telegram/коду. (BYOC/App Store-режим отключён — вернём при org-аккаунте.)
+        org.olcbox.app.data.reed.ReedBuildFlags.showBotLinks = true
+        org.olcbox.app.data.reed.ReedBuildFlags.byocOnly = false
         return IosAppSession(platformBridge, olcRtcBridge, singBoxBridge)
     }
 
