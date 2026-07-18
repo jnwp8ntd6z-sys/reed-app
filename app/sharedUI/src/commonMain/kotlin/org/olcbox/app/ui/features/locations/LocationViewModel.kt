@@ -114,7 +114,10 @@ class LocationViewModel(
 
     fun loadLocations(onComplete: () -> Unit = {}) {
         val requestId = ++loadLocationsRequest
-        loadLocationsJob?.cancel()
+        // НЕ отменяем предыдущий job: частые перезагрузки (импорт, changes-flow, авто-пинг)
+        // могли отменить единственное чтение диска ДО того, как оно наполнит список → кэш
+        // серверов не отрисовывался. Устаревшие результаты и так отсекаются проверкой
+        // requestId ниже (пишет в список только самый свежий запрос).
         loadLocationsJob = viewModelScope.launch {
             val bundle = locationsRepository.getBundle()
             val savedConfigs = bundle.locations

@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -87,6 +88,11 @@ object ReedTempServer {
 // https://reedapp.ru/app/locations?token=… (VLESS) и …/app/olcconf?token=… (olcRTC/LTE) —
 // по этому префиксу они отличаются от чужих подписок и одиночных ключей.
 internal const val REED_ACCOUNT_SUBSCRIPTION_PREFIX = "https://reedapp.ru/app/"
+
+// Жёсткий потолок времени на загрузку ОДНОЙ подписки (выше сетевого таймаута ktor 8с как
+// страховка от «трикла» на придушенной сети — чтобы запрос не висел бесконечно). Загрузка
+// идёт ВНЕ mutationMutex, поэтому даже при таймауте кэш серверов читается мгновенно.
+private const val SUBSCRIPTION_FETCH_TIMEOUT_MS = 9_000L
 
 private fun LocationBundleV4.withTempServer(): LocationBundleV4 {
     // Свежий temp всегда последним; убираем возможный персистнутый старый дубль.
@@ -218,11 +224,11 @@ class LocationsRepositoryImpl(
     }
 
     override suspend fun refreshSubscriptions(subscriptionProxy: SubscriptionFetchProxy?): Int {
+        val snapshot = snapshotSubscriptionIntervals(onlyUrls = null)
+        if (snapshot.isEmpty()) return 0
+        val prefetched = prefetchSubscriptions(snapshot, subscriptionProxy)
         return mutationMutex.withLock {
-            refreshSubscriptionsUnlocked(
-                onlyUrls = null,
-                subscriptionProxy = subscriptionProxy
-            )
+            refreshSubscriptionsUnlocked(onlyUrls = null, prefetched = prefetched)
         }
     }
 
@@ -232,17 +238,50 @@ class LocationsRepositoryImpl(
     ): Int {
         val normalizedUrl = subscriptionUrl.trim()
         if (normalizedUrl.isBlank()) return 0
+        val onlyUrls = setOf(normalizedUrl)
+        val snapshot = snapshotSubscriptionIntervals(onlyUrls = onlyUrls)
+        if (snapshot.isEmpty()) return 0
+        val prefetched = prefetchSubscriptions(snapshot, subscriptionProxy)
         return mutationMutex.withLock {
-            refreshSubscriptionsUnlocked(
-                onlyUrls = setOf(normalizedUrl),
-                subscriptionProxy = subscriptionProxy
-            )
+            refreshSubscriptionsUnlocked(onlyUrls = onlyUrls, prefetched = prefetched)
         }
     }
 
+    // Снимок URL подписок и их интервалов под КОРОТКИМ mutex (без сети).
+    private suspend fun snapshotSubscriptionIntervals(onlyUrls: Set<String>?): Map<String, Int?> =
+        mutationMutex.withLock {
+            val bundle = getBundleUnlocked()
+            bundle.locations
+                .mapNotNull { entry ->
+                    entry.subscriptionUrl?.trim()?.takeIf { it.isNotBlank() }?.let { it to entry }
+                }
+                .groupBy({ it.first }, { it.second })
+                .filterKeys { onlyUrls == null || it in onlyUrls }
+                .mapValues { (_, entries) -> entries.subscriptionUpdateIntervalHours() }
+        }
+
+    // Сетевая загрузка подписок ВНЕ mutex — чтобы висящий на придушенной сети запрос НЕ
+    // держал mutationMutex и не блокировал getBundle()/чтение кэша серверов. Именно из-за
+    // этого (баг 18.07) список не появлялся, пока интернет не выключат полностью.
+    private suspend fun prefetchSubscriptions(
+        urlIntervals: Map<String, Int?>,
+        subscriptionProxy: SubscriptionFetchProxy?
+    ): Map<String, ResolvedImport?> =
+        urlIntervals.mapValues { (url, interval) ->
+            withTimeoutOrNull(SUBSCRIPTION_FETCH_TIMEOUT_MS) {
+                resolveParsedImport(
+                    text = url,
+                    fallbackSubscriptionInterval = interval,
+                    subscriptionProxy = subscriptionProxy
+                )
+            }
+        }
+
+    // ВНИМАНИЕ: сеть (resolveParsedImport) выполнена ДО входа сюда и передана в prefetched.
+    // Внутри — только чтение/слияние/запись под mutex, без сети (см. prefetchSubscriptions).
     private suspend fun refreshSubscriptionsUnlocked(
         onlyUrls: Set<String>?,
-        subscriptionProxy: SubscriptionFetchProxy?
+        prefetched: Map<String, ResolvedImport?>
     ): Int {
         val bundle = getBundleUnlocked()
         if (bundle.locations.isEmpty()) return 0
@@ -275,11 +314,7 @@ class LocationsRepositoryImpl(
 
         groupedByUrl.forEach { (url, previousEntries) ->
             val previousInterval = previousEntries.subscriptionUpdateIntervalHours()
-            val resolved = resolveParsedImport(
-                text = url,
-                fallbackSubscriptionInterval = previousInterval,
-                subscriptionProxy = subscriptionProxy
-            ) ?: run {
+            val resolved = prefetched[url] ?: run {
                 preservePreviousEntries(previousEntries)
                 return@forEach
             }
@@ -347,10 +382,11 @@ class LocationsRepositoryImpl(
     }
 
     override suspend fun refreshDueSubscriptions(subscriptionProxy: SubscriptionFetchProxy?): Int {
-        return mutationMutex.withLock {
+        // Какие подписки пора обновить — считаем под КОРОТКИМ mutex (без сети).
+        val dueIntervals = mutationMutex.withLock {
             val bundle = getBundleUnlocked()
             val now = nowEpochMs()
-            val dueUrls = bundle.locations
+            bundle.locations
                 .mapNotNull { entry ->
                     val url = entry.subscriptionUrl?.trim()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
                     val metadata = entry.metadata?.subscription
@@ -358,18 +394,17 @@ class LocationsRepositoryImpl(
                         ?: SubscriptionMetadata.DEFAULT_UPDATE_INTERVAL_HOURS
                     val lastRefreshAt = metadata?.lastRefreshAtEpochMs ?: 0L
                     val intervalMs = interval.toLong() * 60L * 60L * 1_000L
-                    url.takeIf { lastRefreshAt <= 0L || now - lastRefreshAt >= intervalMs }
+                    if (lastRefreshAt <= 0L || now - lastRefreshAt >= intervalMs) {
+                        url to metadata?.updateIntervalHours
+                    } else null
                 }
-                .toSet()
-
-            if (dueUrls.isEmpty()) {
-                0
-            } else {
-                refreshSubscriptionsUnlocked(
-                    onlyUrls = dueUrls,
-                    subscriptionProxy = subscriptionProxy
-                )
-            }
+                .toMap()
+        }
+        if (dueIntervals.isEmpty()) return 0
+        // Сеть — ВНЕ mutex, затем слияние под mutex.
+        val prefetched = prefetchSubscriptions(dueIntervals, subscriptionProxy)
+        return mutationMutex.withLock {
+            refreshSubscriptionsUnlocked(onlyUrls = dueIntervals.keys, prefetched = prefetched)
         }
     }
 
