@@ -50,6 +50,17 @@ interface IosMessageCallback {
     fun onError(message: String)
 }
 
+/**
+ * Слушатель РЕАЛЬНОГО состояния системного туннеля (NEPacketTunnelProvider). Системный VPN
+ * живёт отдельно от процесса приложения: переживает его закрытие и включается/выключается
+ * тумблером в Пункте управления iOS. Swift-сторона дёргает колбэк при каждом переходе
+ * .connected / .disconnected (+ один раз при регистрации с текущим состоянием), чтобы кнопка
+ * и таймер в приложении всегда отражали реальность.
+ */
+interface IosSystemTunnelStateListener {
+    fun onSystemTunnelState(connected: Boolean, connectedAtMillis: Long)
+}
+
 interface IosOlcRtcBridge {
     fun setLogWriter(writer: IosLogWriter?)
     fun start(request: IosOlcRtcStartRequest): IosBridgeResult
@@ -80,6 +91,14 @@ interface IosSingBoxBridge {
     fun startSystemTunnel(token: String, server: String, split: Boolean): IosBridgeResult
     fun stopSystemTunnel()
     fun isSystemTunnelConnected(): Boolean
+
+    /** Реальное время подъёма системного туннеля (epoch millis из NEVPNConnection.connectedDate),
+     * 0 — туннель не подключён/время неизвестно. Переживает перезапуск приложения. */
+    fun systemTunnelConnectedAtMillis(): Long
+
+    /** Подписка на переходы состояния системного туннеля (см. [IosSystemTunnelStateListener]).
+     * При регистрации Swift сразу сообщает текущее состояние — ресинк после перезапуска. */
+    fun setSystemTunnelStateListener(listener: IosSystemTunnelStateListener?)
 
     /**
      * СИСТЕМНЫЙ туннель для LTE (olcRTC). В отличие от startSystemTunnel (VLESS): расширение

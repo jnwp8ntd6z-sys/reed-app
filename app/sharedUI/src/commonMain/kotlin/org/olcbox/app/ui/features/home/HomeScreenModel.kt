@@ -40,6 +40,10 @@ class HomeScreenViewModel(
     val state get() = _state.asStateFlow()
     val logs get() = vpnManager.logs
 
+    // Реальное время подключения от системы (iOS: NEVPNConnection.connectedDate) для таймера
+    // сессии; null — платформа не знает, UI считает от локальной метки.
+    fun vpnConnectedAtMillis(): Long? = vpnManager.connectedAtEpochMillis()
+
     init {
         loadCurrentConfig()
         startSubscriptionAutoRefresh()

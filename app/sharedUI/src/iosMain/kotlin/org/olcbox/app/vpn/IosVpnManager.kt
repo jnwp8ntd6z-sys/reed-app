@@ -79,7 +79,41 @@ class IosVpnManager(
                     ?.let { addLog("vless: $it") }
             }
         })
+        // Привязка кнопки/таймера к РЕАЛЬНОМУ состоянию системного туннеля. Туннель живёт
+        // отдельно от процесса приложения: переживает его закрытие и управляется тумблером
+        // в Пункте управления iOS. Swift шлёт переходы .connected/.disconnected (+ текущее
+        // состояние сразу при регистрации — ресинк после перезапуска приложения).
+        singBoxBridge.setSystemTunnelStateListener(object : org.olcbox.app.ios.IosSystemTunnelStateListener {
+            override fun onSystemTunnelState(connected: Boolean, connectedAtMillis: Long) {
+                if (connected) {
+                    // Внешнее включение (шторка) или ресинк после перезапуска: туннель уже
+                    // поднят системой — отражаем состояние без запуска транспорта.
+                    systemTunnelActive = true
+                    if (_status.value !is VpnStatus.Connected) {
+                        setStatus(VpnStatus.Connected)
+                        addLog("Системный туннель активен (синхронизация с iOS)")
+                    }
+                } else {
+                    // Внешнее выключение (тумблер VPN в Пункте управления/Настройках).
+                    // Свои операции не трогаем: во время Connecting/Reconnecting/Stopping
+                    // переходами управляют start/stop, а ранний .disconnected при подъёме —
+                    // штатная фаза, не обрыв.
+                    if (systemTunnelActive && _status.value is VpnStatus.Connected) {
+                        systemTunnelActive = false
+                        setStatus(VpnStatus.Disconnected)
+                        addLog("Системный туннель выключен снаружи (iOS)")
+                    }
+                }
+            }
+        })
     }
+
+    // Реальное время подъёма системного туннеля из NEVPNConnection.connectedDate — для
+    // таймера сессии, который должен переживать перезапуск приложения.
+    override fun connectedAtEpochMillis(): Long? =
+        if (systemTunnelActive) {
+            singBoxBridge.systemTunnelConnectedAtMillis().takeIf { it > 0L }
+        } else null
 
     override fun needsPermission(): Boolean = false
 
@@ -147,6 +181,7 @@ class IosVpnManager(
 
     fun close() {
         generation++
+        runCatching { singBoxBridge.setSystemTunnelStateListener(null) }
         runCatching { olcRtcBridge.setLogWriter(null) }
         runCatching { olcRtcBridge.stop() }
         runCatching { singBoxBridge.setLogWriter(null) }

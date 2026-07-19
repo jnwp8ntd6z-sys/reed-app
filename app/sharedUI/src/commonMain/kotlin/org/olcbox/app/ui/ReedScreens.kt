@@ -215,13 +215,16 @@ fun ReedOnboardingScreen(
     val tempConnecting = state.isVpnLoading
     val limitReached = ReedSession.tempUsedBytes >= ReedTempServer.LIMIT_BYTES
 
-    // Таймер сессии временного VPN — по стенным часам (метка старта), устойчив к сворачиванию.
+    // Таймер сессии временного VPN — от системного времени подключения (iOS знает его даже
+    // после перезапуска приложения), иначе по стенным часам с локальной меткой старта.
     var sessionSeconds by remember { mutableStateOf(0L) }
     LaunchedEffect(tempConnected) {
         if (tempConnected) {
-            val startMs = kotlin.time.Clock.System.now().toEpochMilliseconds()
+            val fallbackStartMs = kotlin.time.Clock.System.now().toEpochMilliseconds()
             while (true) {
-                sessionSeconds = (kotlin.time.Clock.System.now().toEpochMilliseconds() - startMs) / 1000
+                val startMs = homeViewModel.vpnConnectedAtMillis() ?: fallbackStartMs
+                sessionSeconds = ((kotlin.time.Clock.System.now().toEpochMilliseconds() - startMs) / 1000)
+                    .coerceAtLeast(0L)
                 delay(1000)
             }
         } else sessionSeconds = 0L
@@ -1434,16 +1437,18 @@ fun ReedHomeScreen(
         }
     }
 
-    // Локальный таймер сессии: считаем по СТЕННЫМ ЧАСАМ (метка старта), а не по «тикам».
-    // На iOS при сворачивании приложения корутина замирает — счётчик тиков вставал бы и
-    // «терял» фоновое время. С меткой старта после возврата сразу показывается корректное
-    // общее время подключения.
+    // Таймер сессии: считаем от РЕАЛЬНОГО времени подключения системного туннеля (iOS
+    // отдаёт его из NEVPNConnection.connectedDate — переживает закрытие приложения и
+    // включение из Пункта управления). Если платформа времени не знает — по стенным часам
+    // с локальной меткой старта (устойчиво к сворачиванию: тики не «теряют» фон).
     var sessionSeconds by remember { mutableStateOf(0L) }
     LaunchedEffect(state.isVpnConnected) {
         if (state.isVpnConnected) {
-            val startMs = kotlin.time.Clock.System.now().toEpochMilliseconds()
+            val fallbackStartMs = kotlin.time.Clock.System.now().toEpochMilliseconds()
             while (true) {
-                sessionSeconds = (kotlin.time.Clock.System.now().toEpochMilliseconds() - startMs) / 1000
+                val startMs = homeViewModel.vpnConnectedAtMillis() ?: fallbackStartMs
+                sessionSeconds = ((kotlin.time.Clock.System.now().toEpochMilliseconds() - startMs) / 1000)
+                    .coerceAtLeast(0L)
                 delay(1000)
             }
         } else {

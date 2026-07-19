@@ -95,6 +95,24 @@ final class SwiftSingBoxManager: NSObject, @unchecked Sendable, IosSingBoxBridge
         ReedVPNManager.shared.isConnected()
     }
 
+    // Реальное время подъёма туннеля (NEVPNConnection.connectedDate) — переживает
+    // перезапуск приложения; 0 = не подключён/неизвестно.
+    func systemTunnelConnectedAtMillis() -> Int64 {
+        ReedVPNManager.shared.connectedDateMillis()
+    }
+
+    // Подписка Kotlin-стороны на реальные переходы состояния системного туннеля
+    // (включая внешние: тумблер VPN в Пункте управления, перезапуск приложения).
+    func setSystemTunnelStateListener(listener: IosSystemTunnelStateListener?) {
+        guard let listener else {
+            ReedVPNManager.shared.setStateHandler(nil)
+            return
+        }
+        ReedVPNManager.shared.setStateHandler { connected, connectedAtMillis in
+            listener.onSystemTunnelState(connected: connected, connectedAtMillis: connectedAtMillis)
+        }
+    }
+
     // Системный туннель для LTE (olcRTC внутри extension). Расширение само поднимает движок
     // olcRTC и прогоняет через него весь трафик TUN (см. PacketTunnelProvider mode=olc).
     func startSystemTunnelOlc(

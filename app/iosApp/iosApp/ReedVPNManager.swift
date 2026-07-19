@@ -16,6 +16,77 @@ import Foundation
     private let providerBundleID = "ru.reedapp.app.PacketTunnel"
     private var manager: NETunnelProviderManager?
 
+    // Колбэк реального состояния туннеля для Kotlin-стороны: (connected, connectedAtMillis).
+    // Туннель живёт отдельно от процесса приложения (переживает закрытие, управляется
+    // тумблером в Пункте управления) — приложение обязано отражать его состояние, а не
+    // помнить своё. Дёргается на каждом переходе .connected/.disconnected + один раз при
+    // регистрации с текущим состоянием (ресинк после перезапуска приложения).
+    private var stateHandler: ((Bool, Int64) -> Void)?
+
+    private override init() {
+        super.init()
+        // Глобальный наблюдатель статуса VPN: object=nil, потому что connection-объект
+        // меняется (loadOrCreate создаёт новые менеджеры), а уведомления шлёт система для
+        // каждого из них. Фильтруем по типу — в нашем процессе только наш туннель.
+        NotificationCenter.default.addObserver(
+            forName: .NEVPNStatusDidChange, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self, let connection = note.object as? NEVPNConnection else { return }
+            self.emitState(connection)
+        }
+    }
+
+    /// Регистрирует (или снимает, nil) обработчик состояния и сразу сообщает текущее
+    /// состояние существующего туннеля — ресинк кнопки/таймера после перезапуска приложения.
+    @objc func setStateHandler(_ handler: ((Bool, Int64) -> Void)?) {
+        stateHandler = handler
+        guard handler != nil else { return }
+        if manager != nil {
+            emitCurrentStateOnMain()
+            return
+        }
+        NETunnelProviderManager.loadAllFromPreferences { managers, _ in
+            guard let mgr = managers?.first else { return }
+            self.manager = mgr
+            self.emitCurrentStateOnMain()
+        }
+    }
+
+    // В @Sendable-замыкание переносим только Sendable-ссылку на self — non-Sendable
+    // manager/connection читаем уже на главной очереди (strict concurrency).
+    private func emitCurrentStateOnMain() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let connection = self.manager?.connection else { return }
+            self.emitState(connection)
+        }
+    }
+
+    /// Время реального подъёма туннеля (epoch millis) из NEVPNConnection.connectedDate;
+    /// 0 — не подключён/неизвестно. Переживает перезапуск приложения.
+    @objc func connectedDateMillis() -> Int64 {
+        guard let connection = manager?.connection, connection.status == .connected else { return 0 }
+        return Self.millis(connection.connectedDate)
+    }
+
+    private static func millis(_ date: Date?) -> Int64 {
+        guard let date else { return 0 }
+        return Int64(date.timeIntervalSince1970 * 1000)
+    }
+
+    // Сообщаем Kotlin только устойчивые состояния (.connected / .disconnected / .invalid):
+    // промежуточные .connecting/.reasserting/.disconnecting обрабатывает логика start/stop.
+    private func emitState(_ connection: NEVPNConnection) {
+        guard let handler = stateHandler else { return }
+        switch connection.status {
+        case .connected:
+            handler(true, Self.millis(connection.connectedDate))
+        case .disconnected, .invalid:
+            handler(false, 0)
+        default:
+            break
+        }
+    }
+
     /// Загружает существующий или создаёт новый VPN-менеджер и сохраняет его
     /// (первый saveToPreferences вызывает системный запрос разрешения VPN).
     private func loadOrCreate(_ completion: @escaping (NETunnelProviderManager?) -> Void) {
