@@ -40,4 +40,12 @@ interface VpnManager {
      * локальную метку.
      */
     fun connectedAtEpochMillis(): Long? = null
+
+    /**
+     * Полный сырой диагностический лог с диска (не из оперативной памяти) — переживает
+     * перезапуск приложения. На iOS это лог extension (App Group), пишется процессом
+     * туннеля независимо от процесса приложения. null = платформа не хранит такой лог
+     * отдельно от [logs] (Android/Desktop — там [logs] и так не сбрасывается так резко).
+     */
+    fun rawDiagnosticsLog(): String? = null
 }

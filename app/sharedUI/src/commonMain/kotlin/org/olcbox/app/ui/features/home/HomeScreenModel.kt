@@ -384,6 +384,13 @@ class HomeScreenViewModel(
             logs.forEachIndexed { index, line ->
                 appendLine("${index + 1}. $line")
             }
+            // Полный лог с диска (переживает перезапуск приложения) — на случай если человек
+            // успел выйти и зайти обратно и [logs] в памяти уже пустой/неполный.
+            vpnManager.rawDiagnosticsLog()?.takeIf { it.isNotBlank() }?.let { raw ->
+                appendLine()
+                appendLine("--- Raw tunnel log (disk, survives app restart) ---")
+                append(raw)
+            }
         }
     }
 }

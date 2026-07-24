@@ -47,6 +47,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     // olcRTC внутри extension активен → на stop надо остановить и его.
     private var olcActive = false
+    // Периодический "пульс" в лог, пока туннель предположительно жив — раньше между
+    // TUNNEL UP и stopTunnel лог молчал даже если внутри что-то ломалось (обрыв, DNS,
+    // зависший процесс). Пишет реальное состояние движка, а не просто "тишина=норм".
+    private var heartbeatTimer: DispatchSourceTimer?
+    private let heartbeatIntervalSec: Int = 20
     // Локальный SOCKS движка olcRTC поднимаем С авторизацией (как на Android): 127.0.0.1 доступен
     // другим приложениям устройства, auth не даёт им бесплатно тоннелить через наш LTE. Те же
     // креды инъектим в socks-outbound конфига sing-box (injectOlcAuth).
@@ -86,10 +91,34 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     override func stopTunnel(with reason: NEProviderStopReason,
                              completionHandler: @escaping () -> Void) {
         ExtLog.write("stopTunnel: reason=\(reason.rawValue)")
+        stopHeartbeat()
         var err: NSError?
         SingboxmobileStop(&err)
         if olcActive { MobileStop(); olcActive = false }
         completionHandler()
+    }
+
+    /// Пишет в ExtLog реальное состояние движка каждые heartbeatIntervalSec, пока туннель
+    /// должен быть активен. Без этого между "TUNNEL UP" и "stopTunnel" в логе тишина —
+    /// не отличить "всё тихо-хорошо" от "давно упало, просто никто не заметил".
+    private func startHeartbeat() {
+        stopHeartbeat()
+        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        timer.schedule(deadline: .now() + .seconds(heartbeatIntervalSec),
+                        repeating: .seconds(heartbeatIntervalSec))
+        timer.setEventHandler { [weak self] in
+            guard let self = self else { return }
+            let singboxUp = SingboxmobileIsRunning()
+            let olcUp = self.olcActive ? MobileIsRunning() : true
+            ExtLog.write("heartbeat: singbox_running=\(singboxUp) olc_running=\(olcUp)")
+        }
+        timer.resume()
+        heartbeatTimer = timer
+    }
+
+    private func stopHeartbeat() {
+        heartbeatTimer?.cancel()
+        heartbeatTimer = nil
     }
 
     // MARK: - VLESS (наш сервер по токену)
@@ -125,6 +154,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             var nsErr: NSError?
             let ok = SingboxmobileStartTun(configJson, fd, &nsErr)
             ExtLog.write(ok ? "vless: TUNNEL UP" : "vless: StartTun FAILED: \(nsErr?.localizedDescription ?? "?")")
+            if ok { self.startHeartbeat() }
             completionHandler(ok ? nil : nsErr)
         }
     }
@@ -203,6 +233,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 MobileStop(); self.olcActive = false
             } else {
                 ExtLog.write("olc: TUNNEL UP (sing-box running on tun)")
+                self.startHeartbeat()
             }
             completionHandler(ok ? nil : nsErr)
         }

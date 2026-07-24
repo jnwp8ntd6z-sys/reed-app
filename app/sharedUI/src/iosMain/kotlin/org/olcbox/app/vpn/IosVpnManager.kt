@@ -11,10 +11,12 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.darwin.Darwin
 import io.ktor.client.request.get
@@ -62,6 +64,14 @@ class IosVpnManager(
     private var operationJob: Job? = null
     private var generation = 0L
 
+    // Гейт от гонки при холодном старте: Swift-сторона резинкает реальное состояние
+    // системного туннеля АСИНХРОННО (NETunnelProviderManager.loadAllFromPreferences), а
+    // до первого ответа Kotlin-сторона по умолчанию считает всё отключённым. Если в это
+    // окно (обычно <1с, но не гарантированно) стартовать VPN — приложение решит, что
+    // нужно запускать заново уже РЕАЛЬНО работающий туннель, iOS откажет с ошибкой на
+    // пустом месте. Ждём первый колбэк (или таймаут) перед тем как доверять shouldRestart.
+    private val _initialSyncDone = MutableStateFlow(false)
+
     init {
         olcRtcBridge.setLogWriter(object : IosLogWriter {
             override fun writeLog(message: String) {
@@ -85,6 +95,7 @@ class IosVpnManager(
         // состояние сразу при регистрации — ресинк после перезапуска приложения).
         singBoxBridge.setSystemTunnelStateListener(object : org.olcbox.app.ios.IosSystemTunnelStateListener {
             override fun onSystemTunnelState(connected: Boolean, connectedAtMillis: Long) {
+                _initialSyncDone.value = true
                 if (connected) {
                     // Внешнее включение (шторка) или ресинк после перезапуска: туннель уже
                     // поднят системой — отражаем состояние без запуска транспорта.
@@ -117,10 +128,25 @@ class IosVpnManager(
 
     override fun needsPermission(): Boolean = false
 
+    // Читает лог extension прямо с диска (App Group), в обход [_logs] — тот сбрасывается
+    // при каждом перезапуске приложения, а этот файл пишет отдельный процесс туннеля и
+    // переживает закрытие/перезапуск app. Позволяет получить логи даже если человек успел
+    // выйти и зайти в приложение после того как что-то пошло не так.
+    override fun rawDiagnosticsLog(): String? = singBoxBridge.readExtensionLog()
+
     override fun startVpn() {
         val requestedGeneration = ++generation
+        // Новый запрос ОТМЕНЯЕТ незавершённую предыдущую операцию вместо того, чтобы
+        // вставать за ней в очередь на mutex — иначе быстрые переключения серверов
+        // выполняются одно за другим по 15-20с каждое, а кнопка выглядит зависшей.
+        operationJob?.cancel()
         operationJob = scope.launch {
             mutex.withLock {
+                if (requestedGeneration != generation) return@withLock
+
+                // Гейт от гонки при холодном старте (см. _initialSyncDone) — ждём реальное
+                // состояние системного туннеля прежде чем решать, рестарт это или чистый старт.
+                awaitInitialSync()
                 if (requestedGeneration != generation) return@withLock
 
                 val shouldRestart = _status.value is VpnStatus.Connected ||
@@ -140,8 +166,17 @@ class IosVpnManager(
         }
     }
 
+    // Ждёт первый реальный колбэк о состоянии системного туннеля (не дольше 1.5с) —
+    // защита от гонки на холодном старте, когда Kotlin-сторона ещё не знает, жив ли
+    // туннель на самом деле (Swift резинкает это асинхронно через NETunnelProviderManager).
+    private suspend fun awaitInitialSync() {
+        if (_initialSyncDone.value) return
+        withTimeoutOrNull(1500) { _initialSyncDone.first { it } }
+    }
+
     override fun stopVpn() {
         generation++
+        operationJob?.cancel()
         operationJob = scope.launch {
             mutex.withLock {
                 setStatus(VpnStatus.Stopping)
@@ -193,6 +228,7 @@ class IosVpnManager(
 
     // Диагностика: сколько символов лога extension уже показано (App Group-файл растёт).
     private var extLogLen = 0
+    private var pumpJob: Job? = null
 
     private fun pumpExtensionLog() {
         val content = singBoxBridge.readExtensionLog() ?: return
@@ -205,13 +241,17 @@ class IosVpnManager(
     private suspend fun startTransport(requestedGeneration: Long, isRestart: Boolean) {
         setStatus(if (isRestart) VpnStatus.Reconnecting else VpnStatus.Connecting)
 
-        // Extension пишет пошаговый лог в App Group; качаем его в логи приложения ~42с,
-        // чтобы видеть весь подъём системного туннеля (олсRTC-хендшейк ~20с, окно .connected 38с).
+        // Extension пишет пошаговый лог в App Group; качаем его в логи приложения ВСЁ ВРЕМЯ,
+        // пока туннель предполагается активным — не только первые 42с подъёма, иначе экспорт
+        // логов после минуты работы показывает тишину, будто ничего не происходит.
         extLogLen = 0
-        scope.launch {
-            repeat(42) {
+        pumpJob?.cancel()
+        pumpJob = scope.launch {
+            while (true) {
                 pumpExtensionLog()
-                kotlinx.coroutines.delay(1000)
+                val s = _status.value
+                if (s !is VpnStatus.Connected && s !is VpnStatus.Connecting && s !is VpnStatus.Reconnecting) break
+                kotlinx.coroutines.delay(2000)
             }
         }
 

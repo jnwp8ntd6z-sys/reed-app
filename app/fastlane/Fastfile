@@ -29,6 +29,20 @@ platform :ios do
       readonly: false,
     )
 
+    # project.yml держит CURRENT_PROJECT_VERSION="1" статично (XcodeGen-спека в git) —
+    # App Store Connect требует уникальный возрастающий номер билда на версию, поэтому
+    # берём последний загруженный номер и повышаем на 1 прямо перед сборкой.
+    latest_build = latest_testflight_build_number(
+      api_key: api_key,
+      app_identifier: "ru.reedapp.app",
+    )
+    next_build = latest_build.to_i + 1
+    increment_build_number(
+      build_number: next_build,
+      xcodeproj: "iosApp/iosApp.xcodeproj",
+    )
+    UI.message("Building iOS build number #{next_build} (latest in TestFlight was #{latest_build})")
+
     build_app(
       project: "iosApp/iosApp.xcodeproj",
       scheme: "iosApp",
