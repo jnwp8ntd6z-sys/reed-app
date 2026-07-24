@@ -109,8 +109,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         timer.setEventHandler { [weak self] in
             guard let self = self else { return }
             let singboxUp = SingboxmobileIsRunning()
-            let olcUp = self.olcActive ? MobileIsRunning() : true
-            ExtLog.write("heartbeat: singbox_running=\(singboxUp) olc_running=\(olcUp)")
+            // olc_running добавляем в лог ТОЛЬКО в LTE-режиме (olcActive) — в обычном VLESS
+            // движка olcRTC вообще нет, писать "olc_running=true" как заглушку вводило в
+            // заблуждение (выглядело так, будто olcRTC зачем-то работает и в VLESS-режиме).
+            if self.olcActive {
+                let olcUp = MobileIsRunning()
+                ExtLog.write("heartbeat: singbox_running=\(singboxUp) olc_running=\(olcUp)")
+            } else {
+                ExtLog.write("heartbeat: singbox_running=\(singboxUp)")
+            }
         }
         timer.resume()
         heartbeatTimer = timer
