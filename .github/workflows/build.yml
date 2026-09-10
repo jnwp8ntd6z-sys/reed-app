@@ -25,7 +25,7 @@ env:
   # Пин на июльский коммит форка reedvpnbot/olcrtc (последняя зелёная эпоха 16.07): в нём пакет
   # mobile ещё экспортирует SetProtector/Check/Ping/IsRunning/... — их зовёт Kotlin приложения.
   # НЕ "master": upstream/форк master может уехать (05.09 API пропал → пустой класс Mobile).
-  OLCRTC_REF: "e3db1d25f5f4"
+  OLCRTC_REF: "e3db1d25f5f427f183f997b98ed981a2c16cc0f5"
   ANDROID_NDK_VERSION: "28.2.13676358"
 
 jobs:
