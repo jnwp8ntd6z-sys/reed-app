@@ -37,7 +37,11 @@ val buildReedmobileAar by tasks.registering(Exec::class) {
     commandLine(
         "sh", "-c",
         "set -e; export PATH=\"$mergedPath\"; " +
-            "go get github.com/openlibrecommunity/olcrtc@master; " +
+            // olcRTC берём из НАШЕГО форка (checkout reedvpnbot/olcrtc, пин OLCRTC_REF в build.yml)
+            // через local-replace на $OLCRTC_REPO — а НЕ `go get ...@master`: upstream master уехал
+            // (05.09 из пакета mobile пропали SetProtector/Check/Ping/... → пустой класс Mobile,
+            // Kotlin падал Unresolved reference). Фолбэк на @master — только если OLCRTC_REPO пуст.
+            "if [ -n \"\$OLCRTC_REPO\" ]; then go mod edit -replace github.com/openlibrecommunity/olcrtc=\"\$OLCRTC_REPO\"; else go get github.com/openlibrecommunity/olcrtc@master; fi; " +
             "go get golang.org/x/mobile/bind@6129f5bee9d5; " +
             "go mod tidy; " +
             "\"$gomobileExecutable\" bind " +

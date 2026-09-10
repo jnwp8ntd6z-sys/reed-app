@@ -91,7 +91,10 @@ val buildOlcrtcIosXcframework by tasks.registering(Exec::class) {
     commandLine(
         "sh", "-c",
         "set -e; export PATH=\"$mergedPath\"; " +
-            "go get github.com/openlibrecommunity/olcrtc@master; " +
+            // olcRTC — из НАШЕГО форка через local-replace на $OLCRTC_REPO (пин OLCRTC_REF в build.yml),
+            // НЕ `go get ...@master`: upstream master уехал (05.09 API пакета mobile пропал → пустой
+            // класс Mobile, Kotlin падал Unresolved reference). Фолбэк на @master — если OLCRTC_REPO пуст.
+            "if [ -n \"\$OLCRTC_REPO\" ]; then go mod edit -replace github.com/openlibrecommunity/olcrtc=\"\$OLCRTC_REPO\"; else go get github.com/openlibrecommunity/olcrtc@master; fi; " +
             "go get golang.org/x/mobile/bind@6129f5bee9d5; " +
             "go mod tidy; " +
             // -tags with_utls ОБЯЗАТЕЛЕН для REALITY-клиента sing-box (иначе VLESS падает);
