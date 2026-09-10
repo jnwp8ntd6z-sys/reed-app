@@ -12,6 +12,8 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
@@ -51,7 +53,16 @@ object ReedApi {
         client.get("$BASE/app/auth/poll") { parameter("nonce", nonce) }.body()
 
     suspend fun subscription(token: String): SubscriptionResponse {
-        val text = client.get("$BASE/app/subscription") { parameter("token", token) }.bodyAsText()
+        // Одна повторная попытка: на «рваных» сетях РФ часть TLS-рукопожатий режется по пути,
+        // первый запрос падает по таймауту, а второй проходит.
+        val text = try {
+            client.get("$BASE/app/subscription") { parameter("token", token) }.bodyAsText()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            delay(700)
+            client.get("$BASE/app/subscription") { parameter("token", token) }.bodyAsText()
+        }
         val parsed = json.decodeFromString<SubscriptionResponse>(text)
         // Кэшируем только активную подписку — чтобы офлайн показывать рабочий аккаунт,
         // а не последний «закончилась».

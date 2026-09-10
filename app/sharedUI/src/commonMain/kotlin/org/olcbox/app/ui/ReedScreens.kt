@@ -1744,6 +1744,9 @@ fun ReedHomeScreen(
                     reloadSubscription()
                     homeViewModel.refreshSubscriptions {
                         locationViewModel.loadLocations {
+                            // Свежий список → перекачиваем конфиги ВСЕХ серверов в кэш, чтобы
+                            // подключение шло из кэша без обращения к API (iOS: App Group).
+                            homeViewModel.prewarmAllConfigs(force = true)
                             serversRefreshing = false
                             serversRefreshed = true
                             // Галочка плавно гаснет сама через 2с.
@@ -2637,9 +2640,13 @@ fun ReedAccountScreen(locationViewModel: LocationViewModel, onLogout: () -> Unit
         if (t != null) {
             statusMsg = "Загрузка…"
             data = try { ReedApi.subscription(t) } catch (e: Throwable) {
-                statusMsg = "Не удалось загрузить данные"; null
+                // Нет связи с API — показываем последнюю сохранённую подписку (как на главной),
+                // а не пустой кабинет.
+                val cached = ReedApi.cachedSubscription()
+                statusMsg = if (cached != null) "Нет связи — показаны сохранённые данные" else "Не удалось загрузить данные"
+                cached
             }
-            if (data != null) statusMsg = ""
+            if (data != null && statusMsg == "Загрузка…") statusMsg = ""
             val bytes = ReedApi.avatarBytes(t)
             if (bytes != null) avatar = decodeImageBitmap(bytes)
         }

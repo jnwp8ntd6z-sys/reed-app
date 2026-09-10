@@ -28,9 +28,9 @@ interface VpnManager {
      * Предзагрузка sing-box-конфигов для переданных VLESS-серверов в локальный кэш, пока
      * сеть доступна. Нужно для офлайн-подключения к ещё не использованным серверам: на
      * «зарезанном» мобильном наш API недоступен, и без кэша первое подключение к серверу
-     * не проходит. Реализовано только на Android; на остальных платформах — no-op.
+     * не проходит. force=true (кнопка «Обновить») — перекачать ВСЕ, даже уже закэшированные.
      */
-    suspend fun prewarmConfigs(locations: List<LocationConfig>) {}
+    suspend fun prewarmConfigs(locations: List<LocationConfig>, force: Boolean = false) {}
 
     /**
      * Реальное время подключения (epoch millis) от СИСТЕМЫ, если платформа его знает.

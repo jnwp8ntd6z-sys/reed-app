@@ -28,7 +28,9 @@ enum ExtLog {
         q.sync {
             let ts = ISO8601DateFormatter().string(from: Date())
             let line = "[\(ts)] \(msg)\n"
-            if reset {
+            // Ротация: heartbeat пишет каждые 20 с, без неё файл рос бесконечно.
+            let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+            if reset || size > 512_000 {
                 try? line.data(using: .utf8)?.write(to: url)
                 return
             }
@@ -65,26 +67,37 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         let mode = (conf["mode"] as? String) ?? "vless"
         ExtLog.write("startTunnel: mode=\(mode)", reset: true)
 
-        // Сетевые настройки TUN (общие для обоих режимов).
+        if mode == "olc" {
+            applyTunnelSettings(completionHandler: completionHandler) { [weak self] in
+                self?.startOlcTunnel(conf: conf, completionHandler: completionHandler)
+            }
+        } else {
+            // VLESS: конфиг получаем ДО подъёма TUN. После setTunnelNetworkSettings системный
+            // DNS (8.8.8.8/1.1.1.1) уже уходит в TUN, который ещё никто не читает → запрос
+            // конфига висел, «Подключение…» бесконечно (0 запросов /app/singbox на сервере).
+            startVlessTunnel(conf: conf, completionHandler: completionHandler)
+        }
+    }
+
+    /// Сетевые настройки TUN (общие для обоих режимов).
+    private func applyTunnelSettings(completionHandler: @escaping (Error?) -> Void,
+                                     then next: @escaping () -> Void) {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
         let ipv4 = NEIPv4Settings(addresses: ["172.19.0.1"], subnetMasks: ["255.255.255.0"])
         ipv4.includedRoutes = [NEIPv4Route.default()]   // весь трафик в TUN; split делает sing-box
         settings.ipv4Settings = ipv4
         settings.dnsSettings = NEDNSSettings(servers: ["8.8.8.8", "1.1.1.1"])
-        settings.mtu = 9000
+        // Как у tun-inbound в конфиге с сервера (mtu 1500). Было 9000: система отдавала в TUN
+        // пакеты крупнее, чем читает sing-box → «подключено, но тяжёлое не грузится».
+        settings.mtu = 1500
 
-        setTunnelNetworkSettings(settings) { [weak self] error in
+        setTunnelNetworkSettings(settings) { error in
             if let error = error {
                 ExtLog.write("setTunnelNetworkSettings FAILED: \(error.localizedDescription)")
                 completionHandler(error); return
             }
             ExtLog.write("setTunnelNetworkSettings ok")
-            guard let self = self else { return }
-            if mode == "olc" {
-                self.startOlcTunnel(conf: conf, completionHandler: completionHandler)
-            } else {
-                self.startVlessTunnel(conf: conf, completionHandler: completionHandler)
-            }
+            next()
         }
     }
 
@@ -140,29 +153,35 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 userInfo: [NSLocalizedDescriptionKey: "no token"]))
             return
         }
-        ExtLog.write("vless: fetching config server=\(server)…")
-        // Скачиваем sing-box конфиг (tun-inbound) и запускаем ядро на TUN этого extension.
-        fetchConfig(token: token, server: server, split: split) { [weak self] configJson in
+        resolveVlessConfig(token: token, server: server, split: split) { [weak self] configJson, fromCache in
             guard let self = self else { return }
             guard let configJson = configJson else {
-                ExtLog.write("vless: config fetch FAILED")
+                ExtLog.write("vless: no config (cache empty, fetch failed)")
                 completionHandler(NSError(domain: "ReedVPN", code: 2,
                     userInfo: [NSLocalizedDescriptionKey: "config fetch failed"]))
                 return
             }
-            let fd = self.tunnelFileDescriptor()
-            guard fd >= 0 else {
-                ExtLog.write("vless: tun fd NOT FOUND")
-                completionHandler(NSError(domain: "ReedVPN", code: 3,
-                    userInfo: [NSLocalizedDescriptionKey: "tun fd not found"]))
-                return
+            self.applyTunnelSettings(completionHandler: completionHandler) { [weak self] in
+                guard let self = self else { return }
+                let fd = self.tunnelFileDescriptor()
+                guard fd >= 0 else {
+                    ExtLog.write("vless: tun fd NOT FOUND")
+                    completionHandler(NSError(domain: "ReedVPN", code: 3,
+                        userInfo: [NSLocalizedDescriptionKey: "tun fd not found"]))
+                    return
+                }
+                ExtLog.write("vless: starting sing-box on tun fd=\(fd)…")
+                var nsErr: NSError?
+                if SingboxmobileIsRunning() { SingboxmobileStop(&nsErr); nsErr = nil }
+                let ok = SingboxmobileStartTun(configJson, fd, &nsErr)
+                ExtLog.write(ok ? "vless: TUNNEL UP" : "vless: StartTun FAILED: \(nsErr?.localizedDescription ?? "?")")
+                if ok {
+                    self.startHeartbeat()
+                    // Конфиг был из кэша → тихо обновляем его уже через поднятый туннель.
+                    if fromCache { self.refreshVlessConfigInBackground(token: token, server: server, split: split) }
+                }
+                completionHandler(ok ? nil : nsErr)
             }
-            ExtLog.write("vless: starting sing-box on tun fd=\(fd)…")
-            var nsErr: NSError?
-            let ok = SingboxmobileStartTun(configJson, fd, &nsErr)
-            ExtLog.write(ok ? "vless: TUNNEL UP" : "vless: StartTun FAILED: \(nsErr?.localizedDescription ?? "?")")
-            if ok { self.startHeartbeat() }
-            completionHandler(ok ? nil : nsErr)
         }
     }
 
@@ -234,6 +253,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             ExtLog.write("olc: starting sing-box on tun fd=\(fd)…")
             var nsErr: NSError?
+            if SingboxmobileIsRunning() { SingboxmobileStop(&nsErr); nsErr = nil }
             let ok = SingboxmobileStartTun(configJson, fd, &nsErr)
             if !ok {
                 ExtLog.write("olc: SingboxmobileStartTun FAILED: \(nsErr?.localizedDescription ?? "?")")
@@ -282,18 +302,60 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     // MARK: - Конфиги (cache-first: на «зарезанных» сетях РФ наш API недоступен → отдаём кэш сразу)
 
-    /// VLESS: /app/singbox?token=&server=&split=&inbound=tun
-    private func fetchConfig(token: String, server: String, split: Bool,
-                             completion: @escaping (String?) -> Void) {
-        var comps = URLComponents(string: "\(apiBase)/app/singbox")!
-        comps.queryItems = [
-            URLQueryItem(name: "token", value: token),
-            URLQueryItem(name: "server", value: server),
-            URLQueryItem(name: "split", value: split ? "1" : "0"),
-            URLQueryItem(name: "inbound", value: "tun"),
-        ]
-        cacheFirstGet(url: comps.url!, cacheURL: configCacheURL(server: server, split: split),
-                      completion: completion)
+    /// VLESS-конфиг для старта: 1) App Group (кладёт приложение по «Обновить»/при запуске),
+    /// 2) старый кэш extension, 3) сеть — ДО подъёма TUN, с таймаутом. completion(config, fromCache).
+    private func resolveVlessConfig(token: String, server: String, split: Bool,
+                                    completion: @escaping (String?, Bool) -> Void) {
+        if let dir = TunnelConfigStore.directory(),
+           let data = try? Data(contentsOf: TunnelConfigStore.fileURL(dir: dir, server: server, split: split)),
+           TunnelConfigStore.isValidConfig(data), let s = String(data: data, encoding: .utf8) {
+            ExtLog.write("vless: config from App Group cache server=\(server) split=\(split)")
+            completion(s, true); return
+        }
+        if let data = try? Data(contentsOf: configCacheURL(server: server, split: split)),
+           TunnelConfigStore.isValidConfig(data), let s = String(data: data, encoding: .utf8) {
+            ExtLog.write("vless: config from legacy extension cache server=\(server)")
+            completion(s, true); return
+        }
+        ExtLog.write("vless: no cache, fetching config BEFORE tun server=\(server)…")
+        guard let url = TunnelConfigStore.configURL(token: token, server: server, split: split) else {
+            completion(nil, false); return
+        }
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 12
+        cfg.timeoutIntervalForResource = 20
+        let session = URLSession(configuration: cfg)
+        session.dataTask(with: url) { data, response, error in
+            session.finishTasksAndInvalidate()
+            guard let body = TunnelConfigStore.validBody(data: data, response: response),
+                  let s = String(data: body, encoding: .utf8) else {
+                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                ExtLog.write("vless: config fetch FAILED http=\(code) err=\(error?.localizedDescription ?? "-")")
+                completion(nil, false); return
+            }
+            if let dir = TunnelConfigStore.directory() {
+                try? body.write(to: TunnelConfigStore.fileURL(dir: dir, server: server, split: split), options: .atomic)
+            }
+            ExtLog.write("vless: config fetched (\(body.count) B) and cached")
+            completion(s, false)
+        }.resume()
+    }
+
+    /// Фоновое обновление кэша после TUNNEL UP (best-effort, результат — только на следующий старт).
+    private func refreshVlessConfigInBackground(token: String, server: String, split: Bool) {
+        guard let url = TunnelConfigStore.configURL(token: token, server: server, split: split),
+              let dir = TunnelConfigStore.directory() else { return }
+        let target = TunnelConfigStore.fileURL(dir: dir, server: server, split: split)
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 20
+        cfg.timeoutIntervalForResource = 40
+        let session = URLSession(configuration: cfg)
+        session.dataTask(with: url) { data, response, _ in
+            session.finishTasksAndInvalidate()
+            guard let body = TunnelConfigStore.validBody(data: data, response: response) else { return }
+            try? body.write(to: target, options: .atomic)
+            ExtLog.write("vless: background config refresh ok (\(body.count) B)")
+        }.resume()
     }
 
     /// LTE: /app/olcsingbox?inbound=tun&olc_port=&split=  (split-РФ поверх локального olcRTC).
@@ -310,8 +372,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private func cacheFirstGet(url: URL, cacheURL: URL, completion: @escaping (String?) -> Void) {
         func httpGet(_ done: @escaping (String?) -> Void) {
-            let task = URLSession.shared.dataTask(with: url) { data, _, _ in
-                guard let data = data, let s = String(data: data, encoding: .utf8), !s.isEmpty else {
+            let task = URLSession.shared.dataTask(with: url) { data, response, _ in
+                guard let body = TunnelConfigStore.validBody(data: data, response: response),
+                      let s = String(data: body, encoding: .utf8) else {
                     done(nil); return
                 }
                 try? s.data(using: .utf8)?.write(to: cacheURL)
@@ -338,5 +401,53 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private func olcConfigCacheURL(split: Bool) -> URL {
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         return dir.appendingPathComponent("olcsingbox_tun_\(split ? "1" : "0").json")
+    }
+}
+
+/// Кэш tun-конфигов sing-box в App Group — общий с приложением.
+/// ВАЖНО: имена файлов и проверка тела должны совпадать с TunnelConfigStore в
+/// iosApp/SwiftSingBoxManager.swift (разные таргеты, общий код не подключён).
+enum TunnelConfigStore {
+    static let appGroup = "group.ru.reedapp.app"
+    static let apiBase = "https://reedapp.ru"
+
+    static func directory() -> URL? {
+        guard let root = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroup) else { return nil }
+        let dir = root.appendingPathComponent("tunnel_configs", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    static func fileURL(dir: URL, server: String, split: Bool) -> URL {
+        let safe = String(server.unicodeScalars.map {
+            CharacterSet.alphanumerics.contains($0) ? Character($0) : "_"
+        })
+        return dir.appendingPathComponent("singbox_\(safe)_\(split ? "1" : "0").json")
+    }
+
+    static func configURL(token: String, server: String, split: Bool) -> URL? {
+        var comps = URLComponents(string: "\(apiBase)/app/singbox")
+        comps?.queryItems = [
+            URLQueryItem(name: "token", value: token),
+            URLQueryItem(name: "server", value: server),
+            URLQueryItem(name: "split", value: split ? "1" : "0"),
+            URLQueryItem(name: "inbound", value: "tun"),
+        ]
+        return comps?.url
+    }
+
+    /// JSON-объект разумного размера (а не тело ошибки «expired»/HTML).
+    static func isValidConfig(_ data: Data) -> Bool {
+        guard data.count > 100 else { return false }
+        let first = data.first { !($0 == 0x20 || $0 == 0x0A || $0 == 0x0D || $0 == 0x09) }
+        return first == UInt8(ascii: "{")
+    }
+
+    /// Только HTTP 200 с валидным конфигом.
+    static func validBody(data: Data?, response: URLResponse?) -> Data? {
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+              let data = data, isValidConfig(data) else { return nil }
+        return data
     }
 }

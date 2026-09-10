@@ -89,6 +89,15 @@ interface IosSingBoxBridge {
      * на TUN. Первый запуск вызывает системный запрос «Разрешить VPN-конфигурацию».
      */
     fun startSystemTunnel(token: String, server: String, split: Boolean): IosBridgeResult
+
+    /**
+     * Предзагрузка tun-конфигов (/app/singbox?inbound=tun) для списка серверов в общий
+     * контейнер App Group, откуда их читает extension. Подключение тогда идёт из кэша без
+     * обращения к API (extension не может надёжно качать конфиг сам: трафик уже в TUN).
+     * force=false — качать только отсутствующие. Блокирующий вызов; возвращает число
+     * успешно сохранённых конфигов.
+     */
+    fun prewarmTunnelConfigs(token: String, servers: List<String>, split: Boolean, force: Boolean): Int
     fun stopSystemTunnel()
     fun isSystemTunnelConnected(): Boolean
 

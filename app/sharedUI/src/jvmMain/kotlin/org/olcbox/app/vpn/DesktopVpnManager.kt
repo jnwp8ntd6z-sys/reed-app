@@ -125,14 +125,14 @@ class DesktopVpnManager private constructor(
         )
     }
 
-    override suspend fun prewarmConfigs(locations: List<LocationConfig>) = withContext(Dispatchers.IO) {
+    override suspend fun prewarmConfigs(locations: List<LocationConfig>, force: Boolean) = withContext(Dispatchers.IO) {
         val socksPort = _socksProxySettings.value.normalized().port
         // Кандидаты: VLESS, с токеном, не временный, ещё не закэшированы.
         val targets = locations
             .map { it.normalized() }
             .filter {
                 it.isVless() && it.key.isNotBlank() && it.id != "reed-temp" &&
-                    !SingBoxDesktopRunner.isCached(it.id, socksPort)
+                    (force || !SingBoxDesktopRunner.isCached(it.id, socksPort))
             }
             .distinctBy { it.id }
         if (targets.isEmpty()) return@withContext

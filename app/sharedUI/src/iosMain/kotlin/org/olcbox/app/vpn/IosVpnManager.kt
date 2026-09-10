@@ -128,6 +128,26 @@ class IosVpnManager(
 
     override fun needsPermission(): Boolean = false
 
+    // Конфиги НАШИХ VLESS-серверов (token — sub_token, не URI) кладём в App Group, где их
+    // берёт extension при старте туннеля. Сразу оба варианта split, чтобы переключатель
+    // «раздельная маршрутизация» не требовал сети при следующем подключении.
+    override suspend fun prewarmConfigs(locations: List<LocationConfig>, force: Boolean) {
+        val targets = locations
+            .map { it.normalized() }
+            .filter { it.isVless() && it.key.isNotBlank() && !it.key.contains("://") && it.id != "reed-temp" }
+            .distinctBy { it.id }
+        if (targets.isEmpty()) return
+        val split = org.olcbox.app.data.reed.ReedSession.splitRouting
+        withContext(Dispatchers.Default) {
+            targets.groupBy { it.key }.forEach { (token, group) ->
+                val servers = group.map { it.id }
+                val saved = singBoxBridge.prewarmTunnelConfigs(token, servers, split, force)
+                singBoxBridge.prewarmTunnelConfigs(token, servers, !split, force)
+                addLog("iOS prewarm tun-configs: $saved/${servers.size} (split=$split, force=$force)")
+            }
+        }
+    }
+
     // Читает лог extension прямо с диска (App Group), в обход [_logs] — тот сбрасывается
     // при каждом перезапуске приложения, а этот файл пишет отдельный процесс туннеля и
     // переживает закрытие/перезапуск app. Позволяет получить логи даже если человек успел

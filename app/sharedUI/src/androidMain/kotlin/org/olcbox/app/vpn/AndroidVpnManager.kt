@@ -288,7 +288,7 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
      * Тянем только серверы БЕЗ кэша; первый сбой считаем «сеть недоступна/режут» и выходим,
      * чтобы не висеть N×таймаут. Всё best-effort: любые ошибки молча игнорируем.
      */
-    override suspend fun prewarmConfigs(locations: List<LocationConfig>) {
+    override suspend fun prewarmConfigs(locations: List<LocationConfig>, force: Boolean) {
         val socksPort = _proxySettings.value.port
         val split = if (org.olcbox.app.data.reed.ReedSession.splitRouting) "1" else "0"
 
@@ -296,7 +296,7 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
         // сервисы работали даже офлайн / на «зарезанных» сетях, где наш API недоступен.
         // olcPort должен совпадать с OLCRTC_INTERNAL_SOCKS_PORT в OlcboxVpnService.
         val olcPort = 10861
-        if (!SingboxConfigCache.exists(appContext, "olcrtc_split_$olcPort", socksPort)) {
+        if (force || !SingboxConfigCache.exists(appContext, "olcrtc_split_$olcPort", socksPort)) {
             withContext(Dispatchers.IO) {
                 runCatching {
                     val url = "$REED_API_BASE/app/olcsingbox" +
@@ -327,7 +327,7 @@ class AndroidVpnManager(private val context: Context) : VpnManager {
             .map { it.normalized() }
             .filter {
                 it.isVless() && it.key.isNotBlank() && it.id != "reed-temp" &&
-                    !SingboxConfigCache.exists(appContext, it.id, socksPort)
+                    (force || !SingboxConfigCache.exists(appContext, it.id, socksPort))
             }
             .distinctBy { it.id }
         if (targets.isEmpty()) return

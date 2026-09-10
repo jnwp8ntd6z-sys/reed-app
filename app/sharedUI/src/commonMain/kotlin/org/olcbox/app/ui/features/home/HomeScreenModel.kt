@@ -120,12 +120,13 @@ class HomeScreenViewModel(
     /**
      * Предзагрузка конфигов всех серверов в кэш, пока есть сеть — чтобы офлайн можно было
      * подключиться к любому серверу, а не только к уже использованным. Best-effort, в фоне.
+     * force=true — кнопка «Обновить»: перекачать конфиги всех серверов, даже закэшированные.
      */
-    fun prewarmAllConfigs() {
+    fun prewarmAllConfigs(force: Boolean = false) {
         viewModelScope.launch {
             runCatching {
                 val locations = locationsRepository.getAllLocations().map { it.location }
-                vpnManager.prewarmConfigs(locations)
+                vpnManager.prewarmConfigs(locations, force)
             }
         }
     }
