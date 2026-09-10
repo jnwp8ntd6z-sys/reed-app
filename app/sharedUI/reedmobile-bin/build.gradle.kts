@@ -46,7 +46,10 @@ val buildReedmobileAar by tasks.registering(Exec::class) {
             // (VLESS Reality сразу падает на старте → мгновенный сброс на Android).
             "-tags with_utls " +
             "-androidapi 21 -ldflags \"-s -w -checklinkname=0\" " +
-            "-o \"$aar\" github.com/openlibrecommunity/olcrtc/mobile ."
+            "-o \"$aar\" github.com/openlibrecommunity/olcrtc/mobile . ; " +
+            // DIAG: какие версии olcrtc/pion зарезолвились и что реально в aar
+            "echo '###GOLIST###'; go list -m all 2>/dev/null | grep -iE 'openlibrecommunity/olcrtc|pion/webrtc|golang.org/x/mobile' | head; " +
+            "echo '###AAR###'; ( cd /tmp && rm -rf _z && mkdir _z && cd _z && unzip -o -q \"$aar\" classes.jar && unzip -l classes.jar | grep -iE 'mobile/' | head -80 ); echo '###ENDDIAG###'"
     )
 }
 
