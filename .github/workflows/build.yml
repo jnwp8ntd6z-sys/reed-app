@@ -48,7 +48,7 @@ jobs:
       - name: Install gomobile
         run: |
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gomobile@5c0595f4cdbb
           go install github.com/magefile/mage@latest
       - name: gomobile init
         working-directory: olcrtc
@@ -156,7 +156,7 @@ jobs:
       - name: Install gomobile
         run: |
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gomobile@5c0595f4cdbb
       - name: gomobile init
         working-directory: olcrtc
         run: gomobile init

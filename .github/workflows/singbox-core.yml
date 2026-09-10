@@ -30,13 +30,13 @@ jobs:
       - name: Install gomobile
         run: |
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gomobile@5c0595f4cdbb
           go install golang.org/x/mobile/cmd/gobind@latest
       - name: go get deps + tidy (olcrtc@master + x/mobile via tools.go)
         working-directory: singbox-mobile
         run: |
           go get github.com/openlibrecommunity/olcrtc@master
-          go get golang.org/x/mobile/bind@latest
+          go get golang.org/x/mobile/bind@5c0595f4cdbb
           go mod tidy
       - name: gomobile init
         run: |
@@ -69,13 +69,13 @@ jobs:
       - name: Install gomobile
         run: |
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gomobile@5c0595f4cdbb
           go install golang.org/x/mobile/cmd/gobind@latest
       - name: go get deps + tidy (olcrtc@master + x/mobile via tools.go)
         working-directory: singbox-mobile
         run: |
           go get github.com/openlibrecommunity/olcrtc@master
-          go get golang.org/x/mobile/bind@latest
+          go get golang.org/x/mobile/bind@5c0595f4cdbb
           go mod tidy
       - name: gomobile init
         run: gomobile init
