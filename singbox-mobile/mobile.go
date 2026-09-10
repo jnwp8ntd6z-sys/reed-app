@@ -30,7 +30,23 @@ import (
 	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json"
+
+	"github.com/reedvpn/singbox-mobile/covert"
 )
+
+// baseContext строит контекст sing-box со всеми штатными реестрами ПЛЮС нашим
+// covert-outbound'ом, чтобы конфиг мог ссылаться на {"type":"covert",...}.
+func baseContext() context.Context {
+	outReg := include.OutboundRegistry()
+	covert.RegisterOutbound(outReg)
+	return box.Context(context.Background(),
+		include.InboundRegistry(),
+		outReg,
+		include.EndpointRegistry(),
+		include.DNSTransportRegistry(),
+		include.ServiceRegistry(),
+	)
+}
 
 // mu сериализует доступ к instance/cancel. БЕЗ него быстрый Stop→Start при
 // переключении сервера «на ходу» давал гонку по глобальному инстансу и НАТИВНЫЙ КРАШ
@@ -50,8 +66,8 @@ func Start(configJSON string) error {
 		stopLocked()
 	}
 
-	// Контекст со всеми реестрами sing-box (inbound/outbound/endpoint/dns/service).
-	baseCtx := include.Context(context.Background())
+	// Контекст со всеми реестрами sing-box + наш covert-outbound.
+	baseCtx := baseContext()
 
 	options, err := json.UnmarshalExtendedContext[option.Options](baseCtx, []byte(configJSON))
 	if err != nil {
