@@ -44,6 +44,8 @@ object ReedApi {
             requestTimeoutMillis = 8_000
             socketTimeoutMillis = 8_000
         }
+        // reedapp.ru не ответил → повтор на IP РФ-фронта (DNS-кэш провайдера/ТСПУ).
+        installReedFrontFallback()
     }
 
     suspend fun authStart(): AuthStart =

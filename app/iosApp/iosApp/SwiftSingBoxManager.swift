@@ -1,6 +1,7 @@
 import Darwin
 import AVFoundation
 import Foundation
+import Security
 import OlcRtcMobile
 import SharedUI
 import UIKit
@@ -87,25 +88,19 @@ final class SwiftSingBoxManager: NSObject, @unchecked Sendable, IosSingBoxBridge
     // кэша, не обращаясь к API (из extension конфиг качать ненадёжно — трафик уже в TUN).
     func prewarmTunnelConfigs(token: String, servers: [String], split: Bool, force: Bool) -> Int32 {
         guard let dir = TunnelConfigStore.directory() else { return 0 }
-        let cfg = URLSessionConfiguration.ephemeral
-        cfg.timeoutIntervalForRequest = 15
-        cfg.timeoutIntervalForResource = 40
-        let session = URLSession(configuration: cfg)
         let saved = PrewarmCounter()
         let group = DispatchGroup()
         for server in servers {
             let target = TunnelConfigStore.fileURL(dir: dir, server: server, split: split)
             if !force, FileManager.default.fileExists(atPath: target.path) { continue }
-            guard let url = TunnelConfigStore.configURL(token: token, server: server, split: split) else { continue }
             group.enter()
-            session.dataTask(with: url) { data, response, _ in
+            TunnelConfigStore.fetchConfig(token: token, server: server, split: split, timeout: 12) { body, _ in
                 defer { group.leave() }
-                guard let body = TunnelConfigStore.validBody(data: data, response: response) else { return }
+                guard let body = body else { return }
                 if (try? body.write(to: target, options: .atomic)) != nil { saved.increment() }
-            }.resume()
+            }
         }
-        _ = group.wait(timeout: .now() + 60)
-        session.finishTasksAndInvalidate()
+        _ = group.wait(timeout: .now() + 90)
         return Int32(saved.value)
     }
 
@@ -226,7 +221,7 @@ final class SwiftSingBoxManager: NSObject, @unchecked Sendable, IosSingBoxBridge
 /// PacketTunnel/PacketTunnelProvider.swift (разные таргеты, общий код не подключён).
 enum TunnelConfigStore {
     static let appGroup = "group.ru.reedapp.app"
-    static let apiBase = "https://reedapp.ru"
+    static let apiHost = "reedapp.ru"
 
     static func directory() -> URL? {
         guard let root = FileManager.default.containerURL(
@@ -243,8 +238,40 @@ enum TunnelConfigStore {
         return dir.appendingPathComponent("singbox_\(safe)_\(split ? "1" : "0").json")
     }
 
-    static func configURL(token: String, server: String, split: Bool) -> URL? {
-        var comps = URLComponents(string: "\(apiBase)/app/singbox")
+
+    static let frontIP = "135.106.182.198"
+
+    /// Конфиг: сначала https://reedapp.ru, при сбое — напрямую на IP РФ-фронта (DNS-кэш провайдера
+    /// со старым зарубежным IP / ТСПУ). completion(body, "host"|"front"|"fail http=… err=…").
+    static func fetchConfig(token: String, server: String, split: Bool, timeout: TimeInterval,
+                            completion: @escaping (Data?, String) -> Void) {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = timeout
+        cfg.timeoutIntervalForResource = timeout * 2
+        let session = URLSession(configuration: cfg, delegate: ReedFrontTrustDelegate(), delegateQueue: nil)
+        guard let primary = configURL(token: token, server: server, split: split, host: apiHost),
+              let fallback = configURL(token: token, server: server, split: split, host: frontIP) else {
+            session.finishTasksAndInvalidate(); completion(nil, "fail bad url"); return
+        }
+        session.dataTask(with: primary) { data, response, error in
+            if let body = validBody(data: data, response: response) {
+                session.finishTasksAndInvalidate(); completion(body, "host"); return
+            }
+            let code1 = (response as? HTTPURLResponse)?.statusCode ?? 0
+            let err1 = error?.localizedDescription ?? "-"
+            session.dataTask(with: fallback) { data2, response2, error2 in
+                session.finishTasksAndInvalidate()
+                if let body = validBody(data: data2, response: response2) {
+                    completion(body, "front"); return
+                }
+                let code2 = (response2 as? HTTPURLResponse)?.statusCode ?? 0
+                completion(nil, "fail host http=\(code1) err=\(err1); front http=\(code2) err=\(error2?.localizedDescription ?? "-")")
+            }.resume()
+        }.resume()
+    }
+
+    static func configURL(token: String, server: String, split: Bool, host: String = apiHost) -> URL? {
+        var comps = URLComponents(string: "https://\(host)/app/singbox")
         comps?.queryItems = [
             URLQueryItem(name: "token", value: token),
             URLQueryItem(name: "server", value: server),
@@ -268,4 +295,26 @@ private final class PrewarmCounter: @unchecked Sendable {
     private var count = 0
     func increment() { lock.lock(); count += 1; lock.unlock() }
     var value: Int { lock.lock(); defer { lock.unlock() }; return count }
+}
+
+/// TLS к IP РФ-фронта: системная проверка цепочки, но на имя reedapp.ru (сертификат бота).
+/// Для любых других хостов — стандартная обработка.
+final class ReedFrontTrustDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        let space = challenge.protectionSpace
+        guard space.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              space.host == TunnelConfigStore.frontIP,
+              let trust = space.serverTrust else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+        SecTrustSetPolicies(trust, SecPolicyCreateSSL(true, TunnelConfigStore.apiHost as CFString))
+        var error: CFError?
+        if SecTrustEvaluateWithError(trust, &error) {
+            completionHandler(.useCredential, URLCredential(trust: trust))
+        } else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+        }
+    }
 }

@@ -2,6 +2,7 @@ package org.olcbox.app.data.datasource
 
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.HttpTimeout
+import org.olcbox.app.data.reed.installReedFrontFallback
 import org.olcbox.app.data.repository.SubscriptionFetchProxy
 
 internal actual fun createProxyHttpClient(
@@ -18,6 +19,7 @@ internal actual fun createProxyHttpClient(
             requestTimeoutMillis = requestTimeoutMs
             socketTimeoutMillis = socketTimeoutMs
         }
+        installReedFrontFallback()
     }
 }
 

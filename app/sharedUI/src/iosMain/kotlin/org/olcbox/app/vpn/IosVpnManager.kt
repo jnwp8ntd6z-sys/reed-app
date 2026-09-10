@@ -23,6 +23,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.url
 import io.ktor.client.statement.bodyAsText
 import org.olcbox.app.data.model.LocationConfig
+import org.olcbox.app.data.reed.installReedFrontFallback
 import org.olcbox.app.data.repository.LocationsRepository
 import org.olcbox.app.ios.IosBridgeResult
 import org.olcbox.app.ios.IosLogWriter
@@ -44,7 +45,7 @@ class IosVpnManager(
     // Активен ли СИСТЕМНЫЙ туннель (NEPacketTunnelProvider) — наш VLESS по токену.
     // Отдельно от vlessActive: у него другой stop/isConnected (не встроенный SOCKS).
     private var systemTunnelActive = false
-    private val httpClient by lazy { HttpClient(Darwin) }
+    private val httpClient by lazy { HttpClient(Darwin) { installReedFrontFallback() } }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val mutex = Mutex()
