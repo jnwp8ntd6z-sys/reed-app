@@ -135,6 +135,13 @@ private class DesktopAppDependencies {
 
 private const val WINDOWS_ELEVATED_START_ARGUMENT = "--olcbox-start-vpn-after-elevation"
 
+// Трей раньше всегда показывал LinuxIcon.png (даже на Windows) — WindowsTrayIcon.png
+// это PNG-кадр 32x32, извлечённый из appIcons/WindowsIcon.ico для корректного значка в трее.
+private fun trayIconResourceName(): String {
+    val osName = System.getProperty("os.name").orEmpty().lowercase()
+    return if ("win" in osName) "WindowsTrayIcon.png" else "LinuxIcon.png"
+}
+
 fun main(args: Array<String>) = application {
     // Configure JNA to find native libraries in resources
     System.setProperty(
@@ -251,7 +258,7 @@ fun main(args: Array<String>) = application {
 
     Tray(
         state = trayState,
-        icon = painterResource("LinuxIcon.png"),
+        icon = painterResource(trayIconResourceName()),
         tooltip = "Reed VPN",
         menu = {
             Item("Open", onClick = { isWindowVisible = true })

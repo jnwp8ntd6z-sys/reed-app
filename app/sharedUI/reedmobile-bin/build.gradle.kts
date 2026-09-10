@@ -38,7 +38,7 @@ val buildReedmobileAar by tasks.registering(Exec::class) {
         "sh", "-c",
         "set -e; export PATH=\"$mergedPath\"; " +
             "go get github.com/openlibrecommunity/olcrtc@master; " +
-            "go get golang.org/x/mobile/bind@5c0595f4cdbb; " +
+            "go get golang.org/x/mobile/bind@6129f5bee9d5; " +
             "go mod tidy; " +
             "\"$gomobileExecutable\" bind " +
             "-target=android/arm,android/arm64,android/amd64 " +

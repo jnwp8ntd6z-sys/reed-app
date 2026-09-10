@@ -92,7 +92,7 @@ val buildOlcrtcIosXcframework by tasks.registering(Exec::class) {
         "sh", "-c",
         "set -e; export PATH=\"$mergedPath\"; " +
             "go get github.com/openlibrecommunity/olcrtc@master; " +
-            "go get golang.org/x/mobile/bind@5c0595f4cdbb; " +
+            "go get golang.org/x/mobile/bind@6129f5bee9d5; " +
             "go mod tidy; " +
             // -tags with_utls ОБЯЗАТЕЛЕН для REALITY-клиента sing-box (иначе VLESS падает);
             // with_gvisor — для tun-inbound stack:gvisor (iOS Network Extension, StartTun).
