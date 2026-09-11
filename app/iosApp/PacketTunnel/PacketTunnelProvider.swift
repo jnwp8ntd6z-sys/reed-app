@@ -132,6 +132,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             } else {
                 ExtLog.write("heartbeat: singbox_running=\(singboxUp)")
             }
+            // Ядро упало на ходу (напр. jetsam/OOM в лимите памяти NE), а маршруты ещё
+            // заворачивают весь трафик в мёртвый TUN → «инет отрубило». Гасим туннель, чтобы
+            // система вернула обычный интернет вместо чёрной дыры.
+            if !singboxUp && !self.olcActive {
+                ExtLog.write("heartbeat: sing-box DOWN → снимаем туннель (восстановить инет)")
+                self.stopHeartbeat()
+                self.cancelTunnelWithError(NSError(domain: "ReedVPN", code: 9,
+                    userInfo: [NSLocalizedDescriptionKey: "sing-box stopped"]))
+            }
         }
         timer.resume()
         heartbeatTimer = timer
@@ -180,8 +189,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                     self.startHeartbeat()
                     // Конфиг был из кэша → тихо обновляем его уже через поднятый туннель.
                     if fromCache { self.refreshVlessConfigInBackground(token: token, server: server, split: split) }
+                    completionHandler(nil)
+                } else {
+                    // Ядро не поднялось (битый конфиг/covert/OOM). Маршруты уже применены —
+                    // ВЕСЬ трафик телефона сейчас проваливается в мёртвый TUN («отрубает инет»).
+                    // Снимаем настройки туннеля → система возвращает обычный интернет, и только
+                    // потом рапортуем ошибку. Иначе инета нет, пока юзер не выключит VPN вручную.
+                    self.setTunnelNetworkSettings(nil) { _ in completionHandler(nsErr) }
                 }
-                completionHandler(ok ? nil : nsErr)
             }
         }
     }
