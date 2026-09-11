@@ -34,7 +34,7 @@ func Dial(ctx context.Context, publicURL string) (*Client, error) {
 	kcpConn.SetWindowSize(256, 256)
 	kcpConn.SetMtu(1200)
 	kcpConn.SetStreamMode(true)
-	kcpConn.SetACKNoDelay(true)
+	kcpConn.SetACKNoDelay(false)
 	sess, err := smux.Client(kcpConn, smuxConfig())
 	if err != nil {
 		kcpConn.Close()

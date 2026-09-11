@@ -97,7 +97,7 @@ func (o *Outbound) ensureSession(ctx context.Context) (*smux.Session, error) {
 	kcpConn.SetWindowSize(256, 256)
 	kcpConn.SetMtu(1200)
 	kcpConn.SetStreamMode(true)
-	kcpConn.SetACKNoDelay(true)
+	kcpConn.SetACKNoDelay(false)
 
 	sess, err := smux.Client(kcpConn, smuxConfig())
 	if err != nil {

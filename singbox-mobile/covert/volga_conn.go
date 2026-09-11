@@ -19,6 +19,7 @@ package covert
 import (
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,11 +48,16 @@ const (
 	typeData = "D"
 	typeKA   = "K"
 
-	// Пул параллельных отправителей relay и глубина очереди. txWorkers штук POST
-	// могут лететь в Яндекс одновременно (HTTP/2 держит их на одном соединении).
-	txWorkers = 24
-	txQueue   = 8192
-	rxQueue   = 8192
+	// Пул параллельных отправителей + СКЛЕЙКА пакетов. На сотовой сети (потери/задержки)
+	// KCP генерит лавину микро-пакетов (ACK/переспросы ~24 байта); раньше каждый уезжал
+	// ОТДЕЛЬНЫМ POST → канал захлёбывался служебкой и в разнос (93% трафика = 24-байтные
+	// кадры). Теперь batchSender склеивает всё, что накопилось в очереди, в ОДИН relay-кадр
+	// (до batchMaxBytes) → на порядок меньше HTTP-запросов, петля разноса рвётся.
+	batchSenders  = 8
+	batchMaxBytes = 40 * 1024
+	batchMaxPkts  = 128
+	txQueue       = 8192
+	rxQueue       = 8192
 )
 
 var clientConfigRe = regexp.MustCompile(`(?s)<script[^>]*id="client-config"[^>]*>(.*?)</script>`)
@@ -125,8 +131,8 @@ func NewVolgaPacketConn(ctx context.Context, exit bool, publicURL string, rendez
 		go c.rendezvousLoop()
 	}
 	go c.keepAliveLoop()
-	for i := 0; i < txWorkers; i++ {
-		go c.txWorker()
+	for i := 0; i < batchSenders; i++ {
+		go c.batchSender()
 	}
 
 	// Ждём первого спаривания, чтобы KCP-хэндшейк не стучал в пустоту.
@@ -152,26 +158,75 @@ func NewVolgaPacketConn(ctx context.Context, exit bool, publicURL string, rendez
 	}
 }
 
-// txWorker разгребает очередь исходящих пакетов параллельно с другими воркерами.
-func (c *VolgaPacketConn) txWorker() {
+// batchSender разгребает очередь исходящих пакетов и СКЛЕИВАЕТ всё, что накопилось,
+// в один relay-кадр (формат пачки: [2 байта длина][пакет]...). Это резко снижает число
+// HTTP-запросов в Яндекс на «болтливом» трафике (KCP ACK/переспросы) и не даёт каналу
+// уйти в разнос на сотовой сети. KCP собирает пакеты обратно по порядку сам.
+func (c *VolgaPacketConn) batchSender() {
 	for {
+		var first []byte
 		select {
 		case <-c.closed:
 			return
-		case p := <-c.tx:
-			peer := c.peerUserID.Load()
-			if peer == 0 {
-				continue
-			}
-			c.mu.RLock()
-			s := c.sess
-			c.mu.RUnlock()
-			if s == nil {
-				continue
-			}
-			_ = c.sendRelay(s, peer, typeData, p)
+		case first = <-c.tx:
 		}
+		pkts := [][]byte{first}
+		total := 2 + len(first)
+	drain:
+		for len(pkts) < batchMaxPkts && total < batchMaxBytes {
+			select {
+			case p := <-c.tx:
+				pkts = append(pkts, p)
+				total += 2 + len(p)
+			default:
+				break drain
+			}
+		}
+		peer := c.peerUserID.Load()
+		if peer == 0 {
+			continue
+		}
+		c.mu.RLock()
+		s := c.sess
+		c.mu.RUnlock()
+		if s == nil {
+			continue
+		}
+		_ = c.sendRelay(s, peer, typeData, packBatch(pkts))
 	}
+}
+
+// packBatch упаковывает пачку пакетов в один блоб: [2 байта BE длина][пакет]...
+func packBatch(pkts [][]byte) []byte {
+	n := 0
+	for _, p := range pkts {
+		n += 2 + len(p)
+	}
+	buf := make([]byte, 0, n)
+	var hdr [2]byte
+	for _, p := range pkts {
+		binary.BigEndian.PutUint16(hdr[:], uint16(len(p)))
+		buf = append(buf, hdr[0], hdr[1])
+		buf = append(buf, p...)
+	}
+	return buf
+}
+
+// unpackBatch распаковывает блоб пачки обратно в отдельные пакеты.
+func unpackBatch(blob []byte) [][]byte {
+	var out [][]byte
+	for len(blob) >= 2 {
+		n := int(binary.BigEndian.Uint16(blob[:2]))
+		blob = blob[2:]
+		if n > len(blob) {
+			break
+		}
+		p := make([]byte, n)
+		copy(p, blob[:n])
+		out = append(out, p)
+		blob = blob[n:]
+	}
+	return out
 }
 
 func (c *VolgaPacketConn) sessionLoop() {
@@ -450,12 +505,14 @@ func (c *VolgaPacketConn) handleXivaFrame(s *volgaSession, raw []byte) {
 		} else if p != sender {
 			return
 		}
-		buf := make([]byte, len(payload))
-		copy(buf, payload)
-		select {
-		case c.rx <- buf:
-		case <-c.closed:
-		default: // очередь переполнена — дропаем, KCP переспросит
+		// payload — ПАЧКА из нескольких KCP-пакетов (см. packBatch); распаковываем и
+		// отдаём каждый пакет KCP отдельно.
+		for _, pkt := range unpackBatch(payload) {
+			select {
+			case c.rx <- pkt:
+			case <-c.closed:
+			default: // очередь переполнена — дропаем, KCP переспросит
+			}
 		}
 	}
 }

@@ -48,7 +48,7 @@ func RunExit(ctx context.Context, publicURL string, logf func(string, ...any)) e
 		kcpSess.SetWindowSize(256, 256)
 		kcpSess.SetMtu(1200)
 		kcpSess.SetStreamMode(true)
-		kcpSess.SetACKNoDelay(true)
+		kcpSess.SetACKNoDelay(false)
 		go serveKCP(kcpSess, logf)
 	}
 }
