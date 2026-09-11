@@ -4,11 +4,9 @@ import io.ktor.client.HttpClientConfig
 import io.ktor.client.engine.darwin.ChallengeHandler
 import io.ktor.client.engine.darwin.DarwinClientEngineConfig
 import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.cinterop.reinterpret
-import platform.CoreFoundation.CFBridgingRelease
-import platform.CoreFoundation.CFBridgingRetain
 import platform.CoreFoundation.CFRelease
-import platform.CoreFoundation.__CFString
+import platform.CoreFoundation.CFStringCreateWithCString
+import platform.CoreFoundation.kCFStringEncodingUTF8
 import platform.Foundation.NSURLAuthenticationMethodServerTrust
 import platform.Foundation.NSURLCredential
 import platform.Foundation.NSURLSessionAuthChallengeCancelAuthenticationChallenge
@@ -41,10 +39,10 @@ internal val reedFrontChallengeHandler: ChallengeHandler = { _, _, challenge, co
     if (space.authenticationMethod == NSURLAuthenticationMethodServerTrust &&
         space.host == ReedFront.FRONT_IP && trust != null
     ) {
-        val hostRef = CFBridgingRetain(ReedFront.API_HOST)
-        val policy = SecPolicyCreateSSL(true, hostRef?.reinterpret<__CFString>())
-        CFBridgingRelease(hostRef)
+        val cfHost = CFStringCreateWithCString(null, ReedFront.API_HOST, kCFStringEncodingUTF8)
+        val policy = SecPolicyCreateSSL(true, cfHost)
         SecTrustSetPolicies(trust, policy)
+        if (cfHost != null) CFRelease(cfHost)
         if (policy != null) CFRelease(policy)
         if (SecTrustEvaluateWithError(trust, null)) {
             completionHandler(NSURLSessionAuthChallengeUseCredential, NSURLCredential.credentialForTrust(trust))
