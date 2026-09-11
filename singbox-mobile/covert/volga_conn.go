@@ -98,10 +98,24 @@ type VolgaPacketConn struct {
 	running    atomic.Bool
 }
 
+// forceIPv4Dial — диалер, принудительно ходящий по IPv4. На сотовых сетях РФ IPv6
+// часто «no route to host» (видно в логе olcRTC: STUN udp6 no route to host), и часть
+// параллельных relay-соединений к Яндексу залипала на v6 → covert-данные не шли на
+// мобильном, хотя на WiFi (живой v6) всё работало. tcp→tcp4 убирает залипание.
+func forceIPv4Dial(ctx context.Context, network, addr string) (net.Conn, error) {
+	d := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+	switch network {
+	case "tcp", "tcp6":
+		network = "tcp4"
+	}
+	return d.DialContext(ctx, network, addr)
+}
+
 // sharedTransport — общий транспорт с большим пулом соединений и HTTP/2, чтобы
 // десятки параллельных relay-POST не открывали каждый своё TLS-соединение.
 func sharedTransport() *http.Transport {
 	return &http.Transport{
+		DialContext:         forceIPv4Dial,
 		MaxIdleConns:        256,
 		MaxIdleConnsPerHost: 256,
 		MaxConnsPerHost:     0,
@@ -357,7 +371,7 @@ func (c *VolgaPacketConn) launch() (*volgaSession, error) {
 }
 
 func (c *VolgaPacketConn) subscribeAndRead(s *volgaSession) error {
-	dialer := websocket.Dialer{HandshakeTimeout: 15 * time.Second, ReadBufferSize: 1 << 20}
+	dialer := websocket.Dialer{HandshakeTimeout: 15 * time.Second, ReadBufferSize: 1 << 20, NetDialContext: forceIPv4Dial}
 	h := http.Header{}
 	h.Set("User-Agent", userAgent)
 	h.Set("Origin", volgaOrigin)
