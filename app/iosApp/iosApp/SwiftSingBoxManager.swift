@@ -249,20 +249,23 @@ enum TunnelConfigStore {
         cfg.timeoutIntervalForRequest = timeout
         cfg.timeoutIntervalForResource = timeout * 2
         let session = URLSession(configuration: cfg, delegate: ReedFrontTrustDelegate(), delegateQueue: nil)
-        guard let primary = configURL(token: token, server: server, split: split, host: apiHost),
-              let fallback = configURL(token: token, server: server, split: split, host: frontIP) else {
+        // Фронт-IP ПЕРВЫМ: у РФ-провайдеров reedapp.ru часто в старом DNS-кэше (заблокирован),
+        // ожидание его таймаута рвало загрузку (499). Московский IP доступен всегда → пробуем его,
+        // reedapp.ru — как запасной (для сетей, где DNS уже указывает на Москву напрямую).
+        guard let primary = configURL(token: token, server: server, split: split, host: frontIP),
+              let fallback = configURL(token: token, server: server, split: split, host: apiHost) else {
             session.finishTasksAndInvalidate(); completion(nil, "fail bad url"); return
         }
         session.dataTask(with: primary) { data, response, error in
             if let body = validBody(data: data, response: response) {
-                session.finishTasksAndInvalidate(); completion(body, "host"); return
+                session.finishTasksAndInvalidate(); completion(body, "front"); return
             }
             let code1 = (response as? HTTPURLResponse)?.statusCode ?? 0
             let err1 = error?.localizedDescription ?? "-"
             session.dataTask(with: fallback) { data2, response2, error2 in
                 session.finishTasksAndInvalidate()
                 if let body = validBody(data: data2, response: response2) {
-                    completion(body, "front"); return
+                    completion(body, "host"); return
                 }
                 let code2 = (response2 as? HTTPURLResponse)?.statusCode ?? 0
                 completion(nil, "fail host http=\(code1) err=\(err1); front http=\(code2) err=\(error2?.localizedDescription ?? "-")")
