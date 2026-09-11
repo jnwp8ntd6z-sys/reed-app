@@ -9,6 +9,12 @@ package covert
 // Каждый UDP-«пакет» KCP уезжает как одно relay-сообщение (кадр MAGIC:TYPE:BASE64,
 // TYPE=D — данные). Rendezvous (S/A) узнаёт userId соседа: client шлёт SYN всем из
 // /users, exit отвечает ACK. Один peer на сессию → это по сути connected packet conn.
+//
+// ПРОИЗВОДИТЕЛЬНОСТЬ (11.09.2026): раньше WriteTo слал каждый KCP-пакет ОДНИМ синхронным
+// POST в одну ленту → канал сериализовался (~10 КБ/с) и захлёбывался под нагрузкой
+// телефона. Теперь исходящие пакеты кладутся в очередь txCh, которую разгребает ПУЛ из
+// txWorkers параллельных отправителей (HTTP/2 к Яндексу мультиплексирует их по одному
+// соединению). KCP толерантен к переупорядочиванию → параллельные POST безопасны.
 
 import (
 	"context"
@@ -40,6 +46,12 @@ const (
 	typeAck  = "A"
 	typeData = "D"
 	typeKA   = "K"
+
+	// Пул параллельных отправителей relay и глубина очереди. txWorkers штук POST
+	// могут лететь в Яндекс одновременно (HTTP/2 держит их на одном соединении).
+	txWorkers = 24
+	txQueue   = 8192
+	rxQueue   = 8192
 )
 
 var clientConfigRe = regexp.MustCompile(`(?s)<script[^>]*id="client-config"[^>]*>(.*?)</script>`)
@@ -71,6 +83,7 @@ type VolgaPacketConn struct {
 
 	peerUserID atomic.Int64
 
+	tx     chan []byte
 	rx     chan []byte
 	closed chan struct{}
 	once   sync.Once
@@ -79,16 +92,31 @@ type VolgaPacketConn struct {
 	running    atomic.Bool
 }
 
+// sharedTransport — общий транспорт с большим пулом соединений и HTTP/2, чтобы
+// десятки параллельных relay-POST не открывали каждый своё TLS-соединение.
+func sharedTransport() *http.Transport {
+	return &http.Transport{
+		MaxIdleConns:        256,
+		MaxIdleConnsPerHost: 256,
+		MaxConnsPerHost:     0,
+		IdleConnTimeout:     90 * time.Second,
+		ForceAttemptHTTP2:   true,
+		TLSHandshakeTimeout: 15 * time.Second,
+	}
+}
+
 // NewVolgaPacketConn поднимает covert-сессию и ждёт спаривания.
 // rendezvousTimeout<=0 — ждать бесконечно (для exit, он живёт долго); клиент задаёт лимит.
 func NewVolgaPacketConn(ctx context.Context, exit bool, publicURL string, rendezvousTimeout time.Duration) (*VolgaPacketConn, error) {
 	jar, _ := cookiejar.New(nil)
+	tr := sharedTransport()
 	c := &VolgaPacketConn{
 		exit:       exit,
 		publicURL:  publicURL,
-		follow:     &http.Client{Jar: jar, Timeout: 30 * time.Second},
-		noRedirect: &http.Client{Jar: jar, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
-		rx:         make(chan []byte, 1024),
+		follow:     &http.Client{Jar: jar, Timeout: 30 * time.Second, Transport: tr},
+		noRedirect: &http.Client{Jar: jar, Timeout: 30 * time.Second, Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
+		tx:         make(chan []byte, txQueue),
+		rx:         make(chan []byte, rxQueue),
 		closed:     make(chan struct{}),
 	}
 	c.running.Store(true)
@@ -97,6 +125,9 @@ func NewVolgaPacketConn(ctx context.Context, exit bool, publicURL string, rendez
 		go c.rendezvousLoop()
 	}
 	go c.keepAliveLoop()
+	for i := 0; i < txWorkers; i++ {
+		go c.txWorker()
+	}
 
 	// Ждём первого спаривания, чтобы KCP-хэндшейк не стучал в пустоту.
 	var timeout <-chan time.Time
@@ -117,6 +148,28 @@ func NewVolgaPacketConn(ctx context.Context, exit bool, publicURL string, rendez
 			c.Close()
 			return nil, errors.New("volga: rendezvous timeout")
 		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
+// txWorker разгребает очередь исходящих пакетов параллельно с другими воркерами.
+func (c *VolgaPacketConn) txWorker() {
+	for {
+		select {
+		case <-c.closed:
+			return
+		case p := <-c.tx:
+			peer := c.peerUserID.Load()
+			if peer == 0 {
+				continue
+			}
+			c.mu.RLock()
+			s := c.sess
+			c.mu.RUnlock()
+			if s == nil {
+				continue
+			}
+			_ = c.sendRelay(s, peer, typeData, p)
 		}
 	}
 }
@@ -249,7 +302,7 @@ func (c *VolgaPacketConn) launch() (*volgaSession, error) {
 }
 
 func (c *VolgaPacketConn) subscribeAndRead(s *volgaSession) error {
-	dialer := websocket.Dialer{HandshakeTimeout: 15 * time.Second}
+	dialer := websocket.Dialer{HandshakeTimeout: 15 * time.Second, ReadBufferSize: 1 << 20}
 	h := http.Header{}
 	h.Set("User-Agent", userAgent)
 	h.Set("Origin", volgaOrigin)
@@ -257,6 +310,7 @@ func (c *VolgaPacketConn) subscribeAndRead(s *volgaSession) error {
 	if err != nil {
 		return err
 	}
+	conn.SetReadLimit(8 << 20)
 	defer conn.Close()
 	go func() {
 		<-c.closed
@@ -464,20 +518,17 @@ func (c *VolgaPacketConn) WriteTo(p []byte, _ net.Addr) (int, error) {
 		return 0, net.ErrClosed
 	default:
 	}
-	peer := c.peerUserID.Load()
-	if peer == 0 {
+	if c.peerUserID.Load() == 0 {
 		return 0, errors.New("volga: not paired")
 	}
-	c.mu.RLock()
-	s := c.sess
-	c.mu.RUnlock()
-	if s == nil {
-		return 0, errors.New("volga: no session")
+	buf := make([]byte, len(p))
+	copy(buf, p)
+	select {
+	case c.tx <- buf:
+		return len(p), nil
+	case <-c.closed:
+		return 0, net.ErrClosed
 	}
-	if err := c.sendRelay(s, peer, typeData, p); err != nil {
-		return 0, err
-	}
-	return len(p), nil
 }
 
 func (c *VolgaPacketConn) Close() error {
