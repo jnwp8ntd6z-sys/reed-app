@@ -28,7 +28,6 @@ import (
 
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
 	tun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/control"
@@ -50,7 +49,10 @@ func StartTun(configJSON string, tunFd int) error {
 		stopLocked()
 	}
 
-	baseCtx := include.Context(context.Background())
+	// baseContext() (а НЕ include.Context) — регистрирует наш covert-outbound, иначе
+	// конфиг с {"type":"covert"} (профиль ЛТЕ) падает в системном туннеле:
+	// «unknown outbound type: covert». Start() уже шёл через baseContext, StartTun — нет.
+	baseCtx := baseContext()
 	platform := &nePlatformInterface{tunFd: tunFd}
 	baseCtx = service.ContextWith[adapter.PlatformInterface](baseCtx, platform)
 
