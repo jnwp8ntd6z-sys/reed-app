@@ -25,7 +25,7 @@ func Dial(ctx context.Context, publicURL string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	kcpConn, err := kcp.NewConn2(peerAddr{id: pc.peerUserID.Load()}, nil, 0, 0, pc)
+	kcpConn, err := kcp.NewConn2(kcpDialAddr, nil, 0, 0, pc)
 	if err != nil {
 		pc.Close()
 		return nil, err

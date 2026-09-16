@@ -58,7 +58,38 @@ const (
 	batchMaxPkts  = 128
 	txQueue       = 8192
 	rxQueue       = 8192
+
+	// Xiva downstream живучесть: на сотовой WS тихо умирает (радио-сон, NAT-rebind,
+	// хэндовер), а ReadMessage без дедлайна висит вслепую → пара не пересобирается.
+	// Дедлайн ловит мёртвый сокет за секунды и релончит сессию. Сервер шлёт app-ping
+	// раз в ~60с, мы ещё и свой WS-ping раз в 30с (обновляет дедлайн через pong).
+	wsReadTimeout = 90 * time.Second
+	wsPingEvery   = 30 * time.Second
+
+	// Период непрерывного re-rendezvous у клиента (SYN-discovery). Раньше клиент слал
+	// SYN ОДИН раз до спаривания и умолкал → после переподключения любой из сторон
+	// (новый volga-userId) пара навсегда рвалась. Теперь SYN идёт постоянно, дёшево.
+	rendezvousEvery = 4 * time.Second
 )
+
+// kcpDialAddr — фиктивный remote для kcp.NewConn2 на стороне клиента. На клиенте KCP
+// одиночный (dial), возвращаемый ReadFrom адрес он игнорирует, а наш WriteTo шлёт по
+// peerUserID, не по этому адресу → значение чисто косметическое.
+var kcpDialAddr = peerAddr{id: 0}
+
+// convAddr парсит conv-id KCP-пакета (первые 4 байта LE; block=nil, FEC off → без
+// смещения) и делает из него адрес. Демультиплекс KCP-листенера на выходе идёт ПО conv,
+// а не по volga-userId. Следствия:
+//   - флап сети (userId сменился, conv тот же) → та же KCP-сессия → поток не рвётся;
+//   - реконнект приложения (новый kcpConn → новый conv) → новая сессия, без коллизии
+//     со старой (старая сама отвалится по smux-таймауту);
+//   - разные клиенты (разные conv) → независимые сессии (бонус к будущему пулу).
+func convAddr(pkt []byte) peerAddr {
+	if len(pkt) >= 4 {
+		return peerAddr{id: int64(binary.LittleEndian.Uint32(pkt[:4]))}
+	}
+	return peerAddr{id: 0}
+}
 
 var clientConfigRe = regexp.MustCompile(`(?s)<script[^>]*id="client-config"[^>]*>(.*?)</script>`)
 
@@ -381,30 +412,58 @@ func (c *VolgaPacketConn) subscribeAndRead(s *volgaSession) error {
 	}
 	conn.SetReadLimit(8 << 20)
 	defer conn.Close()
+
+	// Живучесть: read-deadline ловит тихо умерший на сотовой WS; каждый прочитанный
+	// кадр (в т.ч. app-ping сервера ~60с) и pong на наш ping его продлевают.
+	conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
+		return nil
+	})
+
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
 		<-c.closed
 		conn.Close()
 	}()
+	// WS-ping для NAT-keepalive и раннего детекта мёртвого сокета. Единственный писатель
+	// в conn — конфликта с ReadMessage нет (gorilla допускает 1 читателя + 1 писателя).
+	go func() {
+		t := time.NewTicker(wsPingEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-c.closed:
+				return
+			case <-t.C:
+				_ = conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second))
+			}
+		}
+	}()
+
 	for c.running.Load() {
 		_, msg, err := conn.ReadMessage()
 		if err != nil {
 			return err
 		}
+		conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
 		c.handleXivaFrame(s, msg)
 	}
 	return nil
 }
 
+// rendezvousLoop (только клиент) НЕПРЕРЫВНО объявляет свой текущий userId и открывает
+// userId выхода: каждые rendezvousEvery шлёт SYN всем соавторам-не-себе. Выход отвечает
+// ACK со своим текущим userId. Это восстанавливает пару после переподключения ЛЮБОЙ из
+// сторон (у обеих на реконнекте новый volga-userId). Раньше SYN шёл разово до первой
+// пары и умолкал → на сотовой (частые обрывы WS) пара рвалась навсегда.
 func (c *VolgaPacketConn) rendezvousLoop() {
+	// Пока не спарились — опрашиваем чаще, чтобы старт был быстрым.
+	fast := 1 * time.Second
 	for c.running.Load() {
-		if c.peerUserID.Load() != 0 {
-			select {
-			case <-c.closed:
-				return
-			case <-time.After(5 * time.Second):
-			}
-			continue
-		}
 		c.mu.RLock()
 		s := c.sess
 		c.mu.RUnlock()
@@ -415,10 +474,14 @@ func (c *VolgaPacketConn) rendezvousLoop() {
 				}
 			}
 		}
+		wait := rendezvousEvery
+		if c.peerUserID.Load() == 0 {
+			wait = fast
+		}
 		select {
 		case <-c.closed:
 			return
-		case <-time.After(2 * time.Second):
+		case <-time.After(wait):
 		}
 	}
 }
@@ -501,24 +564,24 @@ func (c *VolgaPacketConn) handleXivaFrame(s *volgaSession, raw []byte) {
 	if !ok {
 		return
 	}
+	// Любой валидный (наш MAGIC) кадр от соседа несёт его ТЕКУЩИЙ userId. Всегда
+	// подхватываем его как активного пира — так пара переживает переподключение любой
+	// из сторон (новый volga-userId после реконнекта). KCP-сессия при этом одна и та же
+	// одна на conv (см. convAddr), смена userId для неё невидима.
 	switch mtype {
 	case typeSyn:
 		if c.exit {
-			c.peerUserID.Store(sender)
+			c.setPeer(sender)
 			c.sendRelay(s, sender, typeAck, nil)
 		}
 	case typeAck:
 		if !c.exit {
-			c.peerUserID.CompareAndSwap(0, sender)
+			c.setPeer(sender)
 		}
 	case typeKA:
-		c.peerUserID.CompareAndSwap(0, sender)
+		c.setPeer(sender)
 	case typeData:
-		if p := c.peerUserID.Load(); p == 0 {
-			c.peerUserID.Store(sender)
-		} else if p != sender {
-			return
-		}
+		c.setPeer(sender)
 		// payload — ПАЧКА из нескольких KCP-пакетов (см. packBatch); распаковываем и
 		// отдаём каждый пакет KCP отдельно.
 		for _, pkt := range unpackBatch(payload) {
@@ -528,6 +591,14 @@ func (c *VolgaPacketConn) handleXivaFrame(s *volgaSession, raw []byte) {
 			default: // очередь переполнена — дропаем, KCP переспросит
 			}
 		}
+	}
+}
+
+// setPeer запоминает текущий userId соседа. Меняем только при реальной смене, чтобы
+// не молотить atomic впустую. Адрес KCP-сессии зависит от conv, а не отсюда (см. convAddr).
+func (c *VolgaPacketConn) setPeer(sender int64) {
+	if c.peerUserID.Load() != sender {
+		c.peerUserID.Store(sender)
 	}
 }
 
@@ -579,7 +650,16 @@ func (c *VolgaPacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
 		return 0, nil, os_timeout{}
 	case b := <-c.rx:
 		n := copy(p, b)
-		return n, peerAddr{id: c.peerUserID.Load()}, nil
+		// Адрес источника зависит от роли:
+		//  - ВЫХОД (kcp listener): по conv KCP-пакета → демультиплекс сессий (флап-
+		//    непрерывность + чистая сессия на реконнект приложения + мультиклиент).
+		//  - КЛИЕНТ (kcp dial): dialed UDPSession в kcp-go ОТБРАСЫВАЕТ пакеты, чей addr
+		//    != raddr из NewConn2 (kcpDialAddr). Поэтому клиент обязан вернуть тот же
+		//    kcpDialAddr, иначе весь downstream молча дропается.
+		if c.exit {
+			return n, convAddr(b), nil
+		}
+		return n, kcpDialAddr, nil
 	}
 }
 
