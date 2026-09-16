@@ -211,6 +211,9 @@ jobs:
   windows:
     runs-on: windows-latest
     if: ${{ github.event_name == 'workflow_dispatch' && (inputs.platforms == 'all' || inputs.platforms == 'windows') }}
+    # Нужен для публикации установщика релизом этого же приватного репозитория.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Checkout olcrtc
@@ -266,11 +269,31 @@ jobs:
             Remove-Item $zip.FullName -Force
             Compress-Archive -Path "$tmp\*" -DestinationPath $zip.FullName
           }
+      # Квота на артефакты у аккаунта пересчитывается раз в 6-12 часов, поэтому
+      # upload-artifact падает с «Artifact storage quota has been hit». Установщик
+      # кладём релизом ЭТОГО ЖЕ приватного репозитория: хранилище релизов отдельное,
+      # ссылка стабильная, наружу ничего не уходит.
+      - name: Publish installer as private release asset
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          exe=$(find app/desktopApp/build/compose/binaries/main-release/exe -name '*.exe' | head -1)
+          if [ -z "$exe" ]; then echo "no installer produced"; exit 0; fi
+          tag="win-$(date -u +%Y%m%d-%H%M%S)"
+          gh release create "$tag" "$exe" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Windows $tag" \
+            --notes "Сборка Windows из ветки $GITHUB_REF_NAME, коммит $GITHUB_SHA."
+          echo "release: $tag" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: reed-windows-portable
           path: app/desktopApp/build/compose/binaries/main-release/portable/*.zip
       - uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: reed-windows-installer
           path: app/desktopApp/build/compose/binaries/main-release/exe/*.exe
