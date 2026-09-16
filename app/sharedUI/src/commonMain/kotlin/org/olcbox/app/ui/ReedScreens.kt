@@ -123,7 +123,9 @@ import org.olcbox.app.data.reed.MembersResponse
 import org.olcbox.app.data.reed.ReedApi
 import org.olcbox.app.data.reed.ReedBuildFlags
 import org.olcbox.app.data.reed.ReedSession
+import org.olcbox.app.data.reed.reedDeviceModel
 import org.olcbox.app.data.reed.reedIsIOS
+import org.olcbox.app.data.reed.reedPlatformName
 import org.olcbox.app.data.reed.SubscriptionItem
 import org.olcbox.app.data.reed.SubscriptionResponse
 import org.olcbox.app.data.reed.decodeImageBitmap
@@ -572,7 +574,11 @@ private fun AccountCodeDialog(
                     scope.launch {
                         try {
                             val hwid = locationViewModel.deviceHwid()
-                            val r = ReedApi.codeLogin(code.trim(), hwid, deviceOs = "iOS")
+                            val r = ReedApi.codeLogin(
+                                code.trim(), hwid,
+                                deviceModel = reedDeviceModel(),
+                                deviceOs = reedPlatformName(),
+                            )
                             if (r.ok && !r.sub_token.isNullOrBlank()) {
                                 onLoggedIn(r.sub_token)
                             } else {

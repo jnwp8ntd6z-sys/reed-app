@@ -95,6 +95,27 @@ internal class WindowsTunController(
         )
     }
 
+    /**
+     * Имя физического адаптера (Wi-Fi/Ethernet), через который сейчас идёт дефолтный маршрут.
+     * Спрашиваем ДО подъёма TUN. К этому адаптеру привязывается direct-трафик sing-box:
+     * tun2socks вешает на TUN маршруты 0.0.0.0/1 и 128.0.0.0/1 с метрикой 1, они по длине
+     * префикса выигрывают у 0.0.0.0/0 физической карты, поэтому всё, что движок отдаёт в
+     * direct (РФ-сайты при сплите и DoH-резолвер), уходит обратно в TUN и зацикливается.
+     */
+    suspend fun physicalInterfaceName(): String? = runCatching {
+        runPowerShell(
+            """
+            ${'$'}phys = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
+              Where-Object {
+                ${'$'}_.InterfaceAlias -ne '$TUN_NAME' -and
+                (Get-NetAdapter -InterfaceIndex ${'$'}_.ifIndex -ErrorAction SilentlyContinue).Status -eq 'Up'
+              } |
+              Sort-Object RouteMetric | Select-Object -First 1
+            if (${'$'}phys) { ${'$'}phys.InterfaceAlias }
+            """.trimIndent()
+        ).lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }
+    }.getOrNull()
+
     private suspend fun waitForAdapter(process: Process) {
         val deadline = System.currentTimeMillis() + TUN_READY_TIMEOUT_MS
         while (System.currentTimeMillis() < deadline) {

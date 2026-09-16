@@ -21,10 +21,14 @@ internal expect val reedFrontFallbackSupported: Boolean
 /** Платформенная часть: разрешить TLS к IP фронта с проверкой сертификата на reedapp.ru. */
 internal expect fun HttpClientConfig<*>.configureReedFrontTls()
 
-/** Одна повторная попытка запроса к reedapp.ru — уже на IP фронта. */
+/**
+ * Запасной путь к API через IP фронта. Платформенная часть ставится всегда: на десктопе
+ * она добавляет адрес фронта прямо в резолвер движка (имя и проверка сертификата остаются
+ * reedapp.ru), а на iOS требуется ещё и подмена хоста в URL — её включает флаг ниже.
+ */
 internal fun HttpClientConfig<*>.installReedFrontFallback() {
-    if (!reedFrontFallbackSupported) return
     configureReedFrontTls()
+    if (!reedFrontFallbackSupported) return
     install(HttpRequestRetry) {
         retryIf(maxRetries = 1) { _, _ -> false }
         retryOnExceptionIf(maxRetries = 1) { request, cause ->

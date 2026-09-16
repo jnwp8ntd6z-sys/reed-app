@@ -216,11 +216,27 @@ class DesktopVpnManager private constructor(
                 windowsTunController.ensureAdministratorOrRequestRestart()
             }
 
+            // Адаптер спрашиваем ДО подъёма TUN, пока дефолтный маршрут ещё физический.
+            // К нему привязывается direct-трафик движка, иначе РФ-сайты и РФ-резолвер при
+            // включённом сплите зацикливаются в туннеле (см. bindDirectToInterface).
+            val bindInterface = if (desktopMode == DesktopMode.WindowsTun) {
+                windowsTunController.physicalInterfaceName().also { name ->
+                    if (name.isNullOrBlank()) {
+                        addLog("Windows: физический адаптер не определён, РФ-сплит будет отключён")
+                    } else {
+                        addLog("Windows: прямой трафик привязан к адаптеру $name")
+                    }
+                }
+            } else {
+                null
+            }
+
             if (location.isVless()) {
                 // VLESS-Reality: локальный SOCKS поднимает sing-box (как на мобильных).
                 process = startSingBoxProcess(
                     location = location,
-                    socksSettings = socksSettings
+                    socksSettings = socksSettings,
+                    bindInterface = bindInterface
                 )
 
                 waitForSocksReady(
@@ -541,10 +557,11 @@ class DesktopVpnManager private constructor(
 
     private fun startSingBoxProcess(
         location: LocationConfig,
-        socksSettings: DesktopSocksProxySettings
+        socksSettings: DesktopSocksProxySettings,
+        bindInterface: String? = null
     ): Process {
         val binary = DesktopNativeAssets.resolveSingBoxBinary()
-        val configJson = SingBoxDesktopRunner.fetchConfig(location, socksSettings.port)
+        val configJson = SingBoxDesktopRunner.fetchConfig(location, socksSettings.port, bindInterface)
         val configPath = writeSingBoxConfig(configJson)
         val command = SingBoxDesktopRunner.command(binary, configPath)
 
