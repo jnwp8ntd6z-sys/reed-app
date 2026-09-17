@@ -166,8 +166,12 @@ func (c *OnlyOfficePacketConn) sleepBackoff(b *time.Duration) {
 	case <-c.closed:
 	case <-time.After(*b):
 	}
-	if *b *= 2; *b > 15*time.Second {
-		*b = 15 * time.Second
+	// covert-канал ДОЛЖЕН вставать почти мгновенно после дропа: Яндекс шлёт 4007 «drop»
+	// каждые ~30-60с (особенно на мобильном), и пока выход/клиент переподключается, KCP-
+	// сессия успевает умереть. Раскачка была до 15с → KCP гарантированно рвался. Кап 1с +
+	// conv-демукс (KCP переживает 1-2с разрыв) → канал не рвётся между дропами.
+	if *b *= 2; *b > 1*time.Second {
+		*b = 1 * time.Second
 	}
 }
 
@@ -338,6 +342,22 @@ func (c *OnlyOfficePacketConn) readLoop(s *ooSession) {
 	}()
 	s.conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
 	s.conn.SetPongHandler(func(string) error { s.conn.SetReadDeadline(time.Now().Add(wsReadTimeout)); return nil })
+	// WS-ping (как у volga): держит NAT-mapping на сотовой и ловит тихо умерший сокет —
+	// pong продлевает read-deadline. WriteControl безопасен параллельно с writeLoop (gorilla).
+	go func() {
+		t := time.NewTicker(wsPingEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-c.closed:
+				return
+			case <-t.C:
+				_ = s.conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(10*time.Second))
+			}
+		}
+	}()
 	for c.running.Load() {
 		_, msg, err := s.conn.ReadMessage()
 		if err != nil {
