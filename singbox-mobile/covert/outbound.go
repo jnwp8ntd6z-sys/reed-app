@@ -92,12 +92,9 @@ func (o *Outbound) ensureSession(ctx context.Context) (*smux.Session, error) {
 		pc.Close()
 		return nil, err
 	}
-	// KCP под ВЫСОКУЮ задержку + переупорядочивание (Яндекс relay ~150-400мс, параллельные
-	// POST'ы reorder'ят): nodelay=0 (RTO min 100мс вместо 30 → нет преждевременных
-	// переспросов), resend=0 (нет ложного fast-retransmit на reorder), окно 128 (не
-	// переполнять rate-limit Яндекса). Раньше (1,30,2,1)+256 давало лавину переспросов на сотовой.
-	kcpConn.SetNoDelay(0, 40, 0, 1)
-	kcpConn.SetWindowSize(128, 256)
+	// KCP под высокую задержку/узкий канал: turbo NoDelay, окна побольше.
+	kcpConn.SetNoDelay(1, 30, 2, 1)
+	kcpConn.SetWindowSize(256, 256)
 	kcpConn.SetMtu(1200)
 	kcpConn.SetStreamMode(true)
 	kcpConn.SetACKNoDelay(false)

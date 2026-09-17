@@ -44,8 +44,8 @@ func RunExit(ctx context.Context, publicURL string, logf func(string, ...any)) e
 		if err != nil {
 			return err
 		}
-		kcpSess.SetNoDelay(0, 40, 0, 1)
-		kcpSess.SetWindowSize(128, 256)
+		kcpSess.SetNoDelay(1, 30, 2, 1)
+		kcpSess.SetWindowSize(256, 256)
 		kcpSess.SetMtu(1200)
 		kcpSess.SetStreamMode(true)
 		kcpSess.SetACKNoDelay(false)
