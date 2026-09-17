@@ -30,8 +30,8 @@ func Dial(ctx context.Context, publicURL string) (*Client, error) {
 		pc.Close()
 		return nil, err
 	}
-	kcpConn.SetNoDelay(1, 30, 2, 1)
-	kcpConn.SetWindowSize(256, 256)
+	kcpConn.SetNoDelay(0, 40, 0, 1)
+	kcpConn.SetWindowSize(128, 256)
 	kcpConn.SetMtu(1200)
 	kcpConn.SetStreamMode(true)
 	kcpConn.SetACKNoDelay(false)
