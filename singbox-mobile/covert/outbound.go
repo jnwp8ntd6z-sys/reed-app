@@ -83,7 +83,7 @@ func (o *Outbound) ensureSession(ctx context.Context) (*smux.Session, error) {
 		return o.sess, nil
 	}
 
-	pc, err := NewVolgaPacketConn(ctx, false, o.publicURL, 45*time.Second)
+	pc, err := newCarrier(ctx, false, o.publicURL, 45*time.Second)
 	if err != nil {
 		return nil, err
 	}

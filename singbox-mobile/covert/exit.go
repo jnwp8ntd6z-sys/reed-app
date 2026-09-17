@@ -23,7 +23,7 @@ func RunExit(ctx context.Context, publicURL string, logf func(string, ...any)) e
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	pc, err := NewVolgaPacketConn(ctx, true, publicURL, 0)
+	pc, err := newCarrier(ctx, true, publicURL, 0)
 	if err != nil {
 		return err
 	}

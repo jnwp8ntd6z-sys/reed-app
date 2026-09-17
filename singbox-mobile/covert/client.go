@@ -16,12 +16,12 @@ import (
 
 type Client struct {
 	sess *smux.Session
-	pc   *VolgaPacketConn
+	pc   net.PacketConn
 }
 
 // Dial поднимает covert-сессию (клиент) и мультиплексор поверх неё.
 func Dial(ctx context.Context, publicURL string) (*Client, error) {
-	pc, err := NewVolgaPacketConn(ctx, false, publicURL, 45*time.Second)
+	pc, err := newCarrier(ctx, false, publicURL, 45*time.Second)
 	if err != nil {
 		return nil, err
 	}
