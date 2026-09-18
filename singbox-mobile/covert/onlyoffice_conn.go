@@ -43,6 +43,12 @@ const (
 	ooMagic   = "0FLXo1"          // отсекает чужие cursor/шум OnlyOffice
 	ooVersion = "2024.1.1-375"    // версия редактора (подтверждена live: buildNumber 375)
 	ooKAEvery = 20 * time.Second  // cursor-keepalive, чтобы соавтор не считался ушедшим
+	// make-before-break: Яндекс дропает co-editing-сессию ~раз в 70с (4007 «drop»). Заранее
+	// (< 70с) поднимаем НОВУЮ сессию (со своим userID → уживается как отдельный соавтор),
+	// переключаем на неё запись без разрыва, старую гасим с нахлёстом. 70-сек дроп тогда
+	// всегда бьёт уже брошенную сессию → канал не рвётся.
+	rotateEvery = 50 * time.Second
+	sessOverlap = 3 * time.Second
 )
 
 var ooClientConfigRe = regexp.MustCompile(`(?s)<script[^>]*id="client-config"[^>]*>(.*?)</script>`)
@@ -74,12 +80,11 @@ type OnlyOfficePacketConn struct {
 	exit      bool
 	publicURL string
 	selfID    uint32 // случайный id этого конца — отсекать собственные эхо-кадры
-	userID    string // случайный 10-значный editor-id: без него сервер не броадкастит курсор
 
 	follow *http.Client
 
-	mu   sync.RWMutex
-	sess *ooSession
+	mu       sync.RWMutex
+	sessions []*ooSession // активные WS-сессии; во время make-before-break-нахлёста их две
 
 	tx     chan []byte
 	rx     chan []byte
@@ -105,7 +110,6 @@ func NewOnlyOfficePacketConn(ctx context.Context, exit bool, publicURL string, t
 		exit:      exit,
 		publicURL: publicURL,
 		selfID:    rand.Uint32(),
-		userID:    fmt.Sprintf("%010d", rand.Intn(1000000000)),
 		follow: &http.Client{Jar: jar, Timeout: 25 * time.Second, Transport: &http.Transport{
 			DialContext: forceIPv4Dial, ForceAttemptHTTP2: true, TLSHandshakeTimeout: 15 * time.Second,
 			MaxIdleConns: 32, IdleConnTimeout: 90 * time.Second,
@@ -141,23 +145,77 @@ func NewOnlyOfficePacketConn(ctx context.Context, exit bool, publicURL string, t
 	}
 }
 
+// writeAll дублирует кадр во ВСЕ активные сессии. Во время make-before-break-нахлёста их две
+// (старая+новая) → когда Яндекс кикнет старую, новая уже получила эти данные → без разрыва.
+func (c *OnlyOfficePacketConn) writeAll(msg []byte) int {
+	c.mu.RLock()
+	ss := make([]*ooSession, len(c.sessions))
+	copy(ss, c.sessions)
+	c.mu.RUnlock()
+	for _, s := range ss {
+		_ = s.write(msg)
+	}
+	return len(ss)
+}
+
+func (c *OnlyOfficePacketConn) removeSession(o *ooSession) {
+	c.mu.Lock()
+	for i, s := range c.sessions {
+		if s == o {
+			c.sessions = append(c.sessions[:i], c.sessions[i+1:]...)
+			break
+		}
+	}
+	c.mu.Unlock()
+}
+
 func (c *OnlyOfficePacketConn) sessionLoop() {
-	backoff := 500 * time.Millisecond
+	var cur *ooSession
+	backoff := 200 * time.Millisecond
 	for c.running.Load() {
 		s, err := c.launch()
 		if err != nil {
-			c.connected.Store(false)
+			if cur == nil { // ни разу не подключились — держим connected=false для конструктора
+				c.connected.Store(false)
+			}
 			c.sleepBackoff(&backoff)
 			continue
 		}
+		backoff = 200 * time.Millisecond
+
+		// make-before-break: новая сессия готова → атомарно переключаем запись KCP на неё,
+		// старую гасим с нахлёстом (успеет отдать запоздавшие downstream-кадры). KCP-сессия
+		// живёт на PacketConn, не на WS → переключение без разрыва.
+		old := cur
 		c.mu.Lock()
-		c.sess = s
+		c.sessions = append(c.sessions, s) // с этого момента writeLoop дублирует и в новую
 		c.mu.Unlock()
+		cur = s
 		c.connected.Store(true)
-		backoff = 500 * time.Millisecond
-		c.readLoop(s)
-		c.connected.Store(false)
-		c.sleepBackoff(&backoff)
+
+		dead := make(chan struct{})
+		go func() { c.readLoop(s); c.removeSession(s); close(dead) }()
+		if old != nil {
+			go func(o *ooSession) {
+				select {
+				case <-time.After(sessOverlap): // нахлёст: пишем в обе, downstream старой ещё жив
+				case <-c.closed:
+				}
+				c.removeSession(o)
+				o.conn.Close()
+			}(old)
+		}
+
+		select {
+		case <-time.After(rotateEvery):
+			// проактивная ротация: s остаётся текущей, пока не поднимется новая (без разрыва)
+		case <-dead:
+			// сессия умерла раньше срока (спорадический 4007/сеть) → быстрый реактивный реконнект
+			c.sleepBackoff(&backoff)
+		case <-c.closed:
+			s.conn.Close()
+			return
+		}
 	}
 }
 
@@ -254,16 +312,19 @@ func (c *OnlyOfficePacketConn) launch() (*ooSession, error) {
 	conn.WriteMessage(websocket.TextMessage, []byte("5"))
 	s := &ooSession{conn: conn}
 	// open doc (co-editing) — включает broadcast cursor между соавторами
+	// свой userID НА КАЖДУЮ сессию: при make-before-break старая и новая должны уживаться
+	// как РАЗНЫЕ соавторы (одинаковый userID → Яндекс кикнул бы старую сразу, был бы разрыв).
+	uid := fmt.Sprintf("%010d", rand.Intn(1000000000))
 	openMsg, _ := json.Marshal([]interface{}{"message", map[string]interface{}{
 		"type":              "auth",
 		"docid":             info.key,
 		"token":             "fghhfgsjdgfjs",
-		"user":              map[string]interface{}{"id": c.userID},
+		"user":              map[string]interface{}{"id": uid},
 		"editorType":        0,
 		"lastOtherSaveTime": -1,
 		"permissions":       info.permissions,
 		"openCmd": map[string]interface{}{
-			"c": "open", "id": info.key, "userid": c.userID,
+			"c": "open", "id": info.key, "userid": uid,
 			"format": info.fileType, "url": info.url, "title": info.title, "lcid": 25,
 		},
 		"coEditingMode": "fast",
@@ -455,20 +516,14 @@ func (c *OnlyOfficePacketConn) writeLoop() {
 				break drain
 			}
 		}
-		c.mu.RLock()
-		s := c.sess
-		c.mu.RUnlock()
-		if s == nil {
-			continue
-		}
 		batch := packBatch(pkts)
 		frame := make([]byte, 0, len(ooMagic)+4+len(batch))
 		frame = append(frame, ooMagic...)
 		frame = append(frame, byte(c.selfID>>24), byte(c.selfID>>16), byte(c.selfID>>8), byte(c.selfID))
 		frame = append(frame, batch...)
 		b64 := base64.StdEncoding.EncodeToString(frame)
-		werr := s.write([]byte(`42["message",{"type":"cursor","cursor":"18;` + b64 + `"}]`))
-		oodbg("tx self=%d npkts=%d batch=%d b64=%d err=%v", c.selfID, len(pkts), len(batch), len(b64), werr)
+		n := c.writeAll([]byte(`42["message",{"type":"cursor","cursor":"18;` + b64 + `"}]`))
+		oodbg("tx self=%d npkts=%d batch=%d b64=%d sessions=%d", c.selfID, len(pkts), len(batch), len(b64), n)
 	}
 }
 
@@ -480,12 +535,7 @@ func (c *OnlyOfficePacketConn) keepAliveLoop() {
 		case <-c.closed:
 			return
 		case <-t.C:
-			c.mu.RLock()
-			s := c.sess
-			c.mu.RUnlock()
-			if s != nil {
-				s.write([]byte(`42["message",{"type":"cursor","cursor":"18;---KA---"}]`))
-			}
+			c.writeAll([]byte(`42["message",{"type":"cursor","cursor":"18;---KA---"}]`))
 		}
 	}
 }
