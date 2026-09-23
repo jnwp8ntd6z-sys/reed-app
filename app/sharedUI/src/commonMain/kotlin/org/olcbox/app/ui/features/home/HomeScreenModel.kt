@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
@@ -41,6 +42,18 @@ class HomeScreenViewModel(
     val state get() = _state.asStateFlow()
     val logs get() = vpnManager.logs
 
+    // Явное намерение пользователя держать VPN включённым. Меняется ТОЛЬКО осознанными
+    // действиями (кнопка в ToggleVpn) и фактическим статусом системного туннеля
+    // (Connected / Disconnected / Error), но НЕ переходными Connecting/Reconnecting/Stopping.
+    // Раньше решение о перезапуске при выборе сервера бралось напрямую по гоночному
+    // vpnManager.status.value — из-за этого при быстром переключении серверов VPN
+    // включался сам. Теперь перезапуск завязан на это намерение, а не на текущий статус.
+    private var userWantsConnected = false
+
+    // Задача переподключения при смене сервера. Быстрое переключение серверов отменяет
+    // предыдущую задачу, чтобы несколько startVpn не накладывались друг на друга.
+    private var switchJob: Job? = null
+
     // Реальное время подключения от системы (iOS: NEVPNConnection.connectedDate) для таймера
     // сессии; null — платформа не знает, UI считает от локальной метки.
     fun vpnConnectedAtMillis(): Long? = vpnManager.connectedAtEpochMillis()
@@ -59,6 +72,16 @@ class HomeScreenViewModel(
 
         viewModelScope.launch {
             vpnManager.status.collect { status ->
+                // Поддерживаем намерение по фактическому состоянию туннеля: связь реально
+                // поднялась — значит VPN нужен; полностью упала/ошибка — не нужен.
+                // Переходные Connecting/Reconnecting/Stopping не трогаем, чтобы во время
+                // самого переподключения при смене сервера намерение не сбрасывалось.
+                when (status) {
+                    VpnStatus.Connected -> userWantsConnected = true
+                    VpnStatus.Disconnected,
+                    is VpnStatus.Error -> userWantsConnected = false
+                    else -> Unit
+                }
                 _state.update {
                     when (status) {
                         VpnStatus.Connected -> it.copy(isVpnConnected = true, isVpnLoading = false, connectionErrorMessage = null)
@@ -179,6 +202,10 @@ class HomeScreenViewModel(
             status is VpnStatus.Connecting ||
             status is VpnStatus.Reconnecting
         ) {
+            // Пользователь осознанно гасит VPN во время подключения — снимаем намерение,
+            // иначе смена сервера снова его поднимет.
+            userWantsConnected = false
+            switchJob?.cancel()
             viewModelScope.launch {
                 vpnManager.stopVpn()
                 _state.update { it.copy(isVpnConnected = false, isVpnLoading = false) }
@@ -190,6 +217,8 @@ class HomeScreenViewModel(
             _state.update { it.copy(isVpnLoading = true) }
             try {
                 if (_state.value.isVpnConnected || vpnManager.status.value is VpnStatus.Connected) {
+                    userWantsConnected = false
+                    switchJob?.cancel()
                     vpnManager.stopVpn()
                 } else {
                     val active = locationsRepository.getActiveLocation()
@@ -203,6 +232,7 @@ class HomeScreenViewModel(
                         }
                         return@launch
                     }
+                    userWantsConnected = true
                     vpnManager.startVpn()
                 }
             } catch (e: Exception) {
@@ -211,18 +241,23 @@ class HomeScreenViewModel(
         }
     }
 
+    /**
+     * Переподключение к вновь выбранному серверу. Срабатывает ТОЛЬКО если пользователь
+     * осознанно держит VPN включённым ([userWantsConnected]) — иначе выбор сервера просто
+     * меняет активную локацию, ничего не запуская (раньше решение бралось по гоночному
+     * статусу туннеля, из-за чего VPN включался сам при быстром переключении).
+     *
+     * Быстрые переключения дебаунсятся: каждая новая смена отменяет предыдущую задачу, и
+     * реальный [startVpn] уходит только после паузы тишины — чтобы не накладывать несколько
+     * подключений друг на друга. Пока идёт переключение — показываем индикатор загрузки.
+     */
     fun restartVpnIfRunning() {
-        when (vpnManager.status.value) {
-            VpnStatus.Connected,
-            VpnStatus.Connecting,
-            VpnStatus.Reconnecting -> viewModelScope.launch {
-                _state.update { it.copy(isVpnLoading = true) }
-                vpnManager.startVpn()
-            }
-
-            VpnStatus.Disconnected,
-            VpnStatus.Stopping,
-            is VpnStatus.Error -> Unit
+        if (!userWantsConnected) return
+        switchJob?.cancel()
+        switchJob = viewModelScope.launch {
+            _state.update { it.copy(isVpnLoading = true) }
+            delay(SERVER_SWITCH_DEBOUNCE_MS)
+            vpnManager.startVpn()
         }
     }
     private fun updateLocationConfig(block: (LocationConfig) -> LocationConfig) {
@@ -409,3 +444,8 @@ data class HomeScreenState(
 )
 
 private const val SUBSCRIPTION_AUTO_REFRESH_POLL_MS = 60L * 60L * 1_000L
+
+// Пауза тишины перед фактическим переподключением при смене сервера. Быстрые последовательные
+// переключения отменяют предыдущую задачу до истечения этой паузы, поэтому реально стартует
+// только последний выбранный сервер.
+private const val SERVER_SWITCH_DEBOUNCE_MS = 350L

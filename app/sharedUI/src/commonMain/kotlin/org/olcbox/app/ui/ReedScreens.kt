@@ -1178,6 +1178,7 @@ private fun ReedServerRow(
     loc: LocationItem,
     isSelected: Boolean,
     isConnectedHere: Boolean,
+    isSwitchingHere: Boolean,
     ping: Int?,
     pingLoading: Boolean,
     serversRefreshing: Boolean,
@@ -1259,7 +1260,14 @@ private fun ReedServerRow(
                     }
                 }
             }
-            if (isConnectedHere) {
+            // Переключение на этот сервер (VPN сам гасится и поднимается) — крутим спиннер;
+            // когда связь поднялась на этом сервере — показываем точку «подключён здесь».
+            if (isSwitchingHere) {
+                Spacer(Modifier.width(8.dp))
+                CircularProgressIndicator(
+                    modifier = Modifier.size(12.dp), strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary)
+            } else if (isConnectedHere) {
                 Spacer(Modifier.width(8.dp))
                 Box(Modifier.size(10.dp).clip(CircleShape)
                     .background(MaterialTheme.colorScheme.primary))
@@ -1812,7 +1820,8 @@ fun ReedHomeScreen(
                 ReedServerRow(
                     loc = loc,
                     isSelected = loc.storageId == selectedId,
-                    isConnectedHere = state.isVpnConnected && loc.storageId == selectedId,
+                    isConnectedHere = state.isVpnConnected && !state.isVpnLoading && loc.storageId == selectedId,
+                    isSwitchingHere = state.isVpnLoading && loc.storageId == selectedId,
                     ping = pingFor(pingsState, loc.storageId),
                     pingLoading = pingLoadingFor(pingsState, loc.storageId),
                     serversRefreshing = serversRefreshing,
@@ -1902,7 +1911,8 @@ fun ReedHomeScreen(
                 ReedServerRow(
                     loc = onlyTemp,
                     isSelected = onlyTemp.storageId == selectedId,
-                    isConnectedHere = state.isVpnConnected && onlyTemp.storageId == selectedId,
+                    isConnectedHere = state.isVpnConnected && !state.isVpnLoading && onlyTemp.storageId == selectedId,
+                    isSwitchingHere = state.isVpnLoading && onlyTemp.storageId == selectedId,
                     ping = pingFor(pingsState, onlyTemp.storageId),
                     pingLoading = pingLoadingFor(pingsState, onlyTemp.storageId),
                     serversRefreshing = serversRefreshing,
