@@ -17,9 +17,19 @@ platform :ios do
       in_house: false,
     )
 
-    # Подпись через match: сертификат+ключ+профили лежат в приватном git-репо
-    # (reed-ios-certs) и переиспользуются каждым прогоном — cert/sigh на
-    # эфемерном раннере теряли приватный ключ после каждой сборки.
+    # Подпись. Вариант 1 (CI на disifydev): готовые p12 + профили App Store из секретов
+    # (SIGN_P12_PATH/PROFILE_*_PATH кладёт шаг workflow). Вариант 2: match из reed-ios-certs.
+    profile_prefix = ENV["PROFILE_PREFIX"] || "match AppStore"
+    if ENV["SIGN_P12_PATH"]
+      import_certificate(
+        certificate_path: ENV["SIGN_P12_PATH"],
+        certificate_password: ENV["SIGN_P12_PASSWORD"],
+        keychain_name: "fastlane_tmp_keychain",
+        keychain_password: "",
+      )
+      install_provisioning_profile(path: ENV["PROFILE_APP_PATH"])
+      install_provisioning_profile(path: ENV["PROFILE_EXT_PATH"])
+    else
     match(
       api_key: api_key,
       type: "appstore",
@@ -28,6 +38,7 @@ platform :ios do
       git_basic_authorization: ENV["MATCH_GIT_BASIC_AUTHORIZATION"],
       readonly: false,
     )
+    end
 
     # project.yml держит CURRENT_PROJECT_VERSION="1" статично (XcodeGen-спека в git) —
     # App Store Connect требует уникальный возрастающий номер билда на версию, поэтому
@@ -51,8 +62,8 @@ platform :ios do
       export_options: {
         signingStyle: "manual",
         provisioningProfiles: {
-          "ru.reedapp.app" => "match AppStore ru.reedapp.app",
-          "ru.reedapp.app.PacketTunnel" => "match AppStore ru.reedapp.app.PacketTunnel",
+          "ru.reedapp.app" => "#{profile_prefix} ru.reedapp.app",
+          "ru.reedapp.app.PacketTunnel" => "#{profile_prefix} ru.reedapp.app.PacketTunnel",
         },
       },
       output_directory: "dist",

@@ -39,7 +39,8 @@ jobs:
       - name: Checkout olcrtc
         uses: actions/checkout@v4
         with:
-          repository: reedvpnbot/olcrtc
+          repository: ${{ vars.OLCRTC_REPO_NAME || 'reedvpnbot/olcrtc' }}
+          token: ${{ secrets.OLCRTC_TOKEN || github.token }}
           ref: ${{ env.OLCRTC_REF }}
           path: olcrtc
           submodules: recursive
@@ -148,7 +149,8 @@ jobs:
       - name: Checkout olcrtc
         uses: actions/checkout@v4
         with:
-          repository: reedvpnbot/olcrtc
+          repository: ${{ vars.OLCRTC_REPO_NAME || 'reedvpnbot/olcrtc' }}
+          token: ${{ secrets.OLCRTC_TOKEN || github.token }}
           ref: ${{ env.OLCRTC_REF }}
           path: olcrtc
           submodules: recursive
@@ -167,6 +169,22 @@ jobs:
         run: gomobile init
       - name: Install XcodeGen
         run: brew install xcodegen
+      - name: Signing from secrets (p12 + App Store profiles, без match)
+        env:
+          SIGN_P12_BASE64: ${{ secrets.SIGN_P12_BASE64 }}
+          PROFILE_APP_BASE64: ${{ secrets.PROFILE_APP_BASE64 }}
+          PROFILE_EXT_BASE64: ${{ secrets.PROFILE_EXT_BASE64 }}
+          PROFILE_PREFIX: ${{ vars.PROFILE_PREFIX }}
+        run: |
+          if [ -z "$SIGN_P12_BASE64" ]; then echo "match-подпись"; exit 0; fi
+          d="$RUNNER_TEMP/sign"; mkdir -p "$d"
+          printf '%s' "$SIGN_P12_BASE64" | base64 --decode > "$d/dist.p12"
+          printf '%s' "$PROFILE_APP_BASE64" | base64 --decode > "$d/app.mobileprovision"
+          printf '%s' "$PROFILE_EXT_BASE64" | base64 --decode > "$d/ext.mobileprovision"
+          { echo "SIGN_P12_PATH=$d/dist.p12"; echo "PROFILE_APP_PATH=$d/app.mobileprovision"
+            echo "PROFILE_EXT_PATH=$d/ext.mobileprovision"; echo "PROFILE_PREFIX=$PROFILE_PREFIX"; } >> "$GITHUB_ENV"
+          sed -i '' "s/match AppStore /$PROFILE_PREFIX /" app/iosApp/project.yml
+          grep -n PROVISIONING_PROFILE_SPECIFIER app/iosApp/project.yml
       - name: Generate Xcode project (app + PacketTunnel extension)
         working-directory: app/iosApp
         run: xcodegen generate
@@ -177,6 +195,7 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+          SIGN_P12_PASSWORD: ${{ secrets.SIGN_P12_PASSWORD }}
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
         run: |
@@ -263,7 +282,8 @@ jobs:
       - name: Checkout olcrtc
         uses: actions/checkout@v4
         with:
-          repository: reedvpnbot/olcrtc
+          repository: ${{ vars.OLCRTC_REPO_NAME || 'reedvpnbot/olcrtc' }}
+          token: ${{ secrets.OLCRTC_TOKEN || github.token }}
           ref: ${{ env.OLCRTC_REF }}
           path: olcrtc
           submodules: recursive
@@ -316,7 +336,8 @@ jobs:
       - name: Checkout olcrtc
         uses: actions/checkout@v4
         with:
-          repository: reedvpnbot/olcrtc
+          repository: ${{ vars.OLCRTC_REPO_NAME || 'reedvpnbot/olcrtc' }}
+          token: ${{ secrets.OLCRTC_TOKEN || github.token }}
           ref: ${{ env.OLCRTC_REF }}
           path: olcrtc
           submodules: recursive
