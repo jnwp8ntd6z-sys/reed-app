@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"sync"
 	"time"
 
@@ -36,6 +37,10 @@ const TypeCovert = "covert"
 // CovertOutboundOptions — опции outbound'а в конфиге sing-box.
 type CovertOutboundOptions struct {
 	PublicURL string `json:"public_url"`
+	// Cookie — строка логин-куки Яндекс-аккаунта. Приходит с сервера в профиле, чтобы
+	// клиент заходил в док авторизованно и не упирался в captcha cc=1 на дата-центровых IP.
+	// Пусто → анонимный заход (как раньше). onlyoffice_conn читает её через env YANDEX_COOKIE.
+	Cookie string `json:"cookie"`
 }
 
 // RegisterOutbound добавляет тип "covert" в реестр outbound'ов sing-box.
@@ -56,6 +61,11 @@ type Outbound struct {
 func NewCovertOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options CovertOutboundOptions) (adapter.Outbound, error) {
 	if options.PublicURL == "" {
 		return nil, fmt.Errorf("covert: public_url is required")
+	}
+	// Куки из профиля прокидываем в env, который читает onlyoffice_conn при заходе в док.
+	// Так серверный профиль управляет авторизацией без правки Swift/Kotlin-обёртки.
+	if options.Cookie != "" {
+		os.Setenv("YANDEX_COOKIE", options.Cookie)
 	}
 	return &Outbound{
 		Adapter:   outbound.NewAdapter(TypeCovert, tag, []string{N.NetworkTCP}, nil),

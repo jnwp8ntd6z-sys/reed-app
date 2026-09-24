@@ -29,6 +29,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/cookiejar"
+	neturl "net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -106,6 +107,31 @@ type ooDocInfo struct {
 // timeout<=0 — ждать бесконечно (для exit).
 func NewOnlyOfficePacketConn(ctx context.Context, exit bool, publicURL string, timeout time.Duration) (*OnlyOfficePacketConn, error) {
 	jar, _ := cookiejar.New(nil)
+	// Логин-куки Яндекс-аккаунта (env YANDEX_COOKIE): залогиненную сессию Яндекс не встречает
+	// интерактивной капчей cc=1 на дата-центровых IP, поэтому fetchDocInfo доходит до client-config.
+	// Без куки анонимный заход с такого IP упирается в cc=1 и client-config не находится.
+	if raw := os.Getenv("YANDEX_COOKIE"); raw != "" {
+		var cks []*http.Cookie
+		for _, part := range strings.Split(raw, ";") {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			kv := strings.SplitN(part, "=", 2)
+			if len(kv) != 2 {
+				continue
+			}
+			cks = append(cks, &http.Cookie{Name: strings.TrimSpace(kv[0]), Value: strings.TrimSpace(kv[1]), Domain: ".yandex.ru", Path: "/"})
+		}
+		for _, h := range []string{"https://yandex.ru", "https://disk.yandex.ru", "https://docs.yandex.ru"} {
+			if u, e := neturl.Parse(h); e == nil {
+				jar.SetCookies(u, cks)
+			}
+		}
+		if ooDebug {
+			log.Printf("[covert/oo] seeded %d cookies from YANDEX_COOKIE", len(cks))
+		}
+	}
 	c := &OnlyOfficePacketConn{
 		exit:      exit,
 		publicURL: publicURL,
@@ -345,6 +371,11 @@ func (c *OnlyOfficePacketConn) fetchDocInfo() (ooDocInfo, error) {
 	body, _ := readAllClose(resp)
 	var cookies []string
 	for _, ck := range resp.Cookies() {
+		cookies = append(cookies, ck.Name+"="+ck.Value)
+	}
+	// Плюс логин-куки из jar (посеянные из YANDEX_COOKIE): нужны, чтобы WS-сессия
+	// авторизованного дока открылась под тем же аккаунтом, что прошёл captcha-гейт.
+	for _, ck := range c.follow.Jar.Cookies(resp.Request.URL) {
 		cookies = append(cookies, ck.Name+"="+ck.Value)
 	}
 	m := ooClientConfigRe.FindSubmatch(body)
