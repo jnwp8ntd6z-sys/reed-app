@@ -4,7 +4,8 @@ import Network
 // MARK: - Сессия (те же ключи UserDefaults, что у прежней версии — обновление не разлогинивает)
 
 enum ReedSessionStore {
-    private static let d = UserDefaults.standard
+    // Вычисляемое: UserDefaults.standard потокобезопасен, но в Swift 6 не помечен Sendable.
+    private static var d: UserDefaults { .standard }
 
     static var token: String? {
         get { d.string(forKey: "reed_token") }
