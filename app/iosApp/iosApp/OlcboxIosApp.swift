@@ -24,11 +24,10 @@ struct OlcboxIosApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ComposeHostView(
-                platformBridge: platformBridge,
-                appSession: appSession
-            )
-            .ignoresSafeArea()
+            // Reed 2.0: нативный SwiftUI-интерфейс (ТЗ). Старый Compose-хост (ComposeHostView
+            // ниже) больше не показывается; KMP-мосты в init оставлены, чтобы SharedUI/туннель
+            // линковались как прежде.
+            ReedRootView()
         }
     }
 }
