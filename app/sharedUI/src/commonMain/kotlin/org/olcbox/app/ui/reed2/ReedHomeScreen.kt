@@ -114,9 +114,12 @@ fun ReedHomeScreen(
                 Column(Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("Подписка ${subscription.untilLabel}", color = Reed2.ink,
-                            fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                            fontSize = 14.sp, fontWeight = FontWeight.SemiBold,
+                            maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f))
                         Text(subscription.usageLabel, color = Reed2.inkMuted,
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 14.sp)
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 13.sp,
+                            maxLines = 1, modifier = Modifier.padding(start = 8.dp))
                     }
                     Spacer(Modifier.height(12.dp))
                     ReedWavyProgress(subscription.progress)

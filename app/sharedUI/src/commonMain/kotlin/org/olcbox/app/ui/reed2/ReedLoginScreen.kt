@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -76,8 +77,8 @@ fun ReedLoginScreen(
                     .background(Reed2.surface100),
             )
             Canvas(
-                Modifier.size(210.dp).align(Alignment.TopEnd)
-                    .padding(top = 0.dp),
+                Modifier.size(190.dp).align(Alignment.TopEnd)
+                    .offset(x = 34.dp, y = (-26).dp),
             ) {
                 val path = starCookiePath(size.width / 2f, size.height / 2f, size.minDimension * 0.42f, 12)
                 drawPath(

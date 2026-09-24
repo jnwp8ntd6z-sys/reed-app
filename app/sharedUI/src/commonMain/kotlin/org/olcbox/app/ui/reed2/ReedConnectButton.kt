@@ -117,17 +117,23 @@ fun ReedConnectButton(
             val cy = this.size.height / 2f
             val rr = r * pulse
 
-            // Свечение (мягкий ореол вокруг) — рисуем несколькими полупрозрачными кольцами.
+            // Свечение — мягкий радиальный ореол (без «колец», плавное затухание к прозрачному).
             if (glowAlpha > 0.01f) {
-                val glow = Reed2.lime.copy(alpha = glowAlpha)
-                for (i in 3 downTo 1) {
-                    drawCircle(
-                        color = glow.copy(alpha = glowAlpha * (0.10f * i)),
-                        radius = rr + i * (r * 0.12f),
+                val glowR = rr * 1.7f
+                drawCircle(
+                    brush = androidx.compose.ui.graphics.Brush.radialGradient(
+                        colors = listOf(
+                            Reed2.lime.copy(alpha = glowAlpha),
+                            Reed2.lime.copy(alpha = glowAlpha * 0.35f),
+                            Reed2.lime.copy(alpha = 0f),
+                        ),
                         center = Offset(cx, cy),
-                        style = Fill,
-                    )
-                }
+                        radius = glowR,
+                    ),
+                    radius = glowR,
+                    center = Offset(cx, cy),
+                    style = Fill,
+                )
             }
 
             // Тело кнопки — 12-угольная «печенька», сглаженная к кругу по morph.
