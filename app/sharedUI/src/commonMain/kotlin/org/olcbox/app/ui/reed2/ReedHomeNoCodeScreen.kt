@@ -57,7 +57,7 @@ fun ReedHomeNoCodeScreen(
 
         Spacer(Modifier.height(24.dp))
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            ReedConnectButton(state = ReedConnState.Off, size = 150) // приглушённая, неактивная
+            ReedConnectButton(state = ReedConnState.Off, size = 150, enabled = false) // приглушённая, неактивная
         }
         Spacer(Modifier.height(14.dp))
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {

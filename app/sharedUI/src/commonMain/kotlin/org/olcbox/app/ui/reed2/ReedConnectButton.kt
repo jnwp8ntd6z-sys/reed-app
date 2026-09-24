@@ -17,6 +17,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.clickable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.coroutineScope
 import androidx.compose.runtime.remember
@@ -53,6 +58,7 @@ fun ReedConnectButton(
     modifier: Modifier = Modifier,
     size: Int = 180,
     onClick: () -> Unit = {},
+    enabled: Boolean = true,      // без кода — приглушённая, не нажимается
 ) {
     // Один непрерывный аниматор формы и один — масштаба: при любой смене состояния анимация
     // продолжается с текущего значения (раньше переключение между бесконечной и одиночной
@@ -110,8 +116,23 @@ fun ReedConnectButton(
         label = "glow",
     )
 
+    // Нажатие: кнопка раньше была только картинкой (onClick не использовался) — теперь круглая
+    // зона нажатия, лёгкое сжатие на пружине и вибрация.
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        if (pressed) 0.95f else 1f,
+        androidx.compose.animation.core.spring(dampingRatio = 0.6f, stiffness = 600f), label = "press",
+    )
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     Box(
-        modifier = modifier.size(size.dp),
+        modifier = modifier.size(size.dp)
+            .graphicsLayer { scaleX = pressScale; scaleY = pressScale }
+            .clickable(enabled = enabled, interactionSource = interaction, indication = null) {
+                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                onClick()
+            }
+            .semantics { role = androidx.compose.ui.semantics.Role.Button },
         contentAlignment = Alignment.Center,
     ) {
         Canvas(Modifier.size(size.dp)) {
