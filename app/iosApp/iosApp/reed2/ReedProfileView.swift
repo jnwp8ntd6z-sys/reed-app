@@ -266,37 +266,103 @@ struct ReedProfileView: View {
 struct ReedServicesDirectView: View {
     @EnvironmentObject var m: ReedAppModel
     @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
 
-    static let services: [(id: String, name: String, icon: String)] = [
-        ("gosuslugi", "Госуслуги", "building.columns"), ("sber", "Сбер", "creditcard"),
-        ("tbank", "Т-Банк", "creditcard"), ("vtb", "ВТБ", "creditcard"), ("alfa", "Альфа-Банк", "creditcard"),
-        ("ozon", "Ozon", "shippingbox"), ("wildberries", "Wildberries", "bag"), ("yandex", "Яндекс", "magnifyingglass"),
-        ("vk", "VK", "person.2"), ("avito", "Авито", "tag"), ("mts", "МТС", "antenna.radiowaves.left.and.right"),
-        ("megafon", "МегаФон", "antenna.radiowaves.left.and.right"), ("beeline", "Билайн", "antenna.radiowaves.left.and.right"),
+    struct Service: Identifiable, Sendable { let id: String; let name: String; let icon: String }
+    struct ServiceGroup: Identifiable, Sendable { let id: String; let title: String; let items: [Service] }
+
+    /// Сервисы по разделам (домены каждого — на сервере, _DIRECT_SERVICES в sub_server.py).
+    static let groups: [ServiceGroup] = [
+        ServiceGroup(id: "gov", title: "Госуслуги и налоги", items: [
+            Service(id: "gosuslugi", name: "Госуслуги", icon: "building.columns"),
+            Service(id: "nalog", name: "Мой налог и ФНС", icon: "doc.text"),
+            Service(id: "mosru", name: "Мос.ру", icon: "building.2"),
+            Service(id: "pochta", name: "Почта России", icon: "envelope"),
+        ]),
+        ServiceGroup(id: "banks", title: "Банки и платежи", items: [
+            Service(id: "sber", name: "Сбер", icon: "creditcard"),
+            Service(id: "tbank", name: "Т-Банк", icon: "creditcard"),
+            Service(id: "vtb", name: "ВТБ", icon: "creditcard"),
+            Service(id: "alfa", name: "Альфа-Банк", icon: "creditcard"),
+            Service(id: "gazprombank", name: "Газпромбанк", icon: "creditcard"),
+            Service(id: "raiffeisen", name: "Райффайзен", icon: "creditcard"),
+            Service(id: "pochtabank", name: "Почта Банк", icon: "creditcard"),
+            Service(id: "sovcombank", name: "Совкомбанк и Халва", icon: "creditcard"),
+            Service(id: "yoomoney", name: "ЮMoney", icon: "wallet.pass"),
+            Service(id: "mirpay", name: "Mir Pay", icon: "wave.3.right"),
+            Service(id: "domclick", name: "ДомКлик", icon: "house"),
+        ]),
+        ServiceGroup(id: "shop", title: "Покупки и доставка", items: [
+            Service(id: "ozon", name: "Ozon", icon: "shippingbox"),
+            Service(id: "wildberries", name: "Wildberries", icon: "bag"),
+            Service(id: "avito", name: "Авито", icon: "tag"),
+            Service(id: "samokat", name: "Самокат", icon: "scooter"),
+            Service(id: "kuper", name: "Купер", icon: "cart"),
+            Service(id: "x5", name: "Пятёрочка и Перекрёсток", icon: "cart"),
+            Service(id: "magnit", name: "Магнит", icon: "cart"),
+            Service(id: "vkusvill", name: "ВкусВилл", icon: "leaf"),
+            Service(id: "lenta", name: "Лента", icon: "cart"),
+        ]),
+        ServiceGroup(id: "travel", title: "Поездки и карты", items: [
+            Service(id: "rzd", name: "РЖД", icon: "tram"),
+            Service(id: "aeroflot", name: "Аэрофлот", icon: "airplane"),
+            Service(id: "gis2", name: "2ГИС", icon: "map"),
+            Service(id: "yandex", name: "Яндекс", icon: "magnifyingglass"),
+        ]),
+        ServiceGroup(id: "media", title: "Общение и видео", items: [
+            Service(id: "vk", name: "VK", icon: "person.2"),
+            Service(id: "max", name: "MAX", icon: "message"),
+            Service(id: "kinopoisk", name: "Кинопоиск", icon: "film"),
+            Service(id: "okko", name: "Okko", icon: "play.rectangle"),
+            Service(id: "wink", name: "Wink", icon: "play.rectangle"),
+            Service(id: "rutube", name: "Rutube", icon: "play.rectangle"),
+        ]),
+        ServiceGroup(id: "telecom", title: "Связь", items: [
+            Service(id: "mts", name: "МТС", icon: "antenna.radiowaves.left.and.right"),
+            Service(id: "megafon", name: "МегаФон", icon: "antenna.radiowaves.left.and.right"),
+            Service(id: "beeline", name: "Билайн", icon: "antenna.radiowaves.left.and.right"),
+            Service(id: "t2", name: "Т2", icon: "antenna.radiowaves.left.and.right"),
+        ]),
     ]
+
+    private var shownGroups: [ServiceGroup] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return Self.groups }
+        return Self.groups.compactMap { g in
+            let items = g.items.filter { $0.name.localizedCaseInsensitiveContains(q) }
+            return items.isEmpty ? nil : ServiceGroup(id: g.id, title: g.title, items: items)
+        }
+    }
 
     var body: some View {
         NavigationStack {
             List {
-                Section {
-                    ForEach(Self.services, id: \.id) { s in
-                        Button { withAnimation(.smooth(duration: 0.2)) { m.toggleDirectService(s.id) } } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: s.icon).frame(width: 24).foregroundStyle(Reed.inkMuted)
-                                Text(s.name).foregroundStyle(Reed.ink)
-                                Spacer()
-                                Image(systemName: m.directServices.contains(s.id) ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(m.directServices.contains(s.id) ? Reed.statusOk : Reed.chrome600)
-                                    .contentTransition(.symbolEffect(.replace))
+                ForEach(shownGroups) { g in
+                    Section(g.title) {
+                        ForEach(g.items) { s in
+                            let on = m.directServices.contains(s.id)
+                            Button { withAnimation(.smooth(duration: 0.2)) { m.toggleDirectService(s.id) } } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: s.icon).frame(width: 24).foregroundStyle(Reed.inkMuted)
+                                    Text(s.name).foregroundStyle(Reed.ink)
+                                    Spacer()
+                                    Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(on ? Reed.statusOk : Reed.chrome600)
+                                        .contentTransition(.symbolEffect(.replace))
+                                }
                             }
+                            .sensoryFeedback(.selection, trigger: on)
                         }
-                        .sensoryFeedback(.selection, trigger: m.directServices.contains(s.id))
                     }
+                }
+                Section {
                 } footer: {
-                    Text("Выбранные сервисы открываются напрямую, мимо туннеля — удобно для банков и госуслуг. Применяется при следующем подключении.")
+                    Text("Выбранные сервисы открываются напрямую, мимо туннеля — удобно для банков, налогов и госуслуг. Применяется при следующем подключении. При включённом «Российские сайты напрямую» российские сайты и так идут напрямую; если приложение всё равно не открывается, значит оно само проверяет подключение на телефоне — на iPhone это не обойти.")
                 }
             }
             .scrollContentBackground(.hidden)
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Найти сервис")
+            .animation(.smooth(duration: 0.25), value: query)
             .navigationTitle("Сервисы напрямую")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { dismiss() } } }

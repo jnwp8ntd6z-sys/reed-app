@@ -88,7 +88,7 @@ enum PreviewSeed {
         ReedSessionStore.splitRouting = true
         ReedSessionStore.autoConnect = scene == "profile" || scene == "profile_netcheck"
         ReedSessionStore.serverNetwork = scene == "home_cell" ? "cell" : "wifi"
-        ReedSessionStore.directServices = scene == "services" ? ["gosuslugi", "sber", "ozon"] : []
+        ReedSessionStore.directServices = scene == "services" ? ["gosuslugi", "nalog", "sber", "ozon"] : []
         ReedSessionStore.notifSeenMaxId = scene == "home_on" ? 0 : 3
     }
 
