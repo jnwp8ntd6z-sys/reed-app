@@ -14,7 +14,7 @@ on:
         description: "Which platforms to build (all/android/windows/ios)"
         default: "all"
         type: choice
-        options: [ all, android, windows, ios ]
+        options: [ all, android, windows, ios, ios-preview ]
 
 permissions:
   contents: read
@@ -207,6 +207,101 @@ jobs:
         with:
           name: reed-ios-unsigned-ipa
           path: app/dist/Reed-*-ios-unsigned.ipa
+
+  # Reed 2.0: проверка iOS БЕЗ TestFlight — превью-приложение (те же SwiftUI-файлы, туннель-заглушка) в
+  # симуляторе: скриншоты сцен + видео анимаций → ветка ci-results-preview. Подпись/секреты не нужны.
+  ios-preview:
+    runs-on: macos-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.platforms == 'ios-preview' }}
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: "^26.0" }
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Build preview (simulator)
+        working-directory: app/iosApp/preview
+        run: |
+          xcodegen generate
+          xcodebuild -project Preview.xcodeproj -scheme Preview -sdk iphonesimulator -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO build > build.log 2>&1 || { grep -E "error:" build.log | sort -u | head -150; exit 1; }
+          grep -E "warning:" build.log | grep -v "/build/" | sort -u | head -80 || true
+      - name: Shots iOS 26
+        working-directory: app/iosApp/preview
+        run: ./shots.sh 26 out/ios26
+      - name: Shots iOS 18 (ветка без Liquid Glass)
+        continue-on-error: true
+        working-directory: app/iosApp/preview
+        run: SCENES="login home_on family profile" ANIMS="anim_tabs anim_connect" ./shots.sh 18 out/ios18
+      - name: Publish results branch
+        if: always()
+        working-directory: app/iosApp/preview
+        run: |
+          mkdir -p out; cp build.log out/ 2>/dev/null || true
+          xcrun simctl list runtimes > out/runtimes.txt 2>&1 || true
+          cd out
+          git init -q -b ci-results-preview
+          git config user.email ci@example.com; git config user.name ci
+          git add -A && git commit -qm "preview ${GITHUB_RUN_ID}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" ci-results-preview
+
+  # Полная сборка приложения + PacketTunnel для симулятора (без подписи и загрузки) — проверка компиляции.
+  ios-check:
+    runs-on: macos-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.platforms == 'ios-preview' }}
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout olcrtc
+        uses: actions/checkout@v4
+        with:
+          repository: reedvpnbot/olcrtc
+          ref: ${{ env.OLCRTC_REF }}
+          path: olcrtc
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - uses: maxim-lobanov/setup-xcode@v1
+        with: { xcode-version: "^26.0" }
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.26.3", cache-dependency-path: olcrtc/go.sum }
+      - name: Install gomobile
+        run: |
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          go install golang.org/x/mobile/cmd/gomobile@6129f5bee9d5
+      - name: gomobile init
+        working-directory: olcrtc
+        run: gomobile init
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Build app + extension (simulator, unsigned)
+        working-directory: app/iosApp
+        env:
+          OLCRTC_REPO: ${{ github.workspace }}/olcrtc
+        run: |
+          xcodegen generate
+          xcodebuild -project iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" PROVISIONING_PROFILE_SPECIFIER="" \
+            build > build.log 2>&1 || { grep -E "error:|FAILED" build.log | sort -u | head -150; exit 1; }
+          grep -E "warning:" build.log | grep -v "/build/" | sort -u | head -80 || true
+      - name: Publish results branch
+        if: always()
+        working-directory: app/iosApp
+        run: |
+          mkdir -p ci-out; cp build.log ci-out/ 2>/dev/null || true
+          grep -E "error:|warning:" build.log | sort -u > ci-out/diagnostics.txt 2>/dev/null || true
+          cd ci-out
+          git init -q -b ci-results-check
+          git config user.email ci@example.com; git config user.name ci
+          git add -A && git commit -qm "check ${GITHUB_RUN_ID}"
+          git push -qf "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" ci-results-check
 
   windows:
     runs-on: windows-latest
