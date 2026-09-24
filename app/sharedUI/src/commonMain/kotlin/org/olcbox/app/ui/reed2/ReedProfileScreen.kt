@@ -35,6 +35,10 @@ import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.SignalCellularAlt
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.runtime.Composable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,12 +76,28 @@ fun ReedProfileScreen(
     onBotSubscription: () -> Unit = {},
     onReferrals: () -> Unit = {},
     servicesDirectLabel: String = "Приложения напрямую", // iOS: «Сервисы напрямую»
+    servicesDirectSubtitle: String = "Банки, госуслуги и другие",
+    autoConnectSubtitle: String = "При запуске и после перезагрузки",
+    onTitleLongPress: () -> Unit = {},
+    netChecking: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.fillMaxSize().background(Reed2.ground000).verticalScroll(rememberScrollState())
         .padding(horizontal = 20.dp)) {
         Spacer(Modifier.height(16.dp))
-        Text("ПРОФИЛЬ", color = Reed2.ink, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.5.sp)
+        // Долгое нажатие 1,5с на заголовок → выгрузка логов (ТЗ 4.6). Кнопки логов в интерфейсе нет.
+        val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+        Text("ПРОФИЛЬ", color = Reed2.ink, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.5.sp,
+            modifier = Modifier.pointerInput(Unit) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    val up = withTimeoutOrNull(1500L) { waitForUpOrCancellation() }
+                    if (up == null) {
+                        haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                        onTitleLongPress()
+                    }
+                }
+            })
 
         // Аккаунт.
         Spacer(Modifier.height(16.dp))
@@ -90,8 +110,7 @@ fun ReedProfileScreen(
                             fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                     }
                     Column(Modifier.padding(start = 12.dp)) {
-                        Text(if (username.startsWith("@")) username else "@$username",
-                            color = Reed2.ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        Text(username, color = Reed2.ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                         Text(subLabel, color = Reed2.inkMuted, fontSize = 13.sp)
                     }
                 }
@@ -125,7 +144,8 @@ fun ReedProfileScreen(
                         else -> Icons.Rounded.Language
                     }
                     val statusColor = when (r.statusKind) {
-                        "ok" -> Reed2.statusOk; "warn" -> Reed2.statusWarn; else -> Reed2.statusDanger
+                        "ok" -> Reed2.statusOk; "warn" -> Reed2.statusWarn; "muted" -> Reed2.inkMuted
+                        else -> Reed2.statusDanger
                     }
                     Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(icon, null, tint = Reed2.inkMuted, modifier = Modifier.size(20.dp))
@@ -138,11 +158,18 @@ fun ReedProfileScreen(
                 }
                 Spacer(Modifier.height(10.dp))
                 Box(Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(Reed2.pillRadius))
-                    .background(Reed2.ink).clickable(onClick = onCheckNetwork), contentAlignment = Alignment.Center) {
+                    .background(Reed2.ink).clickable(enabled = !netChecking, onClick = onCheckNetwork),
+                    contentAlignment = Alignment.Center) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.NetworkCheck, null, tint = Reed2.onInk, modifier = Modifier.size(18.dp))
+                        if (netChecking) {
+                            androidx.compose.material3.CircularProgressIndicator(color = Reed2.onInk,
+                                strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                        } else {
+                            Icon(Icons.Rounded.NetworkCheck, null, tint = Reed2.onInk, modifier = Modifier.size(18.dp))
+                        }
                         Spacer(Modifier.width(8.dp))
-                        Text("Проверить сеть", color = Reed2.onInk, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        Text(if (netChecking) "Проверяем…" else "Проверить сеть", color = Reed2.onInk,
+                            fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -152,9 +179,9 @@ fun ReedProfileScreen(
         Spacer(Modifier.height(20.dp))
         ReedSectionHeader("ПОДКЛЮЧЕНИЕ")
         Spacer(Modifier.height(8.dp))
-        ToggleRow(Icons.Rounded.Bolt, "Автоподключение", "При запуске и после перезагрузки", autoConnect, onAutoConnect)
+        ToggleRow(Icons.Rounded.Bolt, "Автоподключение", autoConnectSubtitle, autoConnect, onAutoConnect)
         ToggleRow(Icons.Rounded.Language, "Российские сайты напрямую", "Мимо туннеля", ruDirect, onRuDirect)
-        NavRow(Icons.Rounded.Apps, servicesDirectLabel, "Госуслуги, банки и ещё 4", onServicesDirect)
+        NavRow(Icons.Rounded.Apps, servicesDirectLabel, servicesDirectSubtitle, onServicesDirect)
         NavRow(Icons.Rounded.Notifications, "Уведомления", null, onNotifications)
 
         // ПОМОЩЬ.

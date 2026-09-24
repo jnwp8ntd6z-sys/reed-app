@@ -17,6 +17,9 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -26,7 +29,9 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
@@ -57,12 +62,18 @@ fun ReedLoginScreen(
     onTelegram: () -> Unit = {},
     onOpenTerms: () -> Unit = {},
     onOpenPrivacy: () -> Unit = {},
+    telegramBusy: Boolean = false,
+    statusText: String? = null,
     modifier: Modifier = Modifier,
 ) {
+    // Без согласия поле, QR и Telegram неактивны (ТЗ 4.1) — плавно приглушаем.
+    val actionsAlpha by androidx.compose.animation.core.animateFloatAsState(
+        if (consent) 1f else 0.45f, androidx.compose.animation.core.tween(220), label = "consentAlpha")
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(Reed2.ground000)
+            .windowInsetsPadding(WindowInsets.safeDrawing)
             .padding(horizontal = 24.dp),
     ) {
         // ── Логотип ──
@@ -115,7 +126,7 @@ fun ReedLoginScreen(
         Spacer(Modifier.height(8.dp))
 
         // ── Поле-кнопка + квадратная кнопка QR 56×56 ──
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.alpha(actionsAlpha), verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier.weight(1f).height(56.dp)
                     .clip(RoundedCornerShape(16.dp))
@@ -143,14 +154,19 @@ fun ReedLoginScreen(
             DividerOr()
             Spacer(Modifier.height(16.dp))
             Box(
-                Modifier.fillMaxWidth().height(52.dp)
+                Modifier.fillMaxWidth().height(52.dp).alpha(actionsAlpha)
                     .clip(RoundedCornerShape(Reed2.pillRadius)).background(Reed2.surface300)
-                    .clickable(onClick = onTelegram),
+                    .clickable(enabled = consent && !telegramBusy, onClick = onTelegram),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("Войти через Telegram", color = Reed2.ink, fontSize = 15.sp,
-                    fontWeight = FontWeight.Medium)
+                Text(if (telegramBusy) "Подтверди вход в Telegram…" else "Войти через Telegram",
+                    color = Reed2.ink, fontSize = 15.sp, fontWeight = FontWeight.Medium)
             }
+        }
+        if (statusText != null) {
+            Spacer(Modifier.height(10.dp))
+            Text(statusText, color = Reed2.inkMuted, fontSize = 13.sp,
+                modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
         }
 
         // ── «Продолжить без кода» — приглушённая вторичная (НЕ светлее) ──

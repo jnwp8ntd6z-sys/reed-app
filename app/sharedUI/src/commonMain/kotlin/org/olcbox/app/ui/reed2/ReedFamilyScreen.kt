@@ -70,12 +70,26 @@ fun ReedFamilyScreen(
         Spacer(Modifier.height(16.dp))
         Text("СЕМЬЯ", color = Reed2.ink, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.5.sp)
 
-        if (canManage) {
+        if (!canManage) {
+            Spacer(Modifier.height(18.dp))
+            ReedCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Подпиской управляет владелец", color = Reed2.ink, fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(6.dp))
+                    Text("Ты в семье как участник. Места, приглашения и устройства настраивает владелец подписки.",
+                        color = Reed2.inkMuted, fontSize = 14.sp, lineHeight = 20.sp)
+                }
+            }
+            return@Column
+        }
+
+        if (placesTotal > 0) {
             Spacer(Modifier.height(10.dp))
             Text("$placesUsed из $placesTotal мест занято", color = Reed2.inkMuted, fontSize = 14.sp)
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                repeat(placesTotal) { i ->
+                repeat(placesTotal.coerceAtMost(12)) { i ->
                     Box(Modifier.weight(1f).height(6.dp).clip(RoundedCornerShape(50))
                         .background(if (i < placesUsed) Reed2.chrome050 else Reed2.chrome800))
                 }
@@ -156,12 +170,16 @@ private fun MemberRow(m: MemberUi, onClick: () -> Unit) {
             Text(m.name, color = Reed2.ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Text(m.subtitle, color = Reed2.inkMuted, fontSize = 13.sp)
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(7.dp).clip(RoundedCornerShape(50))
-                .background(if (m.online) Reed2.statusOk else Reed2.chrome600))
-            Spacer(Modifier.width(6.dp))
-            Text(if (m.online) "В сети" else "Не в сети",
-                color = if (m.online) Reed2.statusOk else Reed2.inkMuted, fontSize = 13.sp)
+        if (m.statusText != null) {
+            val c = when (m.statusKind) {
+                "ok" -> Reed2.statusOk; "warn" -> Reed2.statusWarn; "danger" -> Reed2.statusDanger
+                else -> Reed2.inkMuted
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(c))
+                Spacer(Modifier.width(6.dp))
+                Text(m.statusText, color = c, fontSize = 13.sp)
+            }
         }
     }
 }
@@ -174,8 +192,8 @@ private fun DeviceRow(d: DeviceUi, onClick: () -> Unit) {
         Icon(if (d.kind == "laptop") Icons.Rounded.Laptop else Icons.Rounded.Smartphone, null,
             tint = Reed2.inkMuted, modifier = Modifier.size(22.dp))
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
-            Text(d.name, color = Reed2.ink, fontSize = 16.sp)
-            Text(d.subtitle, color = Reed2.inkMuted, fontSize = 13.sp)
+            Text(d.name, color = if (d.blocked) Reed2.inkMuted else Reed2.ink, fontSize = 16.sp)
+            Text(d.subtitle, color = if (d.blocked) Reed2.statusDanger else Reed2.inkMuted, fontSize = 13.sp)
         }
         Text("›", color = Reed2.chrome600, fontSize = 20.sp)
     }
@@ -205,11 +223,12 @@ private fun CodePlank(
             Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
                 Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Reed2.ground000)
                     .clickable { code?.let(onCopy) }.padding(14.dp)) {
-                    Text(code ?: "········", color = Reed2.ink, fontFamily = FontFamily.Monospace,
-                        fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                    Text(code ?: "Создаём код…", color = if (code != null) Reed2.ink else Reed2.chrome600,
+                        fontFamily = FontFamily.Monospace, fontSize = 18.sp, fontWeight = FontWeight.Medium)
                 }
                 Spacer(Modifier.height(8.dp))
-                Text(note, color = Reed2.inkMuted, fontSize = 12.sp, lineHeight = 17.sp)
+                Text(if (code != null) "$note Нажми на код, чтобы скопировать." else note,
+                    color = Reed2.inkMuted, fontSize = 12.sp, lineHeight = 17.sp)
             }
         }
     }

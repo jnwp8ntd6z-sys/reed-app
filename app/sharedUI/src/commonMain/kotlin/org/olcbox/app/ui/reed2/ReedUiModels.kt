@@ -29,23 +29,26 @@ data class SubscriptionUi(
 data class MemberUi(
     val id: Int,
     val name: String,
-    val subtitle: String,   // «Владелец · 2 устройства» / «1 устройство»
-    val online: Boolean,
+    val subtitle: String,        // «Владелец · 2 устройства» / «Pixel 8»
+    val statusText: String? = null,  // «Приостановлен» / «В сети» — только если сервер это знает
+    val statusKind: String = "muted", // ok | warn | danger | muted
     val isOwnerRow: Boolean = false,
+    val blocked: Boolean = false,
 )
 
 data class DeviceUi(
     val id: Int,
     val name: String,
-    val subtitle: String,   // «Это устройство» / «Сегодня» / «Новое»
+    val subtitle: String,   // «Это устройство» / «Сегодня» / «Заблокировано»
     val kind: String = "phone", // phone | laptop | tablet
+    val blocked: Boolean = false,
 )
 
 data class NetCheckRowUi(
     val label: String,      // Wi-Fi / Мобильный / Прямое
     val pingMs: Int?,
-    val statusWord: String, // «Работает» / «Ограничено» / «Не отвечает»
-    val statusKind: String, // ok | warn | danger
+    val statusWord: String, // «Работает» / «Ограничено» / «Не отвечает» / «Нет сервера»
+    val statusKind: String, // ok | warn | danger | muted
 )
 
 data class NewDeviceAlertUi(

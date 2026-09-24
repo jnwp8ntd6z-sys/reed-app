@@ -295,6 +295,24 @@ object ReedSession {
             reedStorePut(KEY_NO_CODE, if (value) "1" else null)
         }
 
+    // Reed 2.0: выбранный список серверов на Главной (wifi | cell). null — ещё не выбирали
+    // (тогда по типу текущей сети). Персист.
+    private const val KEY_NETWORK = "reed_server_network"
+    var serverNetwork: String? = reedStoreGet(KEY_NETWORK)
+        set(value) {
+            field = value
+            reedStorePut(KEY_NETWORK, value)
+        }
+
+    // Reed 2.0: максимальный id уведомления new_device, по которому нажали «Это я» /
+    // «Заблокировать» — чтобы оповещение в «Семье» больше не показывалось. Персист.
+    private const val KEY_NEWDEV_ACK = "reed_newdev_ack_max_id"
+    var newDeviceAckMaxId: Int = reedStoreGet(KEY_NEWDEV_ACK)?.toIntOrNull() ?: 0
+        set(value) {
+            field = value
+            reedStorePut(KEY_NEWDEV_ACK, value.toString())
+        }
+
     // Полный выход в экран входа: сбрасывает токен и код-сессию и помечает онбординг
     // непройденным, чтобы UI вернулся на экран входа (Telegram / по коду). Используется
     // при выходе, удалении аккаунта и при блокировке/удалении участника владельцем.
@@ -517,7 +535,14 @@ data class AppNotification(
     val title: String = "",
     val body: String = "",
     val created_at: String = "",
-)
+    // Reed 2.0: тип (info | new_device) и данные (new_device → {"device_id": N}).
+    val kind: String = "info",
+    val data: kotlinx.serialization.json.JsonObject? = null,
+) {
+    /** id устройства для оповещения new_device (кнопки «Это я» / «Заблокировать»). */
+    val deviceId: Int?
+        get() = (data?.get("device_id") as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull()
+}
 
 @Serializable
 data class NotificationsResponse(

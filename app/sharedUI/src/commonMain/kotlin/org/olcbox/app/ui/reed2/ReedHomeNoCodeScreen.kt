@@ -68,33 +68,44 @@ fun ReedHomeNoCodeScreen(
             modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
 
         Spacer(Modifier.height(22.dp))
-        ReedCard(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp)) {
-                Text("Подключи подписку", color = Reed2.ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.height(8.dp))
-                Text(cardText, color = Reed2.inkMuted, fontSize = 14.sp, lineHeight = 20.sp)
-                Spacer(Modifier.height(14.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(Reed2.pillRadius))
-                            .background(Reed2.ink).clickable(onClick = onEnterCode),
-                        contentAlignment = Alignment.Center,
-                    ) { Text("Ввести код", color = Reed2.onInk, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
-                    Spacer(Modifier.width(10.dp))
-                    Box(
-                        Modifier.size(48.dp).clip(RoundedCornerShape(50)).background(Reed2.surface300)
-                            .clickable(onClick = onScanQr),
-                        contentAlignment = Alignment.Center,
-                    ) { Icon(Icons.Rounded.QrCodeScanner, "QR", tint = Reed2.ink, modifier = Modifier.size(22.dp)) }
-                }
-            }
-        }
+        ReedConnectSubscriptionCard(cardText = cardText, onEnterCode = onEnterCode, onScanQr = onScanQr)
 
         Spacer(Modifier.height(18.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Rounded.Lock, null, tint = Reed2.chrome600, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(8.dp))
             Text("Серверы появятся после входа", color = Reed2.chrome600, fontSize = 13.sp)
+        }
+    }
+}
+
+/** Карточка «Подключи подписку»: «Ввести код» + круглая QR (ТЗ 4.3). */
+@Composable
+fun ReedConnectSubscriptionCard(
+    cardText: String,
+    onEnterCode: () -> Unit,
+    onScanQr: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    ReedCard(modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Text("Подключи подписку", color = Reed2.ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
+            Text(cardText, color = Reed2.inkMuted, fontSize = 14.sp, lineHeight = 20.sp)
+            Spacer(Modifier.height(14.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(Reed2.pillRadius))
+                        .background(Reed2.ink).clickable(onClick = onEnterCode),
+                    contentAlignment = Alignment.Center,
+                ) { Text("Ввести код", color = Reed2.onInk, fontSize = 15.sp, fontWeight = FontWeight.SemiBold) }
+                Spacer(Modifier.width(10.dp))
+                Box(
+                    Modifier.size(48.dp).clip(RoundedCornerShape(50)).background(Reed2.surface300)
+                        .clickable(onClick = onScanQr),
+                    contentAlignment = Alignment.Center,
+                ) { Icon(Icons.Rounded.QrCodeScanner, "QR", tint = Reed2.ink, modifier = Modifier.size(22.dp)) }
+            }
         }
     }
 }

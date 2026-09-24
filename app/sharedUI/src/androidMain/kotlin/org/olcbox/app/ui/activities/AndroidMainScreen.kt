@@ -286,9 +286,13 @@ fun AndroidMainScreen(
         }
     }
 
+    // Reed 2.0: результат QR отдаём экрану входа (код RD/RDI/RDX или ссылка), если он ждёт.
+    val qrHandler = remember { mutableStateOf<((String) -> Unit)?>(null) }
     val qrScannerLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result: ActivityResult ->
+        val handler = qrHandler.value
+        qrHandler.value = null
         if (result.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
 
         val rawText = result.data?.getStringExtra(QrScannerActivity.EXTRA_QR_TEXT)
@@ -296,6 +300,7 @@ fun AndroidMainScreen(
             .orEmpty()
 
         if (rawText.isBlank()) return@rememberLauncherForActivityResult
+        if (handler != null) { handler(rawText); return@rememberLauncherForActivityResult }
 
         viewModel.onImportFullConfig(rawText) {
             reloadLocationsAfterImport {
@@ -327,11 +332,10 @@ fun AndroidMainScreen(
         navigateHomeFromLocationSettings()
     }
 
-    OlcboxAppContent(
+    // Reed 2.0: новый интерфейс (ТЗ). Вся платформенная обвязка выше не менялась.
+    org.olcbox.app.ui.reed2.Reed2AppContent(
         homeViewModel = viewModel,
         locationViewModel = locationViewModel,
-        currentScreen = currentScreen,
-        onNavigate = navigate,
         onToggleClick = {
             val prepIntent = if (connectionMode == AndroidConnectionMode.Tun) {
                 VpnService.prepare(context)
@@ -345,43 +349,15 @@ fun AndroidMainScreen(
                 viewModel.ToggleVpn()
             }
         },
-        onImportFileRequested = {
-            filePickerLauncher.launch("*/*")
-        },
-        onImportFromClipboardRequested = { onImported, onError ->
-            viewModel.onPasteFromClipboard(
-                onComplete = {
-                    reloadLocationsAfterImport(onImported)
-                },
-                onError = onError
-            )
-        },
-        onScanQrRequested = {
+        onScanQr = { onResult ->
+            qrHandler.value = onResult
             qrScannerLauncher.launch(Intent(context, QrScannerActivity::class.java))
         },
-        onCopyConfigRequested = {
-            viewModel.onCopyFullConfigClicked()
-        },
-        onShareLocationRequested = { config ->
-            shareSheetPayload = "Location QR" to ConfigShareService.olcRtcUri(config)
-        },
-        onSaveLogsRequested = { onSaved, onError ->
-            pendingLogSaveCallbacks.value = onSaved to onError
-            logSaveLauncher.launch(viewModel.suggestedLogsFileName())
-        },
-        showAppSettingsButton = true,
-        showSplitTunnelingButton = false,
-        canScanQr = true,
-        onAppSettingsClick = {
-            appSettingsInitialRoute = AppSettingsInitialRoute.Hub
-            vpnManager.refreshInstalledApps()
-            isAppSettingsOpen = true
-        },
-        onSplitTunnelingClick = {
+        onOpenAppsDirect = {
             appSettingsInitialRoute = AppSettingsInitialRoute.SplitTunneling
             vpnManager.refreshInstalledApps()
             isAppSettingsOpen = true
-        }
+        },
     )
 
     shareSheetPayload?.let { (title, payload) ->

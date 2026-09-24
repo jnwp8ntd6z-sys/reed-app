@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -104,6 +105,12 @@ fun ReedFlag(country: String, modifier: Modifier = Modifier) {
             .border(1.dp, Color(0x24FFFFFF), RoundedCornerShape(5.dp)),
         contentAlignment = Alignment.Center,
     ) {
+        // Резервный канал olcRTC — иконка камеры вместо флага (ТЗ 3.5).
+        if (country == "RTC") {
+            androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Rounded.Videocam, "olcRTC",
+                tint = Reed2.chrome200, modifier = Modifier.size(14.dp))
+            return@Box
+        }
         Text(
             text = country.take(2).uppercase().ifBlank { "··" },
             color = Reed2.chrome200,
