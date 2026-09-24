@@ -30,6 +30,39 @@ object ReedDeviceAlerts {
     const val ACTION_BLOCK = "org.olcbox.app.reed.NEW_DEVICE_BLOCK"
     const val EXTRA_NOTIFICATION_ID = "notification_id"
     const val EXTRA_DEVICE_ID = "device_id"
+    const val EXTRA_OPEN_SUPPORT = "reed_open_support"
+    private const val SUPPORT_NOTIFICATION_ID = 4102
+    private const val KEY_SUPPORT_POSTED = "support_posted_max_id"
+
+    /** Ответ поддержки, пока приложение закрыто: «Ответ поддержки», нажатие открывает чат. */
+    suspend fun checkSupport(context: Context) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val token = ReedSession.token
+        if (token == null && !prefs.getBoolean("support_used", false)) return
+        val hwid = prefs.getString("device_hwid", null) ?: return
+        val seen = maxOf(prefs.getInt("support_seen", 0), prefs.getInt(KEY_SUPPORT_POSTED, 0))
+        val list = try { ReedApi.supportMessages(token, hwid, seen).messages } catch (e: Throwable) { return }
+        val reply = list.filter { !it.isMine }.maxByOrNull { it.id } ?: return
+        prefs.edit().putInt(KEY_SUPPORT_POSTED, reply.id).apply()
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            nm.createNotificationChannel(NotificationChannel("reed_support", "Ответы поддержки", NotificationManager.IMPORTANCE_HIGH))
+        }
+        val open = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+            putExtra(EXTRA_OPEN_SUPPORT, true)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }?.let { PendingIntent.getActivity(context, 7, it, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT) }
+        val n = NotificationCompat.Builder(context, "reed_support")
+            .setSmallIcon(android.R.drawable.ic_dialog_email)
+            .setContentTitle("Ответ поддержки")
+            .setContentText(reply.text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(reply.text))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(open)
+            .build()
+        try { nm.notify(SUPPORT_NOTIFICATION_ID, n) } catch (e: SecurityException) { }
+    }
 
     /** Одна проверка: показывает уведомление о самом свежем неподтверждённом устройстве. */
     suspend fun check(context: Context) {

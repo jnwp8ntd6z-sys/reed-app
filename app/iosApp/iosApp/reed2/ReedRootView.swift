@@ -57,6 +57,11 @@ struct ReedRootView: View {
         .fullScreenCover(isPresented: $m.showNotifications) {
             ReedNotificationsView().environmentObject(m)
         }
+        .sheet(isPresented: Binding(get: { m.showSupport }, set: { if !$0 { m.closeSupport() } })) {
+            ReedSupportView().environmentObject(m)
+                .presentationDragIndicator(.visible)
+                .presentationBackground(Reed.ground000)
+        }
         .onAppear { m.onAppear() }
         .onChange(of: phase) { old, new in
             if new == .active && old == .background { m.onForeground() }
@@ -171,8 +176,16 @@ struct ReedNotificationsView: View {
                     LazyVStack(spacing: 10) {
                         ForEach(m.notifications.sorted { $0.id > $1.id }) { n in
                             let isDevice = n.kind == "new_device"
+                            let isSupport = n.kind == "support"
                             Button {
                                 if isDevice { dismiss(); m.tab = .family }
+                                if isSupport {
+                                    dismiss()
+                                    Task { @MainActor in
+                                        try? await Task.sleep(nanoseconds: 450_000_000)   // дать закрыться экрану
+                                        m.openSupport()
+                                    }
+                                }
                             } label: {
                                 HStack(alignment: .top, spacing: 10) {
                                     if n.id > m.notifSeen {
@@ -188,7 +201,7 @@ struct ReedNotificationsView: View {
                                         Text(ReedFormat.relative(n.created_at)).font(.system(size: 12)).foregroundStyle(Reed.chrome600)
                                     }
                                     Spacer(minLength: 0)
-                                    if isDevice { Image(systemName: "chevron.right").foregroundStyle(Reed.chrome600) }
+                                    if isDevice || isSupport { Image(systemName: "chevron.right").foregroundStyle(Reed.chrome600) }
                                 }
                                 .padding(14)
                                 .background(Reed.surface200, in: RoundedRectangle(cornerRadius: 16, style: .continuous))

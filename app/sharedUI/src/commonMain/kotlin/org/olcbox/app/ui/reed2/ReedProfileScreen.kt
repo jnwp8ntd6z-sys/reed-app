@@ -35,12 +35,14 @@ import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.SignalCellularAlt
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -69,6 +71,7 @@ fun ReedProfileScreen(
     onServicesDirect: () -> Unit = {},
     onNotifications: () -> Unit = {},
     onSupport: () -> Unit = {},
+    supportUnread: Boolean = false,
     onTerms: () -> Unit = {},
     onLoginOtherCode: () -> Unit = {},
     onLogout: () -> Unit = {},
@@ -188,7 +191,8 @@ fun ReedProfileScreen(
         Spacer(Modifier.height(20.dp))
         ReedSectionHeader("ПОМОЩЬ")
         Spacer(Modifier.height(8.dp))
-        NavRow(Icons.Rounded.ChatBubbleOutline, "Написать в поддержку", null, onSupport)
+        NavRow(Icons.Rounded.ChatBubbleOutline, "Написать в поддержку", if (supportUnread) "Есть ответ" else null, onSupport,
+            badge = supportUnread)
         NavRow(Icons.Rounded.Description, "Условия и конфиденциальность", null, onTerms)
 
         // АККАУНТ.
@@ -236,13 +240,21 @@ private fun ToggleRow(icon: ImageVector, title: String, subtitle: String?, check
 }
 
 @Composable
-private fun NavRow(icon: ImageVector, title: String, subtitle: String?, onClick: () -> Unit, tint: Color = Reed2.ink) {
+internal fun NavRow(icon: ImageVector, title: String, subtitle: String?, onClick: () -> Unit, tint: Color = Reed2.ink,
+                    badge: Boolean = false) {
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(Reed2.tileRadius)).background(Reed2.surface200)
         .clickable(onClick = onClick).padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
         TileIcon(icon, tint)
         Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
             Text(title, color = tint, fontSize = 15.sp)
             if (subtitle != null) Text(subtitle, color = Reed2.inkMuted, fontSize = 12.sp)
+        }
+        // Точка «есть ответ» появляется пружиной.
+        val dot by androidx.compose.animation.core.animateFloatAsState(if (badge) 1f else 0f,
+            androidx.compose.animation.core.spring(dampingRatio = 0.55f, stiffness = 500f), label = "badge")
+        if (dot > 0.01f) {
+            Box(Modifier.padding(end = 10.dp).size(8.dp)
+                .graphicsLayer { scaleX = dot; scaleY = dot; alpha = dot }.clip(RoundedCornerShape(50)).background(Reed2.statusWarn))
         }
         Text("›", color = Reed2.chrome600, fontSize = 20.sp)
     }

@@ -33,6 +33,13 @@ class AppActivity : ComponentActivity() {
         // Permission handled
     }
 
+    // singleInstance: нажатие на уведомление («Ответ поддержки») приходит сюда — сохраняем intent,
+    // чтобы интерфейс увидел флаг открытия чата.
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 

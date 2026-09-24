@@ -141,6 +141,11 @@ enum PreviewSeed {
         case "profile", "profile_netcheck": m.tab = .profile
         case "notifications": m.showNotifications = true
         case "blocked": m.memberBlocked = true
+        case "support_empty": m.chatLoaded = true; m.showSupport = true
+        case "support_chat":
+            m.chat = supportChat
+            m.chatLoaded = true
+            m.showSupport = true
         default: break
         }
         if scene == "profile_netcheck" {
@@ -152,6 +157,20 @@ enum PreviewSeed {
             m.netCheckedAt = Date().addingTimeInterval(-40)
         }
     }
+
+    static let supportChat: [ReedChatItem] = {
+        let now = Date()
+        func t(_ min: Double) -> Date { now.addingTimeInterval(-min * 60) }
+        return [
+            ReedChatItem(id: "s1", serverId: 1, mine: true, text: "Здравствуйте! Не подключается мобильный интернет, на Wi-Fi всё работает.", date: t(26 * 60)),
+            ReedChatItem(id: "s2", serverId: 2, mine: false, text: "Привет! Переключи внизу на «Мобильный» и выбери сервер «Обход» — он для сетей с белыми списками.", date: t(25 * 60)),
+            ReedChatItem(id: "s3", serverId: 3, mine: true, text: "Заработало, спасибо!", date: t(24 * 60)),
+            ReedChatItem(id: "s4", serverId: 4, mine: true, text: "А можно добавить ещё один телефон?", date: t(12)),
+            ReedChatItem(id: "s5", serverId: 5, mine: true, text: "Для мамы", date: t(11.5)),
+            ReedChatItem(id: "s6", serverId: 6, mine: false, text: "Конечно. Открой «Семья» → «Пригласить участника» и отправь маме код. Подробнее: https://reedapp.ru/family", date: t(4)),
+            ReedChatItem(id: "l7", serverId: nil, mine: true, text: "Спасибо, сейчас попробую", date: t(0.2), state: .sending),
+        ]
+    }()
 
     static let sub: RSubscriptionResponse = {
         let json = """
@@ -237,6 +256,26 @@ enum PreviewScript {
             await wait(1.2)
             m.select(PreviewSeed.servers[6])
             await wait(6.0)
+        case "anim_support":
+            await wait(0.8)
+            m.openSupport()
+            await wait(1.6)
+            m.chatDraft = "Не подключается"
+            await wait(0.6)
+            for ch in " на мобильном интернете" { m.chatDraft.append(ch); await wait(0.05) }
+            await wait(0.5)
+            m.sendChat()
+            await wait(2.2)
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+                m.chat.append(ReedChatItem(id: "s900", serverId: 900, mine: false,
+                                           text: "Привет! Переключи внизу на «Мобильный» и выбери «Обход».", date: Date()))
+            }
+            await wait(1.4)
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+                m.chat.append(ReedChatItem(id: "s901", serverId: 901, mine: false,
+                                           text: "Если не поможет — пришли, пожалуйста, скрин главного экрана.", date: Date()))
+            }
+            await wait(2.5)
         case "anim_notif":
             await wait(1.0)
             m.showNotifications = true

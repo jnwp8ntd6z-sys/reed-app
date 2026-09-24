@@ -135,6 +135,18 @@ object ReedApi {
     suspend fun notifications(token: String): NotificationsResponse =
         client.get("$BASE/app/notifications") { parameter("token", token) }.body()
 
+    // ── Чат поддержки: сообщения уходят операторам в бота поддержки, ответы приходят сюда ──
+    suspend fun supportSend(token: String?, hwid: String, text: String, device: String): SupportSendResult =
+        client.post("$BASE/app/support/send") {
+            contentType(ContentType.Application.Json)
+            setBody(SupportSendRequest(token.orEmpty(), hwid, text, "Android", device))
+        }.body()
+
+    suspend fun supportMessages(token: String?, hwid: String, after: Int): SupportMessagesResponse =
+        client.get("$BASE/app/support/messages") {
+            parameter("token", token.orEmpty()); parameter("hwid", hwid); parameter("after", after)
+        }.body()
+
     // Полное удаление аккаунта (из БД бота + VLESS-клиентов в панели).
     suspend fun deleteAccount(token: String): DeleteAccountResult =
         client.post("$BASE/app/account/delete") {
@@ -543,6 +555,36 @@ data class AppNotification(
     val deviceId: Int?
         get() = (data?.get("device_id") as? kotlinx.serialization.json.JsonPrimitive)?.content?.toIntOrNull()
 }
+
+@Serializable
+data class SupportSendRequest(
+    val token: String,
+    val hwid: String,
+    val text: String,
+    val platform: String,
+    val device: String,
+)
+
+@Serializable
+data class SupportMessage(
+    val id: Int,
+    val direction: String,          // in — от человека, out — ответ поддержки
+    val text: String = "",
+    val created_at: String? = null,
+) {
+    val isMine: Boolean get() = direction == "in"
+}
+
+@Serializable
+data class SupportMessagesResponse(val messages: List<SupportMessage> = emptyList())
+
+@Serializable
+data class SupportSendResult(
+    val ok: Boolean = false,
+    val message: SupportMessage? = null,
+    val error: String? = null,
+    val hint: String? = null,
+)
 
 @Serializable
 data class NotificationsResponse(

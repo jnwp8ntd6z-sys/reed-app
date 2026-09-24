@@ -297,13 +297,14 @@ class OlcboxVpnService : VpnService() {
 
         installMobileCallbacks()
 
-        // Reed 2.0: пока туннель работает — раз в 5 минут проверяем «новое устройство» и
-        // показываем уведомление с кнопками «Это я» / «Заблокировать».
+        // Reed 2.0: пока туннель работает — раз в 2 минуты проверяем «новое устройство» (кнопки
+        // «Это я» / «Заблокировать») и ответы поддержки (уведомление открывает чат).
         scope.launch {
             kotlinx.coroutines.delay(60_000)
             while (true) {
                 try { org.olcbox.app.ui.reed2.ReedDeviceAlerts.check(applicationContext) } catch (e: Throwable) { }
-                kotlinx.coroutines.delay(5 * 60_000L)
+                try { org.olcbox.app.ui.reed2.ReedDeviceAlerts.checkSupport(applicationContext) } catch (e: Throwable) { }
+                kotlinx.coroutines.delay(2 * 60_000L)
             }
         }
     }

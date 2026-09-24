@@ -27,16 +27,16 @@ xcrun simctl install "$DEV" "$APP"
 ID=ru.reedapp.preview
 launch() { SIMCTL_CHILD_REED_SCENE="$1" xcrun simctl launch --terminate-running-process "$DEV" $ID -AppleLanguages "(ru)" -AppleLocale ru_RU >/dev/null; }
 sleep 2
-for s in ${SCENES:-login login_consent codes codes_family home_off home_connecting home_on home_cell home_nocode family family_member newdevice profile profile_netcheck services notifications blocked}; do
+for s in ${SCENES:-login login_consent codes codes_family home_off home_connecting home_on home_cell home_nocode family family_member newdevice profile profile_netcheck services notifications blocked support_empty support_chat}; do
   launch "$s"; sleep 3.5
   xcrun simctl io "$DEV" screenshot "$OUT/$s.png" >/dev/null 2>&1
 done
-for a in ${ANIMS:-anim_connect anim_tabs anim_login anim_server anim_notif}; do
+for a in ${ANIMS:-anim_connect anim_tabs anim_login anim_server anim_notif anim_support}; do
   xcrun simctl terminate "$DEV" $ID 2>/dev/null
   xcrun simctl io "$DEV" recordVideo --codec=h264 --force "$OUT/$a.mp4" >/dev/null 2>&1 & REC=$!
   sleep 1.5
   launch "$a"
-  case $a in anim_server) sleep 16;; anim_login) sleep 9;; *) sleep 11;; esac
+  case $a in anim_server) sleep 16;; anim_support) sleep 13;; anim_login) sleep 9;; *) sleep 11;; esac
   kill -INT $REC; wait $REC 2>/dev/null
 done
 xcrun simctl shutdown "$DEV" || true

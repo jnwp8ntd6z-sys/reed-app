@@ -75,6 +75,12 @@ struct RNotification: Codable, Sendable, Identifiable {
 struct RNotifications: Codable, Sendable { var notifications: [RNotification]? }
 
 struct RSession: Codable, Sendable { var kind: String?; var blocked: Bool?; var member_status: String? }
+struct RSupportMessage: Codable, Sendable, Identifiable, Equatable {
+    var id: Int; var direction: String; var text: String; var created_at: String?
+    var isMine: Bool { direction == "in" }
+}
+struct RSupportMessages: Codable, Sendable { var messages: [RSupportMessage]? }
+struct RSupportSendResult: Codable, Sendable { var ok: Bool?; var message: RSupportMessage?; var error: String?; var hint: String? }
 
 /// Минимальное JSON-значение (для поля data уведомлений).
 enum RJSONValue: Codable, Sendable {
@@ -198,6 +204,13 @@ final class ReedAPI: NSObject, Sendable {
         try await post("/app/member/action", ["token": t, "member_id": id, "action": action], as: ROk.self)
     }
     func notifications(_ t: String) async throws -> RNotifications { try await get("/app/notifications", ["token": t], as: RNotifications.self) }
+    func supportSend(token: String?, hwid: String, text: String) async throws -> RSupportSendResult {
+        try await post("/app/support/send", ["token": token ?? "", "hwid": hwid, "text": text,
+                                             "platform": "iOS", "device": "iPhone"], as: RSupportSendResult.self)
+    }
+    func supportMessages(token: String?, hwid: String, after: Int) async throws -> RSupportMessages {
+        try await get("/app/support/messages", ["token": token ?? "", "hwid": hwid, "after": String(after)], as: RSupportMessages.self)
+    }
     func deleteAccount(_ t: String) async throws -> ROk { try await post("/app/account/delete", ["token": t], as: ROk.self) }
     func session(_ t: String) async -> RSession? {
         guard let (d, code) = try? await raw("/app/session", query: ["token": t]) else { return nil }

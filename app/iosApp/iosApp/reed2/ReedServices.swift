@@ -64,6 +64,16 @@ enum ReedSessionStore {
         set { d.set(newValue, forKey: "reed2_direct_services") }
     }
 
+    /// Чат поддержки: последний прочитанный ответ и «человек уже писал» (тогда проверяем ответы в фоне).
+    static var supportSeenMaxId: Int {
+        get { d.integer(forKey: "reed2_support_seen") }
+        set { d.set(newValue, forKey: "reed2_support_seen") }
+    }
+    static var supportUsed: Bool {
+        get { d.bool(forKey: "reed2_support_used") }
+        set { d.set(newValue, forKey: "reed2_support_used") }
+    }
+
     static func logout() {
         token = nil; joinedViaCode = false; memberName = nil; noCodeMode = false; onboardingDone = false
         selectedServer = nil; subscriptionCache = nil

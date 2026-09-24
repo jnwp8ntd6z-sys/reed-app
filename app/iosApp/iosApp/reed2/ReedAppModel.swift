@@ -14,6 +14,17 @@ struct ReedServer: Identifiable, Equatable, Sendable {
     var tag: String { olc == nil ? id : "" }
 }
 
+/// Сообщение в чате поддержки (с локальным состоянием отправки).
+struct ReedChatItem: Identifiable, Equatable, Sendable {
+    enum State: Sendable, Equatable { case sent, sending, failed }
+    var id: String            // стабильный id для анимаций: "s<id>" с сервера или "l<uuid>" локальный
+    var serverId: Int?
+    var mine: Bool
+    var text: String
+    var date: Date
+    var state: State = .sent
+}
+
 struct ReedNetRow: Identifiable, Equatable, Sendable {
     var id: String { label }
     var label: String; var ping: Int?; var word: String; var kind: String // ok|warn|danger|muted
@@ -70,6 +81,16 @@ final class ReedAppModel: ObservableObject {
     @Published var netChecking = false
     @Published var netCheckedAt: Date?
 
+    // Чат поддержки
+    @Published var chat: [ReedChatItem] = []
+    @Published var chatDraft = ""
+    @Published var chatLoaded = false
+    @Published var showSupport = false
+    @Published var supportUnread = false
+    private var chatPoll: Task<Void, Never>?
+    private var chatLastId = 0
+    private var chatFakeId = 0
+
     @Published var showNotifications = false
     @Published var toast: String?
     @Published var shareLogURL: URL?
@@ -116,7 +137,15 @@ final class ReedAppModel: ObservableObject {
             syncTunnel()
             if token != nil && live { startAccountTasks() }
         }
+        supportWatch?.cancel()
+        supportWatch = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.checkSupportUnread()
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+            }
+        }
     }
+    private var supportWatch: Task<Void, Never>?
 
     /// Возврат в приложение: статус туннеля мог смениться из Пункта управления/настроек,
     /// подписка — продлиться в боте. Лёгкое обновление без перезапуска фоновых задач.
@@ -129,6 +158,113 @@ final class ReedAppModel: ObservableObject {
             async let b: Void = reloadNotifications()
             _ = await (a, b)
         }
+    }
+
+    // MARK: чат поддержки
+
+    func openSupport() {
+        showNotifications = false
+        showSupport = true
+        chatPoll?.cancel()
+        chatPoll = Task { [weak self] in
+            await self?.loadChat()
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                if Task.isCancelled { return }
+                await self?.loadChat()
+            }
+        }
+    }
+
+    func closeSupport() {
+        showSupport = false
+        chatPoll?.cancel(); chatPoll = nil
+        markSupportSeen()
+    }
+
+    /// Смена аккаунта: переписка другая (сервер сам переносит диалог «без входа» на аккаунт).
+    private func resetChat() {
+        chatPoll?.cancel(); chatPoll = nil
+        chat = []; chatLastId = 0; chatLoaded = false; supportUnread = false
+        ReedSessionStore.supportSeenMaxId = 0
+    }
+
+    private func markSupportSeen() {
+        let maxOut = chat.filter { !$0.mine }.compactMap(\.serverId).max() ?? 0
+        if maxOut > ReedSessionStore.supportSeenMaxId { ReedSessionStore.supportSeenMaxId = maxOut }
+        supportUnread = false
+    }
+
+    /// Новые сообщения с сервера (после последнего известного id). Свои отправленные не дублируются.
+    func loadChat() async {
+        guard live else { chatLoaded = true; return }
+        guard let r = try? await api.supportMessages(token: token, hwid: ReedSessionStore.hwid(), after: chatLastId) else {
+            chatLoaded = true; return
+        }
+        let known = Set(chat.compactMap(\.serverId))
+        let fresh = (r.messages ?? []).filter { !known.contains($0.id) }
+        if !fresh.isEmpty {
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+                chat.append(contentsOf: fresh.map(Self.chatItem))
+            }
+            chatLastId = max(chatLastId, fresh.map(\.id).max() ?? 0)
+            if showSupport { markSupportSeen() }
+        }
+        chatLoaded = true
+    }
+
+    func sendChat() {
+        let text = chatDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        chatDraft = ""
+        let item = ReedChatItem(id: "l" + UUID().uuidString, serverId: nil, mine: true, text: text, date: Date(), state: .sending)
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) { chat.append(item) }
+        deliver(item.id, text)
+    }
+
+    func retryChat(_ id: String) {
+        guard let i = chat.firstIndex(where: { $0.id == id }) else { return }
+        withAnimation(.smooth(duration: 0.25)) { chat[i].state = .sending }
+        deliver(id, chat[i].text)
+    }
+
+    private func deliver(_ localId: String, _ text: String) {
+        Task {
+            let r: RSupportSendResult?
+            if live {
+                r = try? await api.supportSend(token: token, hwid: ReedSessionStore.hwid(), text: text)
+            } else {   // превью: без сети, «доставлено» через полсекунды
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                chatFakeId += 1
+                r = RSupportSendResult(ok: true, message: RSupportMessage(id: 10_000 + chatFakeId, direction: "in", text: text, created_at: nil))
+            }
+            guard let i = chat.firstIndex(where: { $0.id == localId }) else { return }
+            withAnimation(.smooth(duration: 0.25)) {
+                if let m = r?.message, r?.ok == true {
+                    chat[i].serverId = m.id
+                    chat[i].state = .sent
+                    chatLastId = max(chatLastId, m.id)
+                    ReedSessionStore.supportUsed = true
+                } else {
+                    chat[i].state = .failed
+                }
+            }
+            if r?.error == "rate_limited" { show(r?.hint ?? "Подожди немного и отправь ещё раз") }
+        }
+    }
+
+    /// Фоновая проверка: есть ли непрочитанный ответ поддержки (точка на «Написать в поддержку»).
+    func checkSupportUnread() async {
+        guard live, ReedSessionStore.supportUsed || token != nil, !showSupport else { return }
+        let seen = ReedSessionStore.supportSeenMaxId
+        guard let r = try? await api.supportMessages(token: token, hwid: ReedSessionStore.hwid(), after: seen) else { return }
+        let has = (r.messages ?? []).contains { !$0.isMine }
+        if has != supportUnread { withAnimation(.smooth(duration: 0.3)) { supportUnread = has } }
+    }
+
+    nonisolated static func chatItem(_ m: RSupportMessage) -> ReedChatItem {
+        ReedChatItem(id: "s\(m.id)", serverId: m.id, mine: m.isMine, text: m.text,
+                     date: ReedFormat.parse(m.created_at, utc: true) ?? Date(), state: .sent)
     }
 
     private func syncTunnel() {
@@ -266,6 +402,7 @@ final class ReedAppModel: ObservableObject {
         sub = nil; subLoaded = false; devices = nil; members = nil; inviteCode = nil; deviceCode = nil
         memberBlocked = false; autoPinged = false
         code = ""; codeName = ""; codeError = nil
+        resetChat()
         tab = .home
         withAnimation(.smooth(duration: 0.35)) { stage = .app }
         startAccountTasks()
@@ -286,6 +423,7 @@ final class ReedAppModel: ObservableObject {
         token = nil; sub = nil; subLoaded = false; subsList = []; notifications = []
         devices = nil; members = nil; inviteCode = nil; deviceCode = nil; memberBlocked = false
         servers = []; pings = [:]; selectedId = nil
+        resetChat(); ReedSessionStore.supportUsed = false
         tab = .home
         withAnimation(.smooth(duration: 0.35)) { stage = .login }
     }

@@ -71,7 +71,6 @@ import java.util.TimeZone
 import kotlin.coroutines.resume
 
 private const val BOT_URL = "https://t.me/ReedVPNbot"
-private const val SUPPORT_URL = "https://t.me/reedvps"
 private const val OLCCONF_BASE = "https://reedapp.ru/app/olcconf?token="
 private const val LOCATIONS_BASE = "https://reedapp.ru/app/locations?token="
 private const val BYTES_IN_GB = 1024.0 * 1024.0 * 1024.0
@@ -117,6 +116,14 @@ fun Reed2AppContent(
     var sheet by remember { mutableStateOf<ReedSheetSpec?>(null) }
     var showNotifications by remember { mutableStateOf(false) }
     var showAppsDirect by remember { mutableStateOf(false) }
+
+    // ── Чат поддержки ──
+    val reedPrefs = remember { context.getSharedPreferences("reed2", Context.MODE_PRIVATE) }
+    var showSupport by remember { mutableStateOf(false) }
+    var chatEntries by remember { mutableStateOf<List<ChatEntry>>(emptyList()) }
+    var chatLoaded by remember { mutableStateOf(false) }
+    var chatDraft by rememberSaveable { mutableStateOf("") }
+    var supportUnread by remember { mutableStateOf(false) }
     var consent by remember { mutableStateOf(ReedSession.consentAccepted) }
 
     // ── Вход ──
@@ -169,6 +176,11 @@ fun Reed2AppContent(
         )
     }
 
+    fun resetChat() {
+        chatEntries = emptyList(); chatLoaded = false; supportUnread = false
+        reedPrefs.edit().putInt("support_seen", 0).apply()
+    }
+
     fun loginWith(t: String, member: Boolean, memberName: String?) {
         val switching = ReedSession.token != null && ReedSession.token != t
         if (switching && (state.isVpnConnected || state.isVpnLoading)) onToggleClick()
@@ -184,11 +196,13 @@ fun Reed2AppContent(
         memberBlocked = false
         token = t
         code = ""; codeName = ""; codeError = null
+        resetChat()
         tab = ReedTab.Home
         stage = Stage.App
     }
 
     fun doLogout() {
+        resetChat(); reedPrefs.edit().putBoolean("support_used", false).apply()
         if (state.isVpnConnected || state.isVpnLoading) onToggleClick()
         ReedSession.logout()
         locationViewModel.deleteReedAccountLocations { locationViewModel.loadLocations { } }
@@ -343,6 +357,61 @@ fun Reed2AppContent(
         }
     }
 
+    // ── чат поддержки: сообщения уходят операторам в бота, ответы приходят сюда ──
+    fun markSupportSeen() {
+        val m = chatEntries.filter { !it.mine }.mapNotNull { it.serverId }.maxOrNull() ?: 0
+        if (m > reedPrefs.getInt("support_seen", 0)) reedPrefs.edit().putInt("support_seen", m).apply()
+        supportUnread = false
+    }
+
+    suspend fun loadChat() {
+        val after = chatEntries.mapNotNull { it.serverId }.maxOrNull() ?: 0
+        val r = try { ReedApi.supportMessages(token, locationViewModel.deviceHwid(), after) }
+            catch (e: CancellationException) { throw e } catch (e: Throwable) { null }
+        if (r != null) {
+            val known = chatEntries.mapNotNull { it.serverId }.toSet()
+            val fresh = r.messages.filter { it.id !in known }
+                .map { ChatEntry("s${it.id}", it.id, it.isMine, it.text, utcEpochSec(it.created_at), ChatState.Sent) }
+            if (fresh.isNotEmpty()) {
+                chatEntries = chatEntries + fresh
+                if (showSupport) markSupportSeen()
+            }
+        }
+        chatLoaded = true
+    }
+
+    fun deliverChat(localId: String, text: String) {
+        scope.launch {
+            val r = try { ReedApi.supportSend(token, locationViewModel.deviceHwid(), text, reedDeviceModel()) }
+                catch (e: CancellationException) { throw e } catch (e: Throwable) { null }
+            val sent = r?.message
+            chatEntries = chatEntries.map {
+                if (it.localId != localId) it
+                else if (r?.ok == true && sent != null) it.copy(serverId = sent.id, state = ChatState.Sent)
+                else it.copy(state = ChatState.Failed)
+            }
+            if (r?.ok == true) reedPrefs.edit().putBoolean("support_used", true).apply()
+            if (r?.error == "rate_limited") toast(r.hint ?: "Подожди немного и отправь ещё раз")
+        }
+    }
+
+    fun sendChat() {
+        val text = chatDraft.trim()
+        if (text.isEmpty()) return
+        chatDraft = ""
+        val id = "l" + System.nanoTime()
+        chatEntries = chatEntries + ChatEntry(id, null, true, text, System.currentTimeMillis() / 1000, ChatState.Sending)
+        deliverChat(id, text)
+    }
+
+    fun retryChat(id: String) {
+        val e = chatEntries.firstOrNull { it.localId == id } ?: return
+        chatEntries = chatEntries.map { if (it.localId == id) it.copy(state = ChatState.Sending) else it }
+        deliverChat(id, e.text)
+    }
+
+    fun openSupport() { showNotifications = false; showSupport = true }
+
     fun runNetCheck() {
         if (netChecking) return
         netChecking = true
@@ -447,6 +516,40 @@ fun Reed2AppContent(
         members = try { ReedApi.members(t) } catch (e: CancellationException) { throw e } catch (e: Throwable) { members }
     }
 
+    // hwid — для проверки ответов поддержки из сервиса (уведомление, когда приложение закрыто).
+    LaunchedEffect(Unit) {
+        try { reedPrefs.edit().putString("device_hwid", locationViewModel.deviceHwid()).apply() } catch (e: Throwable) { }
+    }
+    // Чат открыт — подтягиваем новые ответы раз в 3 с.
+    LaunchedEffect(showSupport) {
+        if (!showSupport) return@LaunchedEffect
+        loadChat(); markSupportSeen()
+        while (true) { delay(3000); loadChat() }
+    }
+    // Фоном раз в минуту: есть ли непрочитанный ответ поддержки (точка в профиле).
+    LaunchedEffect(token) {
+        while (true) {
+            if (!showSupport && (token != null || reedPrefs.getBoolean("support_used", false))) {
+                val seen = reedPrefs.getInt("support_seen", 0)
+                val r = try { ReedApi.supportMessages(token, locationViewModel.deviceHwid(), seen) }
+                    catch (e: CancellationException) { throw e } catch (e: Throwable) { null }
+                if (r != null) supportUnread = r.messages.any { !it.isMine }
+            }
+            delay(60_000)
+        }
+    }
+    // Открыть чат по нажатию на системное уведомление «Ответ поддержки».
+    val activity = context as? android.app.Activity
+    LaunchedEffect(Unit) {
+        while (true) {
+            if (activity?.intent?.getBooleanExtra(ReedDeviceAlerts.EXTRA_OPEN_SUPPORT, false) == true) {
+                activity.intent.removeExtra(ReedDeviceAlerts.EXTRA_OPEN_SUPPORT)
+                if (stage == Stage.App) openSupport()
+            }
+            delay(700)
+        }
+    }
+
     // ─────────────────────── производные данные ───────────────────────
 
     val realLocations = locations.filter { !ReedTempServer.isTemp(it.storageId) }
@@ -474,10 +577,11 @@ fun Reed2AppContent(
 
     // ─────────────────────────── экраны ───────────────────────────
 
-    BackHandler(enabled = sheet != null || showNotifications || showAppsDirect || stage == Stage.Codes ||
+    BackHandler(enabled = sheet != null || showNotifications || showAppsDirect || showSupport || stage == Stage.Codes ||
         (stage == Stage.App && tab != ReedTab.Home)) {
         when {
             sheet != null -> sheet = null
+            showSupport -> { showSupport = false; markSupportSeen() }
             showAppsDirect -> { showAppsDirect = false; onAppsDirectClosed() }
             showNotifications -> showNotifications = false
             stage == Stage.Codes -> { if (!codeBusy) stage = codesReturn }
@@ -726,7 +830,7 @@ fun Reed2AppContent(
                                 if (token == null) {
                                     ReedNoCodeTabScreen("ПРОФИЛЬ", noCodeCardText(showBot),
                                         onEnterCode = { openCodes(Stage.App) }, onScanQr = { scanAndEnter(Stage.App) },
-                                        footer = versionLabel)
+                                        footer = versionLabel, onSupport = { openSupport() }, supportUnread = supportUnread)
                                 } else {
                                     val prof = sub?.profile
                                     val displayName = when {
@@ -759,7 +863,8 @@ fun Reed2AppContent(
                                         },
                                         onServicesDirect = { onAppsDirectOpened(); showAppsDirect = true },
                                         onNotifications = { showNotifications = true },
-                                        onSupport = { uri.openUri(SUPPORT_URL) },
+                                        onSupport = { openSupport() },
+                                        supportUnread = supportUnread,
                                         onTerms = { uri.openUri(ReedLinks.TERMS_OF_SERVICE) },
                                         onLoginOtherCode = { openCodes(Stage.App) },
                                         onLogout = {
@@ -814,10 +919,14 @@ fun Reed2AppContent(
             ReedNotificationsScreen(
                 items = notifications.map { n ->
                     NotificationUi(n.id, n.title.ifBlank { "Уведомление" }, n.body,
-                        relativeTime(n.created_at, nowTick), n.kind == "new_device", n.id > notifSeen)
+                        relativeTime(n.created_at, nowTick), n.kind == "new_device", n.id > notifSeen,
+                        isSupport = n.kind == "support")
                 },
                 onBack = { showNotifications = false; notifSeen = ReedSession.notifSeenMaxId },
-                onOpen = { showNotifications = false; notifSeen = ReedSession.notifSeenMaxId; tab = ReedTab.Family },
+                onOpen = { n ->
+                    showNotifications = false; notifSeen = ReedSession.notifSeenMaxId
+                    if (n.isSupport) openSupport() else tab = ReedTab.Family
+                },
             )
         }
 
@@ -847,10 +956,57 @@ fun Reed2AppContent(
             )
         }
 
+        // Чат поддержки — поверх, въезжает справа.
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showSupport,
+            enter = slideInHorizontally(tween(340, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(240)),
+            exit = slideOutHorizontally(tween(280, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(200)),
+        ) {
+            ReedSupportScreen(
+                items = chatEntries.map { it.toUi() },
+                loaded = chatLoaded,
+                draft = chatDraft,
+                onDraft = { chatDraft = it },
+                onSend = { sendChat() },
+                onRetry = { retryChat(it) },
+                onBack = { showSupport = false; markSupportSeen() },
+            )
+        }
+
         ReedSheetHost(spec = sheet, onDismiss = { sheet = null })
     }
     }
 }
+
+/** Сообщение чата поддержки (локальный id стабилен — для анимаций). */
+private data class ChatEntry(
+    val localId: String,
+    val serverId: Int?,
+    val mine: Boolean,
+    val text: String,
+    val epochSec: Long,
+    val state: ChatState,
+)
+
+private fun ChatEntry.toUi(): ChatItemUi {
+    val d = java.util.Date(epochSec * 1000)
+    val ru = Locale("ru")
+    val dayKey = SimpleDateFormat("yyyy-MM-dd", ru).format(d)
+    val today = SimpleDateFormat("yyyy-MM-dd", ru).format(java.util.Date())
+    val yesterday = SimpleDateFormat("yyyy-MM-dd", ru).format(java.util.Date(System.currentTimeMillis() - 86_400_000L))
+    val title = when (dayKey) {
+        today -> "Сегодня"
+        yesterday -> "Вчера"
+        else -> SimpleDateFormat(if (dayKey.take(4) == today.take(4)) "d MMMM" else "d MMMM yyyy", ru).format(d)
+    }
+    return ChatItemUi(localId, mine, text, SimpleDateFormat("HH:mm", ru).format(d), dayKey, title, epochSec, state)
+}
+
+/** «2026-09-24 11:46:14» (UTC сервера) → секунды эпохи. */
+private fun utcEpochSec(s: String?): Long = try {
+    SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+        .parse(s ?: "")?.time?.div(1000) ?: (System.currentTimeMillis() / 1000)
+} catch (e: Throwable) { System.currentTimeMillis() / 1000 }
 
 /**
  * Шрифты Reed из assets приложения (androidApp/src/main/assets/fonts). Compose-ресурсы в APK

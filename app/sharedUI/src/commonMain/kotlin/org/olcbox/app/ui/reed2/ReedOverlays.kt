@@ -39,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.material.icons.rounded.ChatBubbleOutline
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -133,6 +134,7 @@ data class NotificationUi(
     val dateLabel: String,
     val isNewDevice: Boolean,
     val unread: Boolean,
+    val isSupport: Boolean = false,   // ответ поддержки — ведёт в чат
 )
 
 /** Reed 2.0 — список уведомлений (открывается с колокольчика на Главной). */
@@ -168,7 +170,7 @@ fun ReedNotificationsScreen(
                     Row(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(Reed2.tileRadius))
                             .background(Reed2.surface200)
-                            .clickable(enabled = n.isNewDevice) { onOpen(n) }
+                            .clickable(enabled = n.isNewDevice || n.isSupport) { onOpen(n) }
                             .padding(14.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -188,7 +190,7 @@ fun ReedNotificationsScreen(
                                 Text(n.dateLabel, color = Reed2.chrome600, fontSize = 12.sp)
                             }
                         }
-                        if (n.isNewDevice) {
+                        if (n.isNewDevice || n.isSupport) {
                             Icon(Icons.Rounded.ChevronRight, null, tint = Reed2.chrome600, modifier = Modifier.size(20.dp))
                         }
                     }
@@ -235,12 +237,19 @@ fun ReedNoCodeTabScreen(
     onScanQr: () -> Unit,
     footer: String? = null,
     modifier: Modifier = Modifier,
+    onSupport: (() -> Unit)? = null,
+    supportUnread: Boolean = false,
 ) {
     Column(modifier.fillMaxSize().background(Reed2.ground000).padding(horizontal = 20.dp)) {
         Spacer(Modifier.height(16.dp))
         Text(title, color = Reed2.ink, fontSize = 30.sp, fontFamily = LocalReedFonts.current.headline, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
         Spacer(Modifier.height(18.dp))
         ReedConnectSubscriptionCard(cardText = cardText, onEnterCode = onEnterCode, onScanQr = onScanQr)
+        if (onSupport != null) {
+            Spacer(Modifier.height(18.dp))
+            NavRow(androidx.compose.material.icons.Icons.Rounded.ChatBubbleOutline, "Написать в поддержку",
+                if (supportUnread) "Есть ответ" else "Ответим прямо в приложении", onSupport, badge = supportUnread)
+        }
         if (footer != null) {
             Spacer(Modifier.weight(1f))
             Text(footer, color = Reed2.chrome600, fontSize = 12.sp,

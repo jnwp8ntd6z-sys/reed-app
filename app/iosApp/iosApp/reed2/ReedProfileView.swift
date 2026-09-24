@@ -20,6 +20,10 @@ struct ReedProfileView: View {
 
                 if m.token == nil {
                     ReedConnectCard(onEnterCode: { m.openCodes(from: .app) }, onScanQr: onScanQr).padding(.top, 18)
+                    section("ПОМОЩЬ")
+                    group {
+                        navRow("bubble.left", "Написать в поддержку", "Ответим прямо в приложении", badge: m.supportUnread) { m.openSupport() }
+                    }
                 } else {
                     accountCard.padding(.top, 16)
                     netCard.padding(.top, 14)
@@ -37,7 +41,7 @@ struct ReedProfileView: View {
 
                     section("ПОМОЩЬ")
                     group {
-                        navRow("bubble.left", "Написать в поддержку", nil) { open("https://t.me/reedvps") }
+                        navRow("bubble.left", "Написать в поддержку", m.supportUnread ? "Есть ответ" : nil, badge: m.supportUnread) { m.openSupport() }
                         divider
                         navRow("doc.text", "Условия и конфиденциальность", nil) { open("https://reedapp.ru/privacy-app") }
                     }
@@ -207,7 +211,8 @@ struct ReedProfileView: View {
         .padding(.horizontal, 14).padding(.vertical, 11)
     }
 
-    private func navRow(_ ic: String, _ title: String, _ sub: String?, danger: Bool = false, action: @escaping () -> Void) -> some View {
+    private func navRow(_ ic: String, _ title: String, _ sub: String?, danger: Bool = false, badge: Bool = false,
+                        action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 12) {
                 icon(ic, danger: danger)
@@ -216,8 +221,13 @@ struct ReedProfileView: View {
                     if let sub { Text(sub).font(.system(size: 12)).foregroundStyle(Reed.inkMuted) }
                 }
                 Spacer()
+                if badge {
+                    Circle().fill(Reed.statusWarn).frame(width: 8, height: 8)
+                        .transition(.scale.combined(with: .opacity))
+                }
                 Image(systemName: "chevron.right").font(.system(size: 13)).foregroundStyle(Reed.chrome600)
             }
+            .animation(.spring(response: 0.35, dampingFraction: 0.7), value: badge)
             .padding(.horizontal, 14).padding(.vertical, 12)
             .contentShape(Rectangle())
         }
