@@ -76,6 +76,7 @@ fun ReedProfileScreen(
     onLoginOtherCode: () -> Unit = {},
     onLogout: () -> Unit = {},
     onDeleteAccount: () -> Unit = {},
+    deleteLabel: String = "Удалить аккаунт",
     onBotSubscription: () -> Unit = {},
     onReferrals: () -> Unit = {},
     servicesDirectLabel: String = "Приложения напрямую", // iOS: «Сервисы напрямую»
@@ -201,7 +202,7 @@ fun ReedProfileScreen(
         Spacer(Modifier.height(8.dp))
         NavRow(Icons.Rounded.Key, "Войти по другому коду", null, onLoginOtherCode)
         NavRow(Icons.Rounded.Logout, "Выйти", null, onLogout)
-        NavRow(Icons.Rounded.DeleteOutline, "Удалить аккаунт", null, onDeleteAccount, tint = Reed2.statusDanger)
+        NavRow(Icons.Rounded.DeleteOutline, deleteLabel, null, onDeleteAccount, tint = Reed2.statusDanger)
 
         Spacer(Modifier.height(24.dp))
         Text(version, color = Reed2.chrome600, fontFamily = LocalReedFonts.current.mono, fontSize = 12.sp,

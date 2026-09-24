@@ -75,7 +75,9 @@ fun ReedCodeEntryScreen(
     onNameChange: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    val needsName = detected == CodeKind.FamilyInvite
+    // Имя нужно и для приглашения в семью (как тебя зовут), и для кода устройства (как назвать устройство).
+    val needsName = detected == CodeKind.FamilyInvite || detected == CodeKind.DeviceCode
+    val isDeviceCode = detected == CodeKind.DeviceCode
     val canSubmit = code.isNotBlank() && !busy && (!needsName || name.isNotBlank())
     val codeFocus = remember { FocusRequester() }
     val nameFocus = remember { FocusRequester() }
@@ -172,7 +174,8 @@ fun ReedCodeEntryScreen(
         ) {
             Column {
                 Spacer(Modifier.height(20.dp))
-                Text("Как тебя зовут? Имя увидит владелец семьи", color = Reed2.inkMuted, fontSize = 13.sp,
+                Text(if (isDeviceCode) "Как назвать это устройство? Название увидит владелец"
+                    else "Как тебя зовут? Имя увидит владелец семьи", color = Reed2.inkMuted, fontSize = 13.sp,
                     fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(8.dp))
                 Box(
@@ -180,7 +183,7 @@ fun ReedCodeEntryScreen(
                         .background(Reed2.surface200).padding(horizontal = 16.dp),
                     contentAlignment = Alignment.CenterStart,
                 ) {
-                    if (name.isEmpty()) Text("Имя", color = Reed2.chrome600, fontSize = 15.sp)
+                    if (name.isEmpty()) Text(if (isDeviceCode) "Например, Планшет" else "Имя", color = Reed2.chrome600, fontSize = 15.sp)
                     BasicTextField(
                         value = name, onValueChange = { onNameChange(it.take(40)) },
                         singleLine = true, enabled = !busy,

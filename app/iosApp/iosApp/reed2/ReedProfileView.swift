@@ -52,7 +52,7 @@ struct ReedProfileView: View {
                         divider
                         navRow("rectangle.portrait.and.arrow.right", "Выйти", nil) { confirmLogout = true }
                         divider
-                        navRow("trash", "Удалить аккаунт", nil, danger: true) { confirmDelete = true }
+                        navRow("trash", deleteLabel, nil, danger: true) { confirmDelete = true }
                     }
                 }
 
@@ -69,17 +69,34 @@ struct ReedProfileView: View {
         } message: {
             Text("Серверы аккаунта пропадут с этого устройства. Вернуться можно по коду.")
         }
-        .confirmationDialog("Удалить аккаунт навсегда?", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("Удалить аккаунт", role: .destructive) { m.deleteAccount() }
+        .confirmationDialog(deleteTitle, isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button(deleteLabel, role: .destructive) { m.deleteAccount() }
             Button("Отмена", role: .cancel) {}
         } message: {
-            Text("Удалим аккаунт, подписки и все устройства. Отменить это нельзя.")
+            Text(deleteMessage)
         }
         .sheet(isPresented: $servicesOpen) {
             ReedServicesDirectView().environmentObject(m)
                 .presentationDetents([.medium, .large])
                 .presentationBackground(.regularMaterial)
         }
+    }
+
+    // Участник/устройство по коду удаляет только свою сессию (сервер это гарантирует).
+    private var deleteLabel: String {
+        if ReedSessionStore.joinedAsDevice { return "Отключить это устройство" }
+        if ReedSessionStore.joinedViaCode { return "Выйти из семьи" }
+        return "Удалить аккаунт"
+    }
+    private var deleteTitle: String {
+        if ReedSessionStore.joinedAsDevice { return "Отключить это устройство?" }
+        if ReedSessionStore.joinedViaCode { return "Выйти из семьи?" }
+        return "Удалить аккаунт навсегда?"
+    }
+    private var deleteMessage: String {
+        if ReedSessionStore.joinedAsDevice { return "Устройство пропадёт из аккаунта владельца и освободит место. Вернуться можно по новому коду." }
+        if ReedSessionStore.joinedViaCode { return "Доступ к подписке владельца на этом устройстве закончится. Вернуться можно по новому приглашению." }
+        return "Удалим аккаунт, подписки и все устройства. Отменить это нельзя."
     }
 
     // MARK: карточки
@@ -93,6 +110,7 @@ struct ReedProfileView: View {
             return "Аккаунт"
         }()
         let sub: String = {
+            if ReedSessionStore.joinedAsDevice { return "Устройство аккаунта владельца" }
             if ReedSessionStore.joinedViaCode { return "Участник семьи" }
             if m.sub?.subscription.status == "active" { return "Подписка активна \(ReedFormat.until(m.sub?.subscription.expires_at))" }
             return m.subLoaded ? "Подписка закончилась" : "Загружаем подписку…"

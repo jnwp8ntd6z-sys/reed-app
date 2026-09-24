@@ -21,7 +21,9 @@ struct ReedFamilyView: View {
                     card {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Подпиской управляет владелец").font(.system(size: 16, weight: .semibold)).foregroundStyle(Reed.ink)
-                            Text("Ты в семье как участник. Места, приглашения и устройства настраивает владелец подписки.")
+                            Text(ReedSessionStore.joinedAsDevice
+                                 ? "Это устройство подключено к аккаунту владельца. Места, приглашения и устройства настраивает он."
+                                 : "Ты в семье как участник. Места, приглашения и устройства настраивает владелец подписки.")
                                 .font(.system(size: 14)).foregroundStyle(Reed.inkMuted)
                         }
                     }
@@ -129,7 +131,10 @@ struct ReedFamilyView: View {
         }
         codePlank(title: "Пригласить участника", subtitle: "Код для близкого человека",
                   code: m.inviteCode, note: "Код действует 1 час. Участник войдёт в твою подписку.",
-                  open: $inviteOpen) { m.requestCode(device: false) }
+                  open: $inviteOpen,
+                  blockedText: (m.members?.limit ?? 0) > 0 && (m.members?.count ?? 0) >= (m.members?.limit ?? 0)
+                    ? "Все места в семье заняты. Удалите участника, чтобы пригласить нового." : nil
+        ) { m.requestCode(device: false) }
             .padding(.top, 12)
 
         section("ТВОИ УСТРОЙСТВА")

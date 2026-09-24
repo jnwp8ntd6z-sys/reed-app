@@ -50,7 +50,7 @@ struct RRedeemResult: Codable, Sendable {
     var name: String?; var error: String?; var message: String?
 }
 struct RLinkLoginResult: Codable, Sendable { var ok: Bool?; var token: String?; var error: String?; var message: String? }
-struct RShareCreateResult: Codable, Sendable { var ok: Bool?; var code: String?; var error: String? }
+struct RShareCreateResult: Codable, Sendable { var ok: Bool?; var code: String?; var error: String?; var message: String? }
 struct ROk: Codable, Sendable { var ok: Bool?; var error: String? }
 
 struct RDevice: Codable, Sendable, Identifiable {

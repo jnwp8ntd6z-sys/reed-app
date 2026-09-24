@@ -23,6 +23,11 @@ enum ReedSessionStore {
         get { d.string(forKey: "reed_joined_via_code") == "1" }
         set { flag("reed_joined_via_code", newValue) }
     }
+    /// Вошёл кодом своего устройства (RDX-) — права как у участника, тексты «устройство».
+    static var joinedAsDevice: Bool {
+        get { d.string(forKey: "reed2_joined_as_device") == "1" }
+        set { flag("reed2_joined_as_device", newValue) }
+    }
     static var memberName: String? {
         get { d.string(forKey: "reed_member_name") }
         set { if let v = newValue { d.set(v, forKey: "reed_member_name") } else { d.removeObject(forKey: "reed_member_name") } }
@@ -76,7 +81,7 @@ enum ReedSessionStore {
     }
 
     static func logout() {
-        token = nil; joinedViaCode = false; memberName = nil; noCodeMode = false; onboardingDone = false
+        token = nil; joinedViaCode = false; joinedAsDevice = false; memberName = nil; noCodeMode = false; onboardingDone = false
         selectedServer = nil; subscriptionCache = nil
     }
 

@@ -330,7 +330,10 @@ final class ReedAppModel: ObservableObject {
         let grew = new.count - code.count > 1
         code = new
         codeError = nil
-        if grew, let k = CodeKindDetector.detect(new), k != .familyInvite { submitCode() }
+        let k = CodeKindDetector.detect(new)
+        // Коду устройства сначала нужно название — подставляем модель, человек может поменять.
+        if k == .deviceCode && codeName.isEmpty { codeName = Self.deviceModel }
+        if grew, let k, k != .familyInvite, k != .deviceCode { submitCode() }
     }
 
     func scanned(_ text: String) {
@@ -338,7 +341,9 @@ final class ReedAppModel: ObservableObject {
         guard !t.isEmpty else { return }
         code = t
         if stage != .codes { codesReturn = stage; stage = .codes }
-        if CodeKindDetector.detect(t) != .familyInvite { submitCode() }
+        let k = CodeKindDetector.detect(t)
+        if k == .deviceCode && codeName.isEmpty { codeName = Self.deviceModel }
+        if k != .familyInvite && k != .deviceCode { submitCode() }
     }
 
     func submitCode() {
@@ -373,12 +378,13 @@ final class ReedAppModel: ObservableObject {
                 return r.message ?? Self.errorText(r.error)
             case .familyInvite, .deviceCode:
                 let isDevice = kind == .deviceCode
-                let who = isDevice ? Self.deviceModel : name.trimmingCharacters(in: .whitespaces)
-                if who.isEmpty { return "Напиши своё имя — его увидит владелец" }
+                let who = name.trimmingCharacters(in: .whitespaces)
+                if who.isEmpty { return isDevice ? "Напиши название устройства — его увидит владелец" : "Напиши своё имя — его увидит владелец" }
                 let r = try await api.redeem(input, name: who, hwid: ReedSessionStore.hwid(), model: Self.deviceModel)
                 if r.ok == true, let t = r.member_token ?? r.sub_token, !t.isEmpty {
-                    let member = r.kind != "device"
-                    login(t, member: member, name: member ? (r.name ?? who) : nil)
+                    // И участник, и устройство по коду — сессии без управления подпиской (управляет владелец).
+                    ReedSessionStore.joinedAsDevice = r.kind == "device"
+                    login(t, member: true, name: r.name ?? who)
                     return nil
                 }
                 return r.message ?? Self.errorText(r.error)
@@ -432,7 +438,8 @@ final class ReedAppModel: ObservableObject {
         guard let t = token else { return }
         Task {
             let ok = (try? await api.deleteAccount(t))?.ok == true
-            if ok { show("Аккаунт удалён"); logout() } else { show("Не удалось удалить аккаунт. Попробуй ещё раз.") }
+            if ok { show(ReedSessionStore.joinedViaCode ? "Готово" : "Аккаунт удалён"); logout() }
+            else { show("Не получилось. Попробуй ещё раз.") }
         }
     }
 
@@ -627,7 +634,7 @@ final class ReedAppModel: ObservableObject {
             if r?.ok == true, let c = r?.code, !c.isEmpty {
                 if device { deviceCode = c } else { inviteCode = c }
             } else {
-                show(r?.error == "members_cannot_share" ? "Приглашать может только владелец" : "Не удалось создать код")
+                show(r?.message ?? (r?.error == "members_cannot_share" ? "Приглашать может только владелец" : "Не удалось создать код"))
             }
         }
     }
@@ -738,7 +745,7 @@ final class ReedAppModel: ObservableObject {
 
     // MARK: вспомогательное
 
-    static var deviceModel: String { "iPhone" }
+    static var deviceModel: String { UIDevice.current.model }   // «iPhone» / «iPad»
 
     nonisolated static func pingServer(_ s: ReedServer?) async -> Int? {
         guard let s, let h = s.host else { return nil }

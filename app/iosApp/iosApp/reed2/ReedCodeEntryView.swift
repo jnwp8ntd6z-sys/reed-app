@@ -10,7 +10,8 @@ struct ReedCodeEntryView: View {
     enum Field { case code, name }
 
     private var detected: CodeKindDetector.Kind? { CodeKindDetector.detect(m.code) }
-    private var needsName: Bool { detected == .familyInvite }
+    private var needsName: Bool { detected == .familyInvite || detected == .deviceCode }
+    private var isDeviceCode: Bool { detected == .deviceCode }
     private var canSubmit: Bool {
         !m.code.trimmingCharacters(in: .whitespaces).isEmpty && !m.codeBusy &&
             (!needsName || !m.codeName.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -74,9 +75,9 @@ struct ReedCodeEntryView: View {
 
             if needsName {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Как тебя зовут? Имя увидит владелец семьи")
+                    Text(isDeviceCode ? "Как назвать это устройство? Название увидит владелец" : "Как тебя зовут? Имя увидит владелец семьи")
                         .font(.system(size: 13, weight: .medium)).foregroundStyle(Reed.inkMuted)
-                    TextField("", text: $m.codeName, prompt: Text("Имя").foregroundColor(Reed.chrome600))
+                    TextField("", text: $m.codeName, prompt: Text(isDeviceCode ? "Например, iPad" : "Имя").foregroundColor(Reed.chrome600))
                         .font(.system(size: 15)).foregroundStyle(Reed.ink)
                         .focused($focus, equals: .name)
                         .textInputAutocapitalization(.words).submitLabel(.go)

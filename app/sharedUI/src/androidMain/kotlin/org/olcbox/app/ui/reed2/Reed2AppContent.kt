@@ -245,14 +245,17 @@ fun Reed2AppContent(
                 }
                 CodeKind.FamilyInvite, CodeKind.DeviceCode -> {
                     val isDevice = kind == CodeKind.DeviceCode
-                    val who = if (isDevice) reedDeviceModel().ifBlank { "Android-телефон" } else name.trim()
-                    if (who.isBlank()) return "Напиши своё имя — его увидит владелец"
+                    val who = name.trim()
+                    if (who.isBlank()) return if (isDevice) "Напиши название устройства — его увидит владелец"
+                        else "Напиши своё имя — его увидит владелец"
                     val r = ReedApi.shareRedeem(input, who, hwid = locationViewModel.deviceHwid(),
                         deviceModel = reedDeviceModel(), deviceOs = reedPlatformName())
                     val t = r.member_token ?: r.sub_token
                     if (r.ok && !t.isNullOrBlank()) {
-                        val member = r.kind != "device"
-                        loginWith(t, member, if (member) (r.name ?: who) else null); null
+                        // И участник, и устройство по коду — сессии без управления подпиской
+                        // (управляет владелец). Устройство помечаем отдельно для текстов.
+                        ReedSession.joinedAsDevice = r.kind == "device"
+                        loginWith(t, true, r.name ?: who); null
                     } else r.message ?: when (r.error) {
                         "not_found" -> "Код не найден"
                         "expired" -> "Код истёк"
@@ -288,7 +291,9 @@ fun Reed2AppContent(
             code = t
             codesReturn = from
             stage = Stage.Codes
-            if (CodeKind.detect(t) != CodeKind.FamilyInvite) submitCode()
+            val k = CodeKind.detect(t)
+            if (k == CodeKind.DeviceCode && codeName.isBlank()) codeName = reedDeviceModel()
+            if (k != CodeKind.FamilyInvite && k != CodeKind.DeviceCode) submitCode()
         }
     }
 
@@ -668,7 +673,9 @@ fun Reed2AppContent(
                         code = new; codeError = null
                         val kind = CodeKind.detect(new)
                         // Вставка из буфера входит сразу (ТЗ 4.2); приглашению сначала нужно имя.
-                        if (grewByPaste && kind != null && kind != CodeKind.FamilyInvite) submitCode()
+                        // Коду устройства сначала нужно название — подставляем модель, человек может поменять.
+                        if (kind == CodeKind.DeviceCode && codeName.isBlank()) codeName = reedDeviceModel()
+                        if (grewByPaste && kind != null && kind != CodeKind.FamilyInvite && kind != CodeKind.DeviceCode) submitCode()
                     },
                     detected = CodeKind.detect(code),
                     hint = if (showBot) "Код приходит в Telegram-боте. Скан QR или вставка из буфера входят сразу."
@@ -789,6 +796,8 @@ fun Reed2AppContent(
                                         inviteCode = inviteCode,
                                         deviceCode = deviceCode,
                                         canManage = !ReedSession.joinedViaCode,
+                                        managedAsDevice = ReedSession.joinedAsDevice,
+                                        membersFull = (members?.limit ?: 0) > 0 && (members?.count ?: 0) >= (members?.limit ?: 0),
                                         onAlertItsMe = {
                                             newDeviceAlert?.let { newDevAck = it.id; ReedSession.newDeviceAckMaxId = it.id }
                                         },
@@ -849,7 +858,7 @@ fun Reed2AppContent(
                                             if (inviteCode == null) scope.launch {
                                                 val r = runCatching { ReedApi.shareCreate(t, "member") }.getOrNull()
                                                 if (r?.ok == true && r.code.isNotBlank()) inviteCode = r.code
-                                                else toast(if (r?.error == "members_cannot_share") "Приглашать может только владелец" else "Не удалось создать код")
+                                                else toast(r?.message ?: if (r?.error == "members_cannot_share") "Приглашать может только владелец" else "Не удалось создать код")
                                             }
                                         },
                                         onRequestDevice = {
@@ -857,7 +866,7 @@ fun Reed2AppContent(
                                             if (deviceCode == null) scope.launch {
                                                 val r = runCatching { ReedApi.shareCreate(t, "device") }.getOrNull()
                                                 if (r?.ok == true && r.code.isNotBlank()) deviceCode = r.code
-                                                else toast("Не удалось создать код")
+                                                else toast(r?.message ?: "Не удалось создать код")
                                             }
                                         },
                                         onCopy = { c -> copyToClipboard(context, c); toast("Код скопирован") },
@@ -882,6 +891,7 @@ fun Reed2AppContent(
                                     ReedProfileScreen(
                                         username = displayName,
                                         subLabel = when {
+                                            ReedSession.joinedAsDevice -> "Устройство аккаунта владельца"
                                             ReedSession.joinedViaCode -> "Участник семьи"
                                             subActive -> "Подписка активна ${untilLabel(subInfo?.expires_at)}".trim()
                                             subLoaded -> "Подписка закончилась"
@@ -910,15 +920,29 @@ fun Reed2AppContent(
                                                 "Серверы аккаунта пропадут с этого устройства. Вернуться можно по коду.",
                                                 listOf(ReedSheetAction("Выйти", danger = true) { sheet = null; doLogout() }))
                                         },
+                                        deleteLabel = when {
+                                            ReedSession.joinedAsDevice -> "Отключить это устройство"
+                                            ReedSession.joinedViaCode -> "Выйти из семьи"
+                                            else -> "Удалить аккаунт"
+                                        },
                                         onDeleteAccount = {
-                                            sheet = ReedSheetSpec("Удалить аккаунт навсегда?",
-                                                "Удалим аккаунт, подписки и все устройства. Отменить это нельзя.",
-                                                listOf(ReedSheetAction("Удалить аккаунт", danger = true) {
+                                            // Участник/устройство по коду удаляет только СВОЮ сессию (сервер это
+                                            // гарантирует) — аккаунт владельца не трогается.
+                                            val managed = ReedSession.joinedViaCode
+                                            val asDevice = ReedSession.joinedAsDevice
+                                            sheet = ReedSheetSpec(
+                                                when { asDevice -> "Отключить это устройство?"; managed -> "Выйти из семьи?"; else -> "Удалить аккаунт навсегда?" },
+                                                when {
+                                                    asDevice -> "Устройство пропадёт из аккаунта владельца и освободит место. Вернуться можно по новому коду."
+                                                    managed -> "Доступ к подписке владельца на этом устройстве закончится. Вернуться можно по новому приглашению."
+                                                    else -> "Удалим аккаунт, подписки и все устройства. Отменить это нельзя."
+                                                },
+                                                listOf(ReedSheetAction(when { asDevice -> "Отключить"; managed -> "Выйти"; else -> "Удалить аккаунт" }, danger = true) {
                                                     sheet = null
                                                     val t = token
                                                     scope.launch {
                                                         val ok = t != null && runCatching { ReedApi.deleteAccount(t).ok }.getOrDefault(false)
-                                                        if (ok) { toast("Аккаунт удалён"); doLogout() }
+                                                        if (ok) { toast(if (managed) "Готово" else "Аккаунт удалён"); doLogout() }
                                                         else toast("Не удалось удалить аккаунт. Попробуй ещё раз.")
                                                     }
                                                 }))

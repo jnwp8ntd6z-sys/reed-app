@@ -290,6 +290,14 @@ object ReedSession {
             reedStorePut(KEY_VIA_CODE, if (value) "1" else null)
         }
 
+    // Reed 2.0: вошёл кодом своего устройства (RDX-) — права как у участника, тексты «устройство».
+    private const val KEY_AS_DEVICE = "reed2_joined_as_device"
+    var joinedAsDevice: Boolean = reedStoreGet(KEY_AS_DEVICE) == "1"
+        set(value) {
+            field = value
+            reedStorePut(KEY_AS_DEVICE, if (value) "1" else null)
+        }
+
     // Имя, которое участник ввёл при входе по коду (показываем в кабинете).
     private const val KEY_MEMBER_NAME = "reed_member_name"
     var memberName: String? = reedStoreGet(KEY_MEMBER_NAME)
@@ -331,6 +339,7 @@ object ReedSession {
     fun logout() {
         token = null
         joinedViaCode = false
+        joinedAsDevice = false
         memberName = null
         importedForToken = null
         noCodeMode = false
@@ -637,6 +646,7 @@ data class ShareCreateResult(
     val expires_at: String = "",
     val ttl_seconds: Int = 0,
     val error: String? = null,
+    val message: String? = null,   // member_limit / device_limit — готовый текст для человека
 )
 
 @Serializable

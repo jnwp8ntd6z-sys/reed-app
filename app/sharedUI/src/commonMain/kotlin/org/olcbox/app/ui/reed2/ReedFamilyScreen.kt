@@ -56,6 +56,8 @@ fun ReedFamilyScreen(
     inviteCode: String?,          // код RDI- когда запрошен
     deviceCode: String?,          // код RDX- когда запрошен
     canManage: Boolean = true,    // владелец; участник — только свои устройства
+    managedAsDevice: Boolean = false, // вошли кодом своего устройства — текст про устройство
+    membersFull: Boolean = false,     // все места в семье заняты — вместо кода пояснение
     onAlertItsMe: (Int) -> Unit = {},
     onAlertBlock: (Int) -> Unit = {},
     onMemberClick: (MemberUi) -> Unit = {},
@@ -77,7 +79,8 @@ fun ReedFamilyScreen(
                     Text("Подпиской управляет владелец", color = Reed2.ink, fontSize = 16.sp,
                         fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(6.dp))
-                    Text("Ты в семье как участник. Места, приглашения и устройства настраивает владелец подписки.",
+                    Text(if (managedAsDevice) "Это устройство подключено к аккаунту владельца. Места, приглашения и устройства настраивает он."
+                        else "Ты в семье как участник. Места, приглашения и устройства настраивает владелец подписки.",
                         color = Reed2.inkMuted, fontSize = 14.sp, lineHeight = 20.sp)
                 }
             }
@@ -141,6 +144,7 @@ fun ReedFamilyScreen(
                 title = "Пригласить участника", subtitle = "Код для близкого человека",
                 code = inviteCode, note = "Код действует 1 час. Участник войдёт в твою подписку.",
                 onExpand = onRequestInvite, onCopy = onCopy,
+                blockedText = if (membersFull) "Все места в семье заняты. Удалите участника, чтобы пригласить нового." else null,
             )
         }
 
