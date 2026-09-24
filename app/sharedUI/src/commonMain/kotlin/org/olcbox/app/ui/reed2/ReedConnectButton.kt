@@ -83,7 +83,8 @@ fun ReedConnectButton(
                 }
             }
             else -> coroutineScope {
-                launch { morphAnim.animateTo(if (state == ReedConnState.On) 0.9f else 0.12f, tween(560, easing = FastOutSlowInEasing)) }
+                // Подключено — идеально ровный круг (1.0), выключено — «печенька».
+                launch { morphAnim.animateTo(if (state == ReedConnState.On) 1f else 0.12f, tween(560, easing = FastOutSlowInEasing)) }
                 launch { pulseAnim.animateTo(1f, tween(320, easing = FastOutSlowInEasing)) }
             }
         }
@@ -191,7 +192,11 @@ private fun cookiePath(cx: Float, cy: Float, radius: Float, points: Int, morph: 
     val path = Path()
     val waves = points
     val amp = (1f - morph) * 0.085f   // глубина лепестков гаснет к кругу
-    val steps = waves * 8             // достаточно точек для гладкости
+    if (amp < 0.0005f) {              // полный круг — рисуем настоящий овал, без граней
+        path.addOval(androidx.compose.ui.geometry.Rect(Offset(cx, cy), radius))
+        return path
+    }
+    val steps = waves * 16            // достаточно точек для гладкости
     for (i in 0..steps) {
         val t = i.toFloat() / steps
         val angle = (t * 2f * PI).toFloat() - (PI / 2f).toFloat()

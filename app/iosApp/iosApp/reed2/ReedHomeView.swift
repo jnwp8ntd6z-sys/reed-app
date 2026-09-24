@@ -109,7 +109,9 @@ struct ReedHomeView: View {
                         .background(Reed.surface300, in: Capsule())
                 }
                 .padding(.top, 8)
-                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                // Появляется сверху вниз — плашка подписки ниже плавно уезжает.
+                .transition(.asymmetric(insertion: .move(edge: .top).combined(with: .opacity),
+                                        removal: .opacity))
             }
             if let s = m.selectedServer {
                 Text([s.title, s.subtitle].filter { !$0.isEmpty }.joined(separator: " · "))
@@ -149,7 +151,7 @@ struct ReedHomeView: View {
 
             serverList.padding(.top, 10)
         }
-        .animation(.smooth(duration: 0.3), value: connState)
+        .animation(.smooth(duration: 0.42), value: connState)
     }
 
     private var statusWord: String {
@@ -186,7 +188,9 @@ struct ReedHomeView: View {
                         }
                     }
                     if total > 0 { ChromeProgress(value: min(1, used / total)) }
-                    Text(footnote(sub)).font(.system(size: 12)).foregroundStyle(Reed.inkMuted)
+                    if !footnote(sub).isEmpty {
+                        Text(footnote(sub)).font(.system(size: 12)).foregroundStyle(Reed.inkMuted)
+                    }
                 }
                 .padding(16)
                 .background(Reed.surface200, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
@@ -208,15 +212,10 @@ struct ReedHomeView: View {
         }
     }
 
+    /// Под полосой — только сколько дней осталось (мобильный входит в общий объём, отдельно не пишем).
     private func footnote(_ r: RSubscriptionResponse) -> String {
-        var parts: [String] = []
-        if let d = r.subscription.days_left, d > 0 { parts.append("Осталось \(d) \(ReedFormat.plural(Int(d), "день", "дня", "дней"))") }
-        if (r.traffic?.total ?? 0) <= 0 { parts.append("трафик без лимита") }
-        let lt = r.lte?.total_gb ?? 0
-        parts.append(lt <= 0 ? "мобильный без лимита"
-                     : "мобильный \(ReedFormat.gb(r.lte?.used_gb ?? 0)) / \(ReedFormat.gb(lt)) ГБ")
-        let s = parts.joined(separator: " · ")
-        return s.prefix(1).uppercased() + s.dropFirst()
+        guard let d = r.subscription.days_left, d > 0 else { return "" }
+        return "Осталось \(d) \(ReedFormat.plural(Int(d), "день", "дня", "дней"))"
     }
 
     private func pillButton(_ title: String, icon: String, spinning: Bool, pulsing: Bool, action: @escaping () -> Void) -> some View {

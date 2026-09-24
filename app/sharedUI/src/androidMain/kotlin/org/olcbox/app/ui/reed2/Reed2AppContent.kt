@@ -1180,14 +1180,9 @@ private fun subscriptionUi(r: SubscriptionResponse): SubscriptionUi {
     val used = r.traffic.used / BYTES_IN_GB
     val total = r.traffic.total / BYTES_IN_GB
     val days = r.subscription.days_left
-    val parts = mutableListOf<String>()
-    if (days > 0) parts += "Осталось $days ${plural(days.toInt(), "день", "дня", "дней")}"
-    if (total <= 0) parts += "трафик без лимита"
-    val lteTotal = r.lte.total_gb
-    parts += if (lteTotal <= 0) "мобильный без лимита"
-        else "мобильный ${fmtGb(r.lte.used_gb)} / ${fmtGb(lteTotal)} ГБ"
-    return SubscriptionUi(true, untilLabel(r.subscription.expires_at), used, total,
-        parts.joinToString(" · ").replaceFirstChar { it.uppercase() })
+    // Под полосой — только сколько дней осталось (мобильный входит в общий объём, отдельно не пишем).
+    val footnote = if (days > 0) "Осталось $days ${plural(days.toInt(), "день", "дня", "дней")}" else ""
+    return SubscriptionUi(true, untilLabel(r.subscription.expires_at), used, total, footnote)
 }
 
 private fun fmtGb(v: Double): String {

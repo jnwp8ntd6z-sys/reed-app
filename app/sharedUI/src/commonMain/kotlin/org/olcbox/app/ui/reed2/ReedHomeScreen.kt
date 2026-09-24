@@ -1,6 +1,9 @@
 package org.olcbox.app.ui.reed2
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -119,7 +122,14 @@ fun ReedHomeScreen(
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
             ReedStatusDot(statusWord, dotColor)
         }
-        AnimatedVisibility(timer.isNotBlank(), enter = fadeIn(tween(250)), exit = fadeOut(tween(200))) {
+        // Таймер раскрывается по высоте — всё, что ниже (плашка подписки), плавно уезжает вниз.
+        AnimatedVisibility(
+            timer.isNotBlank(),
+            enter = expandVertically(tween(420, easing = FastOutSlowInEasing), expandFrom = Alignment.Top) +
+                fadeIn(tween(300, delayMillis = 120)),
+            exit = fadeOut(tween(160)) +
+                shrinkVertically(tween(380, easing = FastOutSlowInEasing), shrinkTowards = Alignment.Top),
+        ) {
             Column {
                 Spacer(Modifier.height(8.dp))
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { ReedMonoCapsule(timer) }
