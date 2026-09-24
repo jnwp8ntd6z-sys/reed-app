@@ -118,7 +118,7 @@ struct ReedFamilyView: View {
 
         section("УЧАСТНИКИ")
         VStack(spacing: 2) {
-            memberRow(initial: "Т", name: "Ты",
+            memberRow(initial: String(ownerName.replacingOccurrences(of: "@", with: "").prefix(1)).uppercased(), name: ownerName,
                       subtitle: "Владелец · \(all.count) \(ReedFormat.plural(all.count, "устройство", "устройства", "устройств"))",
                       status: nil) {}
             ForEach(m.members?.members ?? []) { mem in
@@ -154,7 +154,10 @@ struct ReedFamilyView: View {
         }
         codePlank(title: "Добавить устройство", subtitle: "Код для твоего планшета или ноутбука",
                   code: m.deviceCode, note: "Код действует 1 час. Устройство войдёт в твой аккаунт.",
-                  open: $deviceOpen) { m.requestCode(device: true) }
+                  open: $deviceOpen,
+                  blockedText: (d?.limit ?? 0) > 0 && (d?.used ?? 0) >= (d?.limit ?? 0)
+                    ? "Добавлено максимальное количество устройств. Удалите одно устройство — тогда сможете добавить новое." : nil
+        ) { m.requestCode(device: true) }
             .padding(.top, 12)
     }
 
@@ -201,12 +204,20 @@ struct ReedFamilyView: View {
         .buttonStyle(.plain)
     }
 
+    /// Владелец — имя из Telegram (профиль подписки), а не безликое «Ты».
+    private var ownerName: String {
+        if let u = m.sub?.profile?.username, !u.isEmpty { return "@" + u }
+        if let n = m.sub?.profile?.name, !n.isEmpty { return n }
+        return "Владелец"
+    }
+
     private func codePlank(title: String, subtitle: String, code: String?, note: String,
-                           open: Binding<Bool>, request: @escaping () -> Void) -> some View {
+                           open: Binding<Bool>, blockedText: String? = nil,
+                           request: @escaping () -> Void) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
                 withAnimation(.smooth(duration: 0.32)) { open.wrappedValue.toggle() }
-                if open.wrappedValue { request() }
+                if open.wrappedValue && blockedText == nil { request() }
             } label: {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -222,7 +233,15 @@ struct ReedFamilyView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            if open.wrappedValue {
+            if open.wrappedValue, let blockedText {
+                Text(blockedText)
+                    .font(.system(size: 14)).foregroundStyle(Reed.ink)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(14)
+                    .background(Reed.statusWarn.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .padding([.horizontal, .bottom], 16)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            } else if open.wrappedValue {
                 VStack(alignment: .leading, spacing: 8) {
                     Button {
                         if let code { UIPasteboard.general.string = code; m.show("Код скопирован") }

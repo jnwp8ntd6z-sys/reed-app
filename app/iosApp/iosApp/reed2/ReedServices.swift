@@ -193,16 +193,32 @@ enum ReedPing {
         }
     }
 
-    /// «Прямое» соединение: HEAD к госуслугам мимо нашей логики (время ответа, мс).
-    static func directHttps(_ url: String = "https://www.gosuslugi.ru/") async -> Int? {
-        guard let u = URL(string: url) else { return nil }
-        var req = URLRequest(url: u, timeoutInterval: 5)
-        req.httpMethod = "HEAD"
-        let t0 = DispatchTime.now()
-        do {
-            _ = try await URLSession.shared.data(for: req)
-            return Int((DispatchTime.now().uptimeNanoseconds - t0.uptimeNanoseconds) / 1_000_000)
-        } catch { return nil }
+    /// «Прямое» — сайт напрямую, МИМО туннеля: TCP+TLS до госуслуг через реальный Wi-Fi/мобильный
+    /// интерфейс (VPN-интерфейс utun запрещён параметрами соединения). Время — мс до готовности.
+    static func directHttps(host: String = "www.gosuslugi.ru") async -> Int? {
+        let params = NWParameters(tls: NWProtocolTLS.Options(), tcp: NWProtocolTCP.Options())
+        params.prohibitedInterfaceTypes = [.other]      // utun (туннель) — тип .other
+        let conn = NWConnection(host: NWEndpoint.Host(host), port: 443, using: params)
+        let gate = OnceGate()
+        let start = DispatchTime.now()
+        return await withCheckedContinuation { (cont: CheckedContinuation<Int?, Never>) in
+            conn.stateUpdateHandler = { state in
+                switch state {
+                case .ready:
+                    if gate.fire() {
+                        let ms = Int((DispatchTime.now().uptimeNanoseconds - start.uptimeNanoseconds) / 1_000_000)
+                        conn.cancel(); cont.resume(returning: ms)
+                    }
+                case .failed, .cancelled:
+                    if gate.fire() { conn.cancel(); cont.resume(returning: nil) }
+                default: break
+                }
+            }
+            conn.start(queue: .global(qos: .utility))
+            DispatchQueue.global().asyncAfter(deadline: .now() + 6) {
+                if gate.fire() { conn.cancel(); cont.resume(returning: nil) }
+            }
+        }
     }
 }
 

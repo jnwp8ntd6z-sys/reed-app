@@ -7,7 +7,7 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
+
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
@@ -17,6 +17,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.runtime.Composable
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.animation.core.Animatable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,38 +54,36 @@ fun ReedConnectButton(
     size: Int = 180,
     onClick: () -> Unit = {},
 ) {
-    val infinite = rememberInfiniteTransition(label = "connect")
-
-    // Морф-фактор: 0 = печенька, 1 = круг. В покое держим форму, при подключении дышим.
-    val morph by if (state == ReedConnState.Connecting) {
-        infinite.animateFloat(
-            initialValue = 0f, targetValue = 1f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(1100, easing = FastOutSlowInEasing),
-                repeatMode = RepeatMode.Reverse,
-            ),
-            label = "morph",
-        )
-    } else {
-        // Off — лёгкая «печенька» (0.12), On — почти круг (0.9). Плавно между состояниями.
-        animateFloatAsState(
-            targetValue = if (state == ReedConnState.On) 0.9f else 0.12f,
-            animationSpec = tween(520, easing = FastOutSlowInEasing),
-            label = "morphRest",
-        )
+    // Один непрерывный аниматор формы и один — масштаба: при любой смене состояния анимация
+    // продолжается с текущего значения (раньше переключение между бесконечной и одиночной
+    // анимацией давало скачок «печенька → круг» за кадр).
+    // morph: 0 = печенька, 1 = круг. Подключение — плавное «дыхание» туда-обратно.
+    val morphAnim = remember { Animatable(0.12f) }
+    val pulseAnim = remember { Animatable(1f) }
+    LaunchedEffect(state) {
+        when (state) {
+            ReedConnState.Connecting -> coroutineScope {
+                launch {
+                    while (true) {
+                        morphAnim.animateTo(1f, tween(900, easing = FastOutSlowInEasing))
+                        morphAnim.animateTo(0.15f, tween(900, easing = FastOutSlowInEasing))
+                    }
+                }
+                launch {
+                    while (true) {
+                        pulseAnim.animateTo(1.035f, tween(900, easing = FastOutSlowInEasing))
+                        pulseAnim.animateTo(1f, tween(900, easing = FastOutSlowInEasing))
+                    }
+                }
+            }
+            else -> coroutineScope {
+                launch { morphAnim.animateTo(if (state == ReedConnState.On) 0.9f else 0.12f, tween(560, easing = FastOutSlowInEasing)) }
+                launch { pulseAnim.animateTo(1f, tween(320, easing = FastOutSlowInEasing)) }
+            }
+        }
     }
-
-    // Дыхание масштаба при подключении — мягкая синусоида, амплитуда крошечная (1.0..1.035).
-    val pulse by if (state == ReedConnState.Connecting) {
-        infinite.animateFloat(
-            initialValue = 1f, targetValue = 1.035f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(1100, easing = FastOutSlowInEasing),
-                repeatMode = RepeatMode.Reverse,
-            ),
-            label = "pulse",
-        )
-    } else animateFloatAsState(1f, tween(300), label = "pulseRest")
+    val morph = morphAnim.value
+    val pulse = pulseAnim.value
 
     val fill by animateColorAsState(
         targetValue = when (state) {

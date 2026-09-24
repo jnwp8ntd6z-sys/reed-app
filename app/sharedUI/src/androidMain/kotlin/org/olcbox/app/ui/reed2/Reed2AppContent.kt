@@ -257,6 +257,7 @@ fun Reed2AppContent(
                         "not_found" -> "Код не найден"
                         "expired" -> "Код истёк"
                         "used" -> "Приглашение уже использовано"
+                        "device_limit" -> "На подписке уже максимум устройств. Пусть владелец удалит одно — и введи код снова."
                         else -> "Не удалось войти по коду"
                     }
                 }
@@ -422,11 +423,11 @@ fun Reed2AppContent(
             val rows = coroutineScope {
                 val w = async { wifiLoc?.config?.let { homeViewModel.performPingFor(it) } }
                 val c = async { cellLoc?.config?.let { homeViewModel.performPingFor(it) } }
-                val d = async { httpHeadMs("https://www.gosuslugi.ru/") }
+                val d = async { directHttpsMs(context, "https://www.gosuslugi.ru/") }
                 listOf(
                     netRow("Wi-Fi", wifiLoc != null, w.await()?.toInt()),
                     netRow("Мобильный", cellLoc != null, c.await()?.toInt()),
-                    netRow("Прямое", true, d.await()),
+                    directRow(d.await()),
                 )
             }
             netRows = rows
@@ -558,6 +559,41 @@ fun Reed2AppContent(
         ServerUi(loc.storageId, geo.iso, geo.name, geo.city, pingOf(pingsState, loc.storageId), serverNetwork(loc))
     }
     val selected = servers.firstOrNull { it.key == selectedId }
+
+    /** Первый сервер списка (как в Happ: сразу выбран верхний — Нидерланды — и можно подключаться). */
+    fun bestIn(net: String): ServerUi? = servers.firstOrNull { it.network == net }
+
+    /**
+     * Кнопка подключения. Раньше, если движок не знал активного сервера, нажатие молча
+     * игнорировалось — теперь сами выбираем сервер текущего списка и подключаемся.
+     */
+    fun connectOrSelect() {
+        if (state.isVpnConnected || state.isVpnLoading) { onToggleClick(); return }
+        val target = selected?.takeIf { it.network == network } ?: bestIn(network) ?: selected ?: servers.firstOrNull()
+        if (target == null) { toast("Серверы ещё загружаются"); return }
+        if (target.key == selectedId && state.canStartVpn) { onToggleClick(); return }
+        locationViewModel.selectLocation(target.key) {
+            homeViewModel.loadCurrentConfig { onToggleClick() }
+        }
+    }
+
+    /** Смена списка Wi-Fi / Мобильный: без подключения выбор переезжает на сервер нового списка. */
+    fun switchNetwork(net: String) {
+        network = net
+        ReedSession.serverNetwork = net
+        if (state.isVpnConnected || state.isVpnLoading) return
+        if (selected?.network == net) return
+        bestIn(net)?.let { t -> locationViewModel.selectLocation(t.key) { homeViewModel.loadCurrentConfig() } }
+    }
+
+    // Нет выбранного сервера (первый запуск, сервер пропал из подписки) — выбираем сами.
+    LaunchedEffect(servers.map { it.key }, network) {
+        if (servers.isNotEmpty() && selected == null && !state.isVpnConnected && !state.isVpnLoading) {
+            (bestIn(network) ?: servers.first()).let { t ->
+                locationViewModel.selectLocation(t.key) { homeViewModel.loadCurrentConfig() }
+            }
+        }
+    }
     // Название сервера для уведомления туннеля: «Reed Client · Подключено · Германия».
     LaunchedEffect(selected?.countryName) {
         context.getSharedPreferences("reed2", Context.MODE_PRIVATE).edit()
@@ -657,7 +693,8 @@ fun Reed2AppContent(
                                         onBell = { showNotifications = true },
                                     )
                                 } else {
-                                    val selIsCell = selected?.network == "cell"
+                                    // Долго (~20 с) поднимается только надёжный обход (olcRTC).
+                                    val selIsCell = selected?.city == ReedServerNaming.SUB_STABLE
                                     ReedHomeScreen(
                                         connState = connState,
                                         statusWord = when (connState) {
@@ -698,19 +735,16 @@ fun Reed2AppContent(
                                         selectedKey = selectedId,
                                         network = network,
                                         hasUnread = unread,
-                                        onToggleConnect = {
-                                            if (state.isVpnConnected || state.isVpnLoading || state.canStartVpn) onToggleClick()
-                                            else if (servers.isEmpty()) toast("Серверы ещё загружаются")
-                                        },
+                                        onToggleConnect = { connectOrSelect() },
                                         onSelectServer = { selectServer(it) },
-                                        onSelectNetwork = { network = it; ReedSession.serverNetwork = it },
+                                        onSelectNetwork = { switchNetwork(it) },
                                         onBell = { showNotifications = true },
                                         onPing = { ping() },
                                         onRefresh = { refreshAll() },
                                         errorText = if (state.connectionErrorMessage != null && connState == ReedConnState.Off)
                                             "Не удалось подключиться. Попробуй ещё раз или выбери другой сервер." else null,
                                         hintText = if (connState == ReedConnState.Connecting && selIsCell)
-                                            "Мобильные серверы поднимаются чуть дольше — около 20 секунд" else null,
+                                            "Надёжный обход поднимается чуть дольше — около 20 секунд" else null,
                                         refreshing = refreshing,
                                         pinging = pingsState is PingsState.Loading,
                                         emptyServersText = if (token != null) "Загружаем твои серверы…" else "Серверов пока нет",
@@ -733,7 +767,11 @@ fun Reed2AppContent(
                                                     relativeTime(n.created_at, nowTick)).filter { it.isNotBlank() }.joinToString(" · "))
                                         },
                                         members = buildList {
-                                            add(MemberUi(0, "Ты", "Владелец · ${ownerDevices.size} ${plural(ownerDevices.size, "устройство", "устройства", "устройств")}",
+                                            // Владелец — имя из Telegram (профиль подписки), а не безликое «Ты».
+                                            val prof = sub?.profile
+                                            val ownerName = prof?.username?.takeIf { it.isNotBlank() }?.let { "@$it" }
+                                                ?: prof?.name?.takeIf { it.isNotBlank() } ?: "Владелец"
+                                            add(MemberUi(0, ownerName, "Владелец · ${ownerDevices.size} ${plural(ownerDevices.size, "устройство", "устройства", "устройств")}",
                                                 isOwnerRow = true))
                                             members?.members?.forEach { m ->
                                                 add(MemberUi(m.id, m.name.ifBlank { "Участник" },
@@ -1096,51 +1134,16 @@ private fun AppIcon(pkg: String) {
 
 private data class Geo(val iso: String, val name: String, val city: String)
 
-private val CITY_BY_ISO = mapOf(
-    "DE" to "Франкфурт", "NL" to "Амстердам", "FI" to "Хельсинки", "TR" to "Стамбул",
-    "SE" to "Стокгольм", "PL" to "Варшава", "US" to "Нью-Йорк", "RU" to "Москва",
-    "CH" to "Цюрих", "FR" to "Париж", "GB" to "Лондон", "KZ" to "Алматы",
-)
 
-/** «🇩🇪 SMART-Германия» → DE / «Германия» / «Франкфурт». Флаг-эмодзи → ISO-2. */
+/** Служебное имя сервера → флаг, страна, подпись (см. ReedServerNaming). */
 private fun serverGeo(loc: LocationItem): Geo {
-    val full = loc.fullName
-    // Кодпоинты вручную (String.codePoints() только с API 24, а minSdk 23).
-    val cps = ArrayList<Int>()
-    var idx = 0
-    while (idx < full.length) {
-        val cp = Character.codePointAt(full, idx)
-        cps += cp
-        idx += Character.charCount(cp)
-    }
-    var iso = ""
-    for (i in 0 until cps.size - 1) {
-        val a = cps[i]; val b = cps[i + 1]
-        if (a in 0x1F1E6..0x1F1FF && b in 0x1F1E6..0x1F1FF) {
-            iso = "${('A' + (a - 0x1F1E6))}${('A' + (b - 0x1F1E6))}"; break
-        }
-    }
-    val name = full
-        .filter { !Character.isSurrogate(it) }
-        .replace(Regex("^[\\s\\p{So}\\uFE0F]+"), "")
-        .replace(Regex("^(SMART|BRIDGE|LTE)[-\\s]+", RegexOption.IGNORE_CASE), "")
-        .trim()
-        .ifBlank { full.trim() }
-    val isOlc = loc.config?.isVless() == false
-    val city = when {
-        isOlc -> "olcRTC"
-        full.contains("BRIDGE", ignoreCase = true) -> "Через Москву"
-        else -> CITY_BY_ISO[iso] ?: ""
-    }
-    return Geo(if (isOlc) "RTC" else (if (iso == "EU") "EU" else iso), name, city)
+    val d = ReedServerNaming.describe(loc.fullName, isOlcRtc = loc.config?.isVless() == false)
+    return Geo(d.iso, d.title, d.subtitle)
 }
 
-/** Список Wi-Fi (обычные) / Мобильный (olcRTC и LTE-обходы для мобильных белых списков). */
-private fun serverNetwork(loc: LocationItem): String {
-    if (loc.config?.isVless() == false) return "cell"
-    val n = loc.fullName
-    return if (n.contains("ЛТЕ", true) || n.contains("LTE", true)) "cell" else "wifi"
-}
+/** Список Wi-Fi (обычные) / Мобильный (обходы белых списков: быстрый и надёжный olcRTC). */
+private fun serverNetwork(loc: LocationItem): String =
+    ReedServerNaming.describe(loc.fullName, isOlcRtc = loc.config?.isVless() == false).network
 
 private fun pingOf(state: PingsState, id: String): Int? = when (state) {
     is PingsState.Success -> state.pings[id]
@@ -1258,17 +1261,36 @@ private fun netRow(label: String, hasServer: Boolean, ms: Int?): NetCheckRowUi =
     else -> NetCheckRowUi(label, ms, "Работает", "ok")
 }
 
-private suspend fun httpHeadMs(url: String): Int? = withContext(Dispatchers.IO) {
+/**
+ * «Прямое» — сайт напрямую, МИМО туннеля: запрос идёт через реальную сеть телефона (Wi-Fi/мобильную),
+ * а не через VPN-интерфейс. Время — полный HTTPS-запрос (DNS+TLS), поэтому порог мягче, чем у пинга.
+ */
+private suspend fun directHttpsMs(context: Context, url: String): Int? = withContext(Dispatchers.IO) {
     try {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        @Suppress("DEPRECATION")
+        val net = cm.allNetworks.firstOrNull { n ->
+            cm.getNetworkCapabilities(n)?.let {
+                it.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) && !it.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+            } == true
+        }
+        val u = URL(url)
         val t0 = System.nanoTime()
-        val c = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "HEAD"; connectTimeout = 5000; readTimeout = 5000; instanceFollowRedirects = false
+        val c = ((net?.openConnection(u) ?: u.openConnection()) as HttpURLConnection).apply {
+            requestMethod = "HEAD"; connectTimeout = 6000; readTimeout = 6000; instanceFollowRedirects = false
         }
         c.responseCode
         c.disconnect()
         ((System.nanoTime() - t0) / 1_000_000).toInt()
     } catch (e: Throwable) { null }
 }
+
+private fun directRow(ms: Int?): NetCheckRowUi = when {
+    ms == null || ms < 0 -> NetCheckRowUi("Прямое", null, "Не отвечает", "danger")
+    ms >= 2500 -> NetCheckRowUi("Прямое", ms, "Ограничено", "warn")
+    else -> NetCheckRowUi("Прямое", ms, "Работает", "ok")
+}
+
 
 /** Reed-ссылка подписки …/sub/<token> → /app/locations?token= (иначе null — импорт как есть). */
 private fun reedLocationsUrl(raw: String): String? {

@@ -112,8 +112,10 @@ enum PreviewSeed {
                 RSubscriptionItem(sub_token: "preview2", plan_label: "Личная", days_left: 23, current: false),
             ]
             m.servers = servers
-            m.pings = ["NL": 42, "DE": 58, "FI": 71, "RU-BRIDGE": 23, "PL": 104, "LTE-DE": 88]
-            m.selectedId = scene == "home_cell" ? "LTE-DE" : "NL"
+            m.pings = ["🇳🇱 SMART-Нидерланды": 42, "🇳🇱 SMART-Нидерланды 2": 38, "🇩🇪 SMART-Германия": 58,
+                       "🇩🇪 BRIDGE-Германия": 23, "🇸🇪 SMART-Швеция": 71, "🇵🇱 SMART-Польша": 104, "🇺🇸 SMART-США": 132,
+                       "🇪🇺 ЛТЕ (β)": 88, "🇪🇺 ЛТЕ тест (GCP)": 64]
+            m.selectedId = scene == "home_cell" ? "🇪🇺 ЛТЕ (β)" : "🇳🇱 SMART-Нидерланды"
             m.devices = RDevices(
                 devices: [
                     RDevice(id: 1, name: "iPhone 16 Pro", os: "iOS 26", type: "phone", last_seen: "2026-09-24 09:12:00", blocked: false),
@@ -182,16 +184,23 @@ enum PreviewSeed {
         return try! JSONDecoder().decode(RSubscriptionResponse.self, from: Data(json.utf8))
     }()
 
-    static let servers: [ReedServer] = [
-        ReedServer(id: "NL", title: "Нидерланды", subtitle: "Амстердам", country: "NL", network: "wifi", host: nil, port: nil, olc: nil),
-        ReedServer(id: "DE", title: "Германия", subtitle: "Франкфурт", country: "DE", network: "wifi", host: nil, port: nil, olc: nil),
-        ReedServer(id: "FI", title: "Финляндия", subtitle: "Хельсинки", country: "FI", network: "wifi", host: nil, port: nil, olc: nil),
-        ReedServer(id: "PL", title: "Польша", subtitle: "Варшава", country: "PL", network: "wifi", host: nil, port: nil, olc: nil),
-        ReedServer(id: "RU-BRIDGE", title: "Германия", subtitle: "Через Москву", country: "DE", network: "wifi", host: nil, port: nil, olc: nil),
-        ReedServer(id: "LTE-DE", title: "Германия", subtitle: "Франкфурт", country: "DE", network: "cell", host: nil, port: nil, olc: nil),
-        ReedServer(id: "olc:Обход", title: "Обход", subtitle: "olcRTC", country: "RTC", network: "cell", host: nil, port: nil,
-                   olc: OlcRtcConfig(name: "Обход", provider: "preview", transport: "vp8", room: "r", key: "k", vp8Fps: 60, vp8Batch: 64)),
-    ]
+    /// Те же служебные имена, что отдаёт сервер, — через тот же «переводчик», что и в приложении.
+    static let servers: [ReedServer] = {
+        let vless = ["🇳🇱 SMART-Нидерланды", "🇳🇱 SMART-Нидерланды 2", "🇩🇪 SMART-Германия", "🇩🇪 BRIDGE-Германия",
+                     "🇸🇪 SMART-Швеция", "🇵🇱 SMART-Польша", "🇺🇸 SMART-США", "🇪🇺 ЛТЕ (β)", "🇪🇺 ЛТЕ тест (GCP)"]
+        var list: [ReedServer] = vless.map { raw in
+            let d = ReedAppModel.describeServer(raw, olc: false)
+            return ReedServer(id: raw, title: d.title, subtitle: d.subtitle, country: d.iso, network: d.network,
+                              host: nil, port: nil, olc: nil)
+        }
+        for raw in ["🇩🇪 LTE-Германия", "🇳🇱 LTE-Нидерланды"] {
+            let d = ReedAppModel.describeServer(raw, olc: true)
+            list.append(ReedServer(id: "olc:" + raw, title: d.title, subtitle: d.subtitle, country: d.iso, network: "cell",
+                                   host: nil, port: nil,
+                                   olc: OlcRtcConfig(name: raw, provider: "jitsi", transport: "datachannel", room: "r", key: "k", vp8Fps: 60, vp8Batch: 64)))
+        }
+        return list
+    }()
 
     static func notifications(_ withDevice: Bool) -> [RNotification] {
         var list = [
@@ -244,17 +253,17 @@ enum PreviewScript {
                 m.sub = PreviewSeed.sub
                 m.subLoaded = true
                 m.servers = PreviewSeed.servers
-                m.selectedId = "NL"
+                m.selectedId = "🇳🇱 SMART-Нидерланды"
                 m.stage = .app
             }
             await wait(2.5)
         case "anim_server":
             await wait(1.2)
-            m.select(PreviewSeed.servers[1])
+            m.select(PreviewSeed.servers[2])
             await wait(4.0)
             m.setNetwork("cell")
             await wait(1.2)
-            m.select(PreviewSeed.servers[6])
+            m.select(PreviewSeed.servers[7])
             await wait(6.0)
         case "anim_support":
             await wait(0.8)

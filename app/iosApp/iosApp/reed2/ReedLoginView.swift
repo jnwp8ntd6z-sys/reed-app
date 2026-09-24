@@ -137,10 +137,10 @@ struct ReedLoginView: View {
                 Reed.surface100
                 CookieStar()
                     .fill(Reed.chromeGradient)
-                    .frame(width: 250, height: 250)
+                    .frame(width: 214, height: 214)
                     .rotationEffect(.degrees(appeared ? 10 : 0))
                     .animation(.easeInOut(duration: 12).repeatForever(autoreverses: true), value: appeared)
-                    .offset(x: 44, y: 18)
+                    .offset(x: 58, y: -6)
             }
             .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: 48, bottomTrailingRadius: 48, style: .continuous))
             .ignoresSafeArea(edges: .top)

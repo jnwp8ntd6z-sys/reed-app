@@ -74,17 +74,15 @@ fun ReedNavBar(
             label = "bubbleX",
         )
 
-        // Плашка внизу.
+        // Плашка внизу — только подписи (иконки нарисованы отдельным слоем поверх шарика).
         Box(Modifier.fillMaxWidth().height(80.dp).align(Alignment.BottomCenter).background(Reed2.surface100)) {
             Box(Modifier.fillMaxWidth().height(1.dp).align(Alignment.TopCenter).background(Reed2.hairline))
             Row(Modifier.fillMaxSize()) {
-                tabs.forEach { tab ->
-                    NavItem(tab, tab == selected, Modifier.weight(1f).fillMaxSize()) { onSelect(tab) }
-                }
+                tabs.forEach { tab -> NavLabel(tab, tab == selected, Modifier.weight(1f).fillMaxSize()) }
             }
         }
 
-        // Шарик — круг 56dp с «обводкой» 6dp цвета фона. Центр по Y = 38dp от верха контейнера.
+        // Шарик — круг 56dp с «обводкой» 6dp цвета фона, едет пустым. Центр по Y = 38dp от верха.
         Box(
             modifier = Modifier
                 .offset(x = bubbleX, y = 38.dp - 34.dp)
@@ -94,32 +92,35 @@ fun ReedNavBar(
                 .padding(6.dp)
                 .clip(CircleShape)
                 .background(Reed2.chrome050),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(selected.icon, null, tint = Reed2.onInk, modifier = Modifier.size(24.dp))
+        )
+
+        // Иконки — поверх шарика, каждая на своём месте. У выбранной подъём −8dp (центр иконки
+        // 46dp → центр круга 38dp) и цвет on-ink к моменту, когда шарик под неё подъезжает.
+        Row(Modifier.fillMaxSize()) {
+            tabs.forEach { tab ->
+                val active = tab == selected
+                val lift by animateDpAsState(
+                    targetValue = if (active) (38 - 46).dp else 0.dp,
+                    animationSpec = tween(380, easing = BubbleEasing), label = "lift",
+                )
+                val tint by animateColorAsState(
+                    if (active) Reed2.onInk else Reed2.inkMuted,
+                    tween(if (active) 300 else 140, delayMillis = if (active) 90 else 0), label = "tint",
+                )
+                val interaction = remember { MutableInteractionSource() }
+                Box(Modifier.weight(1f).fillMaxSize().clickable(interaction, null) { onSelect(tab) }) {
+                    Icon(tab.icon, tab.label, tint = tint,
+                        modifier = Modifier.align(Alignment.TopCenter).offset(y = 34.dp + lift).size(24.dp))
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun NavItem(tab: ReedTab, active: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    val lift by animateDpAsState(
-        targetValue = if (active) (-8).dp else 0.dp,
-        animationSpec = tween(380, easing = BubbleEasing), label = "lift",
-    )
-    val tint by animateColorAsState(if (active) Reed2.onInk else Reed2.inkMuted, tween(220), label = "tint")
-    val labelColor by animateColorAsState(if (active) Reed2.ink else Reed2.inkMuted, tween(220), label = "labelColor")
-    val interaction = remember { MutableInteractionSource() }
-    Column(
-        modifier = modifier.clickable(interaction, null, onClick = onClick),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            // Активную иконку скрываем (её показывает шарик сверху), место держим — подпись не прыгает.
-            if (!active) {
-                Icon(tab.icon, tab.label, tint = tint, modifier = Modifier.size(24.dp).offset(y = lift))
-            }
-        }
+private fun NavLabel(tab: ReedTab, active: Boolean, modifier: Modifier) {
+    val labelColor by animateColorAsState(if (active) Reed2.ink else Reed2.inkMuted, tween(260), label = "labelColor")
+    Box(modifier, contentAlignment = Alignment.BottomCenter) {
         Text(
             tab.label, color = labelColor, fontSize = 11.sp,
             fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,

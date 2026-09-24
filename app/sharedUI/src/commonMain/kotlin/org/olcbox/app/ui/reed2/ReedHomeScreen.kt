@@ -222,6 +222,7 @@ fun ReedHomeScreen(
                         country = s.country, countryName = s.countryName, city = s.city,
                         pingMs = s.pingMs, selected = s.key == selectedKey,
                         onClick = { onSelectServer(s) },
+                        connState = if (s.key == selectedKey) connState else ReedConnState.Off,
                     )
                 }
             }

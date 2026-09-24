@@ -29,6 +29,10 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.runtime.getValue
@@ -72,26 +76,28 @@ fun ReedLoginScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(Reed2.ground000)
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .padding(horizontal = 24.dp),
+            .background(Reed2.ground000),
     ) {
-        // ── Логотип ──
-        Spacer(Modifier.height(20.dp))
-        ReedLogoRow()
-
-        // ── Декор: тёмная подложка со скруглением снизу + серебряная звезда ──
-        Box(Modifier.fillMaxWidth().height(240.dp)) {
-            Box(
-                Modifier.fillMaxWidth().height(220.dp)
-                    .clip(RoundedCornerShape(bottomStart = 48.dp, bottomEnd = 48.dp))
-                    .background(Reed2.surface100),
-            )
+        // ── Декор по макету: тёмная подложка на всю ширину от верхнего края (под статус-баром),
+        // скругление 48 только снизу; логотип и заголовок внутри; звезда справа уходит за край. ──
+        Box(
+            Modifier.fillMaxWidth()
+                .clip(RoundedCornerShape(bottomStart = 48.dp, bottomEnd = 48.dp))
+                .background(Reed2.surface100)
+                .windowInsetsPadding(WindowInsets.statusBars)
+                .height(248.dp),
+        ) {
+            val spin = androidx.compose.animation.core.rememberInfiniteTransition(label = "star")
+            val angle by spin.animateFloat(0f, 10f,
+                androidx.compose.animation.core.infiniteRepeatable(
+                    androidx.compose.animation.core.tween(12000, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                    androidx.compose.animation.core.RepeatMode.Reverse), label = "angle")
             Canvas(
-                Modifier.size(190.dp).align(Alignment.TopEnd)
-                    .offset(x = 34.dp, y = (-26).dp),
+                Modifier.size(228.dp).align(Alignment.TopEnd)
+                    .offset(x = 58.dp, y = (-66).dp)
+                    .graphicsLayer { rotationZ = angle },
             ) {
-                val path = starCookiePath(size.width / 2f, size.height / 2f, size.minDimension * 0.42f, 12)
+                val path = starCookiePath(size.width / 2f, size.height / 2f, size.minDimension * 0.46f, 12)
                 drawPath(
                     path,
                     brush = Brush.linearGradient(
@@ -103,21 +109,28 @@ fun ReedLoginScreen(
                     style = Fill,
                 )
             }
-            // Заголовок в две строки поверх декора, снизу-слева.
-            // Unbounded широкий: «БЕЗ ОБРЫВОВ» ≈ 9,3 dp на 1 sp — на узких экранах уменьшаем кегль.
-            androidx.compose.foundation.layout.BoxWithConstraints(Modifier.align(Alignment.BottomStart).fillMaxWidth()) {
-                val headSize = minOf(34f, (maxWidth.value - 4f) / 9.4f).sp
-                Column(Modifier.padding(bottom = 8.dp)) {
+            Box(Modifier.padding(start = 24.dp, top = 16.dp)) { ReedLogoRow() }
+            // Unbounded широкий: «БЕЗ ОБРЫВОВ» ≈ 9,4 dp на 1 sp — на узких экранах уменьшаем кегль.
+            androidx.compose.foundation.layout.BoxWithConstraints(
+                Modifier.align(Alignment.BottomStart).fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 26.dp)
+            ) {
+                val headSize = minOf(36f, (maxWidth.value - 4f) / 9.4f).sp
+                Column {
                     Text("ИНТЕРНЕТ", color = Reed2.ink, fontSize = headSize, fontFamily = LocalReedFonts.current.headline, fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp, maxLines = 1, softWrap = false)
+                        letterSpacing = 0.5.sp, maxLines = 1, softWrap = false, lineHeight = headSize * 1.08f)
                     Text("БЕЗ ОБРЫВОВ", fontSize = headSize, fontFamily = LocalReedFonts.current.headline, fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp, maxLines = 1, softWrap = false,
+                        letterSpacing = 0.5.sp, maxLines = 1, softWrap = false, lineHeight = headSize * 1.08f,
                         style = chromeTextStyle(androidx.compose.material3.MaterialTheme.typography.headlineLarge)
                             .copy(fontSize = headSize, fontFamily = LocalReedFonts.current.headline, fontWeight = FontWeight.Bold))
                 }
             }
         }
 
+        Column(
+            Modifier.weight(1f).fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(horizontal = 24.dp),
+        ) {
         Spacer(Modifier.height(20.dp))
         Text(
             "Вставь код, ключ подписки или приглашение — или отсканируй QR.",
@@ -191,8 +204,9 @@ fun ReedLoginScreen(
         ConsentRow(
             consent = consent, onConsentChange = onConsentChange,
             onOpenTerms = onOpenTerms, onOpenPrivacy = onOpenPrivacy,
-            modifier = Modifier.padding(bottom = 20.dp),
+            modifier = Modifier.padding(bottom = 16.dp),
         )
+        }
     }
 }
 

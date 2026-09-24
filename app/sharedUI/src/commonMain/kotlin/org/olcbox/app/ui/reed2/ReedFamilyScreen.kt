@@ -153,6 +153,8 @@ fun ReedFamilyScreen(
             title = "Добавить устройство", subtitle = "Код для твоего планшета или ноутбука",
             code = deviceCode, note = "Код действует 1 час. Устройство войдёт в твой аккаунт.",
             onExpand = onRequestDevice, onCopy = onCopy,
+            blockedText = if (placesTotal > 0 && placesUsed >= placesTotal)
+                "Добавлено максимальное количество устройств. Удалите одно устройство — тогда сможете добавить новое." else null,
         )
         Spacer(Modifier.height(24.dp))
     }
@@ -203,11 +205,12 @@ private fun DeviceRow(d: DeviceUi, onClick: () -> Unit) {
 private fun CodePlank(
     title: String, subtitle: String, code: String?, note: String,
     onExpand: () -> Unit, onCopy: (String) -> Unit,
+    blockedText: String? = null,   // лимит исчерпан — вместо кода пояснение, код не создаём
 ) {
     var expanded by remember { mutableStateOf(false) }
     val rot by animateFloatAsState(if (expanded) 90f else 0f, tween(320), label = "arrow")
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(Reed2.cardRadius)).background(Reed2.surface300)) {
-        Row(Modifier.fillMaxWidth().clickable { expanded = !expanded; if (!expanded) Unit else onExpand() }
+        Row(Modifier.fillMaxWidth().clickable { expanded = !expanded; if (expanded && blockedText == null) onExpand() }
             .padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(title, color = Reed2.ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
@@ -219,7 +222,13 @@ private fun CodePlank(
                     modifier = Modifier.size(20.dp).rotate(rot))
             }
         }
-        AnimatedVisibility(expanded) {
+        AnimatedVisibility(expanded && blockedText != null) {
+            Row(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp).fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp)).background(Reed2.statusWarn.copy(alpha = 0.12f)).padding(14.dp)) {
+                Text(blockedText ?: "", color = Reed2.ink, fontSize = 14.sp, lineHeight = 20.sp)
+            }
+        }
+        AnimatedVisibility(expanded && blockedText == null) {
             Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
                 Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Reed2.ground000)
                     .clickable { code?.let(onCopy) }.padding(14.dp)) {

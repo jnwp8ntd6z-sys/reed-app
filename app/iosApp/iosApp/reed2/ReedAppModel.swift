@@ -487,20 +487,18 @@ final class ReedAppModel: ObservableObject {
         var list: [ReedServer] = []
         for l in locs where l.transport == "vless" {
             let name = l.tag ?? l.name
-            let isBridge = name.localizedCaseInsensitiveContains("BRIDGE")
-            let isLte = name.localizedCaseInsensitiveContains("ЛТЕ") || name.localizedCaseInsensitiveContains("LTE")
-            list.append(ReedServer(
-                id: name, title: Self.displayName(name),
-                subtitle: isBridge ? "Через Москву" : (l.city ?? ""),
-                country: (l.country?.isEmpty == false ? l.country! : Self.flagISO(name) ?? ""),
-                network: isLte ? "cell" : (l.network ?? "wifi"),
-                host: l.host, port: l.port, olc: nil))
+            let d = Self.describeServer(name, olc: false)
+            list.append(ReedServer(id: name, title: d.title, subtitle: d.subtitle, country: d.iso,
+                                   network: d.network, host: l.host, port: l.port, olc: nil))
         }
         for c in OlcRtcConfig.parseAll(olcText) {
-            list.append(ReedServer(id: "olc:" + c.name, title: Self.displayName(c.name), subtitle: "olcRTC",
-                                   country: "RTC", network: "cell", host: nil, port: nil, olc: c))
+            let d = Self.describeServer(c.name, olc: true)
+            list.append(ReedServer(id: "olc:" + c.name, title: d.title, subtitle: d.subtitle, country: d.iso,
+                                   network: "cell", host: nil, port: nil, olc: c))
         }
         servers = list
+        // Как в Happ: при входе сразу выбран первый сервер текущего списка (обычно «Нидерланды»).
+        // Если выбранный пропал из подписки — выбираем первый заново, подключение при этом не трогаем.
         if selectedId == nil || !list.contains(where: { $0.id == selectedId }) {
             selectedId = list.first(where: { $0.network == network })?.id ?? list.first?.id
             ReedSessionStore.selectedServer = selectedId
@@ -550,6 +548,11 @@ final class ReedAppModel: ObservableObject {
     }
 
     func connect() async {
+        // Выбран сервер из другого списка, а подключения нет — берём первый из видимого.
+        if selectedServer?.network != network, let first = servers.first(where: { $0.network == network }) {
+            selectedId = first.id
+            ReedSessionStore.selectedServer = first.id
+        }
         guard let s = selectedServer else { show("Серверы ещё загружаются"); return }
         let target: ReedTunnelTarget
         if let c = s.olc {
@@ -595,9 +598,15 @@ final class ReedAppModel: ObservableObject {
         }
     }
 
+    /// Wi-Fi / Мобильный — просто другой список. Без подключения выбор переезжает на первый сервер
+    /// нового списка (кнопка подключит то, что видно); при подключении ничего не трогаем.
     func setNetwork(_ n: String) {
         network = n
         ReedSessionStore.serverNetwork = n
+        guard tunnelStatus == .disconnected, selectedServer?.network != n,
+              let first = servers.first(where: { $0.network == n }) else { return }
+        selectedId = first.id
+        ReedSessionStore.selectedServer = first.id
     }
 
     // MARK: семья
@@ -705,7 +714,7 @@ final class ReedAppModel: ObservableObject {
             netRows = [
                 Self.netRow("Wi-Fi", wifi != nil, wm),
                 Self.netRow("Мобильный", cell != nil, cm),
-                Self.netRow("Прямое", true, dm),
+                Self.directRow(dm),
             ]
             netCheckedAt = Date()
             netChecking = false
@@ -741,11 +750,19 @@ final class ReedAppModel: ObservableObject {
         case "not_found": return "Код не найден"
         case "expired": return "Код истёк"
         case "used": return "Приглашение уже использовано"
-        case "all_full", "no_slot", "device_limit": return "На подписке нет свободных мест"
+        case "device_limit": return "На подписке уже максимум устройств. Пусть владелец удалит одно — и введи код снова."
+        case "all_full", "no_slot": return "На подписке нет свободных мест"
         case "no_subscription": return "У аккаунта нет активной подписки"
         case "limit": return "В семье нет свободных мест"
         default: return "Не удалось войти по коду"
         }
+    }
+
+    /// «Прямое» меряет полный TLS до сайта мимо туннеля — порог мягче, чем у пинга серверов.
+    static func directRow(_ ms: Int?) -> ReedNetRow {
+        guard let ms, ms >= 0 else { return ReedNetRow(label: "Прямое", ping: nil, word: "Не отвечает", kind: "danger") }
+        return ms >= 2500 ? ReedNetRow(label: "Прямое", ping: ms, word: "Ограничено", kind: "warn")
+                          : ReedNetRow(label: "Прямое", ping: ms, word: "Работает", kind: "ok")
     }
 
     static func netRow(_ label: String, _ has: Bool, _ ms: Int?) -> ReedNetRow {
@@ -773,19 +790,51 @@ final class ReedAppModel: ObservableObject {
         return token
     }
 
+    // MARK: названия серверов (как ReedServerNaming в Android)
+
+    nonisolated static let subFast = "Быстрый обход белых списков"
+    nonisolated static let subStable = "Надёжный · подключение ~20 с"
+    nonisolated static let subViaMoscow = "Через Москву"
+    nonisolated static let countryNames: [String: String] = [
+        "DE": "Германия", "NL": "Нидерланды", "FI": "Финляндия", "SE": "Швеция", "PL": "Польша", "US": "США",
+        "RU": "Россия", "TR": "Турция", "CH": "Швейцария", "FR": "Франция", "GB": "Великобритания",
+        "KZ": "Казахстан", "LV": "Латвия", "EE": "Эстония", "AT": "Австрия",
+    ]
+    nonisolated static let cities: [String: String] = [
+        "DE": "Франкфурт", "NL": "Амстердам", "FI": "Хельсинки", "SE": "Стокгольм", "PL": "Варшава", "US": "Нью-Йорк",
+        "RU": "Москва", "TR": "Стамбул", "CH": "Цюрих", "FR": "Париж", "GB": "Лондон", "KZ": "Алматы",
+        "LV": "Рига", "EE": "Таллин", "AT": "Вена",
+    ]
+
+    /// Служебное имя («🇪🇺 ЛТЕ тест (GCP)», «🇳🇱 SMART-Нидерланды 2», «🇩🇪 LTE-Германия») → страна, флаг, подпись.
+    nonisolated static func describeServer(_ raw: String, olc: Bool) -> (iso: String, title: String, subtitle: String, network: String) {
+        var iso = flagISO(raw) ?? ""
+        let stripped = displayName(raw)
+        let upper = raw.uppercased()
+        let fast = !olc && (upper.contains("ЛТЕ") || upper.contains("LTE"))
+        if fast && (iso.isEmpty || iso == "EU") { iso = upper.contains("GCP") ? "PL" : "DE" }
+        if iso.isEmpty { iso = countryNames.first(where: { stripped.hasPrefix($0.value) })?.key ?? "" }
+        let title = countryNames[iso] ?? stripped
+        let viaMoscow = upper.contains("BRIDGE") || stripped.range(of: #"\s\d+\s*$"#, options: .regularExpression) != nil
+        if olc { return (iso, title, subStable, "cell") }
+        if fast { return (iso, title, subFast, "cell") }
+        if viaMoscow { return (iso, title, subViaMoscow, "wifi") }
+        return (iso, title, cities[iso] ?? "", "wifi")
+    }
+
     /// «🇩🇪 SMART-Германия» → «Германия».
-    static func displayName(_ raw: String) -> String {
+    nonisolated static func displayName(_ raw: String) -> String {
         var s = raw.unicodeScalars.filter { !($0.properties.isEmojiPresentation || (0x1F1E6...0x1F1FF).contains($0.value) || $0.value == 0xFE0F) }
             .reduce(into: "") { $0.unicodeScalars.append($1) }
         s = s.trimmingCharacters(in: .whitespaces)
-        for p in ["SMART-", "SMART ", "BRIDGE-", "BRIDGE ", "LTE-"] where s.uppercased().hasPrefix(p) {
+        for p in ["SMART-", "SMART ", "BRIDGE-", "BRIDGE ", "LTE-", "ЛТЕ "] where s.uppercased().hasPrefix(p) {
             s = String(s.dropFirst(p.count))
         }
         return s.isEmpty ? raw : s.trimmingCharacters(in: .whitespaces)
     }
 
     /// Флаг-эмодзи в имени → ISO-2.
-    static func flagISO(_ raw: String) -> String? {
+    nonisolated static func flagISO(_ raw: String) -> String? {
         let sc = Array(raw.unicodeScalars)
         for i in 0..<max(0, sc.count - 1) {
             let a = sc[i].value, b = sc[i + 1].value

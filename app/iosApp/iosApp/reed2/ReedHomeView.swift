@@ -120,7 +120,7 @@ struct ReedHomeView: View {
                     .multilineTextAlignment(.center).padding(.top, 6).padding(.horizontal, 16)
             }
             if connState == .connecting, m.selectedServer?.olc != nil {
-                Text("Мобильные серверы поднимаются чуть дольше — около 20 секунд")
+                Text("Надёжный обход поднимается чуть дольше — около 20 секунд")
                     .font(.system(size: 13)).foregroundStyle(Reed.inkMuted)
                     .multilineTextAlignment(.center).padding(.top, 6).padding(.horizontal, 24)
             }
@@ -244,7 +244,8 @@ struct ReedHomeView: View {
         } else {
             VStack(spacing: 2) {
                 ForEach(shown) { s in
-                    ReedServerRowView(server: s, ping: m.pings[s.id], selected: s.id == m.selectedId) {
+                    ReedServerRowView(server: s, ping: m.pings[s.id], selected: s.id == m.selectedId,
+                                      state: s.id == m.selectedId ? connState : .off) {
                         withAnimation(.smooth(duration: 0.25)) { m.select(s) }
                     }
                 }
@@ -279,11 +280,13 @@ struct ReedPillIcon: View {
     }
 }
 
-/// Строка сервера: флаг, страна (жирно), город, пинг моно-шрифтом, галочка в круге.
+/// Строка сервера: флаг, страна, подпись (где сервер или зачем он нужен), пинг.
+/// Выбранный — подсветка строки; справа шарик: подключаюсь — мигает, подключено — лайм с ореолом.
 struct ReedServerRowView: View {
     let server: ReedServer
     let ping: Int?
     let selected: Bool
+    var state: ReedConnState = .off
     var onTap: () -> Void
 
     var body: some View {
@@ -293,25 +296,50 @@ struct ReedServerRowView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(server.title).font(.system(size: 16, weight: .semibold)).foregroundStyle(Reed.ink).lineLimit(1)
                     if !server.subtitle.isEmpty {
-                        Text(server.subtitle).font(.system(size: 13)).foregroundStyle(Reed.inkMuted)
+                        Text(server.subtitle).font(.system(size: 13)).foregroundStyle(Reed.inkMuted).lineLimit(1)
                     }
                 }
                 Spacer()
                 Text(Reed.pingText(ping)).font(.reedMono(13)).foregroundStyle(Reed.pingColor(ping))
                     .contentTransition(.numericText())
                     .animation(.smooth(duration: 0.3), value: ping)
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 20))
-                    .foregroundStyle(selected ? Reed.ink : Reed.chrome600)
-                    .contentTransition(.symbolEffect(.replace))
+                ReedStatusDot(state: selected ? state : .off)
+                    .frame(width: 18, height: 18)
             }
             .padding(.horizontal, 12).padding(.vertical, 11)
             .background(selected ? Color.white.opacity(0.06) : .clear,
                         in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(selected ? Reed.chrome800 : .clear, lineWidth: 1))
+            .animation(.smooth(duration: 0.25), value: selected)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .sensoryFeedback(.selection, trigger: selected)
+    }
+}
+
+/// Шарик состояния у выбранного сервера (время — TimelineView, без залипающих repeatForever).
+struct ReedStatusDot: View {
+    let state: ReedConnState
+    var body: some View {
+        TimelineView(.animation(minimumInterval: nil, paused: state == .off)) { ctx in
+            let t = ctx.date.timeIntervalSinceReferenceDate
+            ZStack {
+                if state == .on {
+                    let halo = t.truncatingRemainder(dividingBy: 1.6) / 1.6
+                    Circle().fill(Reed.lime.opacity(0.45 * (1 - halo)))
+                        .frame(width: 9 + 9 * halo, height: 9 + 9 * halo)
+                    Circle().fill(Reed.lime).frame(width: 9, height: 9)
+                } else if state == .connecting {
+                    Circle().fill(Reed.statusWarn)
+                        .frame(width: 9, height: 9)
+                        .opacity(0.3 + 0.7 * (0.5 + 0.5 * sin(t * .pi * 2 / 1.04)))
+                }
+            }
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.5)))
+        .animation(.smooth(duration: 0.3), value: state)
     }
 }
 
