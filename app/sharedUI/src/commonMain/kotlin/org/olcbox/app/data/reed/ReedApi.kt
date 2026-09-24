@@ -153,11 +153,20 @@ object ReedApi {
         SessionInfo(kind = "unknown")
     }
 
-    // Владелец генерирует код-приглашение для своей подписки.
-    suspend fun shareCreate(token: String): ShareCreateResult =
+    // Владелец генерирует код: type="member" (приглашение в семью, RDI-) или
+    // type="device" (добавить своё устройство, RDX-). По умолчанию — приглашение.
+    suspend fun shareCreate(token: String, type: String = "member"): ShareCreateResult =
         client.post("$BASE/app/share/create") {
             contentType(ContentType.Application.Json)
-            setBody(TokenRequest(token))
+            setBody(ShareCreateRequest(token, type))
+        }.body()
+
+    // Reed 2.0: вход по одноразовой ссылке из бота (universal link reedapp.ru/app/login?t=…).
+    // Возвращает {ok, token=sub_token} или ошибку.
+    suspend fun linkLogin(t: String): LinkLoginResult =
+        client.post("$BASE/app/link/login") {
+            contentType(ContentType.Application.Json)
+            setBody(LinkLoginRequest(t))
         }.body()
 
     // Вход по коду: возвращает member_token (становится токеном сессии).
@@ -531,6 +540,20 @@ data class ServerInfo(
 data class TokenRequest(val token: String)
 
 @Serializable
+data class ShareCreateRequest(val token: String, val type: String = "member")
+
+@Serializable
+data class LinkLoginRequest(val t: String)
+
+@Serializable
+data class LinkLoginResult(
+    val ok: Boolean = false,
+    val token: String? = null,
+    val error: String? = null,
+    val message: String? = null,
+)
+
+@Serializable
 data class SessionInfo(
     val kind: String = "owner",            // owner | member | deleted | unknown
     val name: String = "",
@@ -543,6 +566,7 @@ data class SessionInfo(
 data class ShareCreateResult(
     val ok: Boolean = false,
     val code: String = "",
+    val kind: String = "member",   // member (RDI-) | device (RDX-)
     val expires_at: String = "",
     val ttl_seconds: Int = 0,
     val error: String? = null,
@@ -560,7 +584,9 @@ data class RedeemRequest(
 @Serializable
 data class RedeemResult(
     val ok: Boolean = false,
-    val member_token: String? = null,
+    val kind: String = "member",       // member (участник) | device (своё устройство)
+    val member_token: String? = null,  // токен сессии (для device = sub_token аккаунта)
+    val sub_token: String? = null,
     val name: String? = null,
     val error: String? = null,
     val message: String? = null,
