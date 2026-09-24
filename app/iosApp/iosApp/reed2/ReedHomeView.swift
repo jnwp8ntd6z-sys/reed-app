@@ -222,10 +222,7 @@ struct ReedHomeView: View {
     private func pillButton(_ title: String, icon: String, spinning: Bool, pulsing: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 6) {
-                Image(systemName: icon).font(.system(size: 13, weight: .medium))
-                    .rotationEffect(.degrees(spinning ? 360 : 0))
-                    .animation(spinning ? .linear(duration: 0.9).repeatForever(autoreverses: false) : .default, value: spinning)
-                    .symbolEffect(.pulse, isActive: pulsing)
+                ReedPillIcon(icon: icon, spinning: spinning, pulsing: pulsing)
                 Text(title).font(.system(size: 13, weight: .medium))
             }
             .foregroundStyle(Reed.ink)
@@ -255,6 +252,30 @@ struct ReedHomeView: View {
             .padding(6)
             .background(Reed.surface200.opacity(0.6), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         }
+    }
+}
+
+/// Иконка «таблетки»: вращение — системный эффект символа (iOS 18+) или индикатор на 17-й.
+/// Никаких repeatForever: при остановке значок не прыгает назад.
+struct ReedPillIcon: View {
+    let icon: String
+    let spinning: Bool
+    let pulsing: Bool
+    var body: some View {
+        Group {
+            if #available(iOS 18, *) {
+                Image(systemName: icon)
+                    .symbolEffect(.rotate, options: .repeat(.continuous), isActive: spinning)
+            } else if spinning {
+                ProgressView().controlSize(.mini).tint(Reed.ink).transition(.opacity)
+            } else {
+                Image(systemName: icon).transition(.opacity)
+            }
+        }
+        .font(.system(size: 13, weight: .medium))
+        .symbolEffect(.pulse, isActive: pulsing)
+        .frame(width: 16, height: 16)
+        .animation(.smooth(duration: 0.2), value: spinning)
     }
 }
 

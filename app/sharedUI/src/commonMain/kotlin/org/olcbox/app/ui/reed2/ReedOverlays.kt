@@ -238,13 +238,13 @@ fun ReedNoCodeTabScreen(
 ) {
     Column(modifier.fillMaxSize().background(Reed2.ground000).padding(horizontal = 20.dp)) {
         Spacer(Modifier.height(16.dp))
-        Text(title, color = Reed2.ink, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.5.sp)
+        Text(title, color = Reed2.ink, fontSize = 30.sp, fontFamily = LocalReedFonts.current.headline, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
         Spacer(Modifier.height(18.dp))
         ReedConnectSubscriptionCard(cardText = cardText, onEnterCode = onEnterCode, onScanQr = onScanQr)
         if (footer != null) {
             Spacer(Modifier.weight(1f))
             Text(footer, color = Reed2.chrome600, fontSize = 12.sp,
-                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                fontFamily = LocalReedFonts.current.mono,
                 modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), textAlign = TextAlign.Center)
         }
     }

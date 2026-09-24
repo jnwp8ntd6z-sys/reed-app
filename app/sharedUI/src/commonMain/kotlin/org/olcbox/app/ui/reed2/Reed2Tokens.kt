@@ -79,3 +79,23 @@ object Reed2 {
 
     fun pingText(ms: Int?): String = if (ms == null || ms < 0) "—" else "$ms мс"
 }
+
+/**
+ * Шрифты Reed (ТЗ 3.3): заголовки/логотип — Unbounded, текст — Golos Text (Android),
+ * коды/пинг/таймер/версия — JetBrains Mono. Платформа подставляет файлы через
+ * [LocalReedFonts]; по умолчанию — системные (рендер-проверка, превью).
+ */
+@androidx.compose.runtime.Immutable
+data class ReedFontSet(
+    val headline: androidx.compose.ui.text.font.FontFamily,
+    val body: androidx.compose.ui.text.font.FontFamily,
+    val mono: androidx.compose.ui.text.font.FontFamily,
+)
+
+val LocalReedFonts = androidx.compose.runtime.staticCompositionLocalOf {
+    ReedFontSet(
+        androidx.compose.ui.text.font.FontFamily.Default,
+        androidx.compose.ui.text.font.FontFamily.Default,
+        androidx.compose.ui.text.font.FontFamily.Monospace,
+    )
+}

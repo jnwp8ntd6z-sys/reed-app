@@ -68,7 +68,7 @@ fun ReedFamilyScreen(
     Column(modifier.fillMaxSize().background(Reed2.ground000).verticalScroll(rememberScrollState())
         .padding(horizontal = 20.dp)) {
         Spacer(Modifier.height(16.dp))
-        Text("СЕМЬЯ", color = Reed2.ink, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.5.sp)
+        Text("СЕМЬЯ", color = Reed2.ink, fontSize = 30.sp, fontFamily = LocalReedFonts.current.headline, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp)
 
         if (!canManage) {
             Spacer(Modifier.height(18.dp))
@@ -224,7 +224,7 @@ private fun CodePlank(
                 Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Reed2.ground000)
                     .clickable { code?.let(onCopy) }.padding(14.dp)) {
                     Text(code ?: "Создаём код…", color = if (code != null) Reed2.ink else Reed2.chrome600,
-                        fontFamily = FontFamily.Monospace, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                        fontFamily = LocalReedFonts.current.mono, fontSize = 18.sp, fontWeight = FontWeight.Medium)
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(if (code != null) "$note Нажми на код, чтобы скопировать." else note,

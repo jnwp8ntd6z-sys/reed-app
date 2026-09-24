@@ -37,11 +37,6 @@ final class ReedAppModel: ObservableObject {
     @Published var codeName = ""
     @Published var codeError: String?
     @Published var codeBusy = false
-    @Published var tgBusy = false
-    @Published var loginStatus: String?
-    /// Вход через Telegram-бота — только пользователям из России (ТЗ 7.8).
-    let showTelegram = ReedAppModel.isRuUser()
-    private var tgTask: Task<Void, Never>?
 
     @Published var token: String?
     @Published var sub: RSubscriptionResponse?
@@ -78,6 +73,9 @@ final class ReedAppModel: ObservableObject {
     @Published var showNotifications = false
     @Published var toast: String?
     @Published var shareLogURL: URL?
+
+    /// false — превью/скриншоты: модель не ходит в сеть (данные подставлены заранее).
+    var live = true
 
     private var bgTasks: [Task<Void, Never>] = []
     private var switchTask: Task<Void, Never>?
@@ -116,7 +114,7 @@ final class ReedAppModel: ObservableObject {
         Task {
             await tunnel.refresh()
             syncTunnel()
-            if token != nil { startAccountTasks() }
+            if token != nil && live { startAccountTasks() }
         }
     }
 
@@ -126,7 +124,7 @@ final class ReedAppModel: ObservableObject {
         Task {
             await tunnel.refresh()
             syncTunnel()
-            guard token != nil else { return }
+            guard token != nil, live else { return }
             async let a: Void = reloadSubscription()
             async let b: Void = reloadNotifications()
             _ = await (a, b)
@@ -188,41 +186,6 @@ final class ReedAppModel: ObservableObject {
         ReedSessionStore.onboardingDone = true
         tab = .home
         stage = .app
-    }
-
-    /// Вход через бота: сервер выдаёт nonce и ссылку, бот подтверждает, приложение опрашивает.
-    func startTelegram() {
-        guard !tgBusy else { return }
-        tgBusy = true; loginStatus = nil
-        tgTask?.cancel()
-        tgTask = Task {
-            defer { tgBusy = false }
-            guard let start = try? await api.authStart(), let url = URL(string: start.deeplink) else {
-                loginStatus = "Не удалось связаться с сервером. Попробуй ещё раз."
-                return
-            }
-            _ = await UIApplication.shared.open(url)
-            for _ in 0..<60 {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                if Task.isCancelled { return }
-                if let p = try? await api.authPoll(start.nonce), p.status == "ok", let t = p.token, !t.isEmpty {
-                    login(t, member: false, name: nil)
-                    return
-                }
-            }
-            loginStatus = "Вход не завершён. Попробуй ещё раз."
-        }
-    }
-
-    nonisolated static func isRuUser() -> Bool {
-        if Locale.current.region?.identifier == "RU" { return true }
-        let tz = TimeZone.current.identifier
-        return (tz.hasPrefix("Europe/") && ["Moscow", "Kaliningrad", "Samara", "Volgograd", "Saratov",
-                                            "Ulyanovsk", "Astrakhan", "Kirov", "Simferopol"].contains { tz.hasSuffix($0) })
-            || ["Asia/Yekaterinburg", "Asia/Omsk", "Asia/Novosibirsk", "Asia/Barnaul", "Asia/Tomsk",
-                "Asia/Novokuznetsk", "Asia/Krasnoyarsk", "Asia/Irkutsk", "Asia/Chita", "Asia/Yakutsk",
-                "Asia/Khandyga", "Asia/Vladivostok", "Asia/Ust-Nera", "Asia/Magadan", "Asia/Sakhalin",
-                "Asia/Srednekolymsk", "Asia/Kamchatka", "Asia/Anadyr"].contains(tz)
     }
 
     /// Ввод из поля: вставка из буфера (рост больше чем на 1 символ) входит сразу, кроме
@@ -407,7 +370,7 @@ final class ReedAppModel: ObservableObject {
     }
 
     func refreshAll() {
-        guard !refreshing else { return }
+        guard !refreshing, live else { return }
         refreshing = true
         Task {
             async let a: Void = reloadSubscription()
@@ -502,7 +465,7 @@ final class ReedAppModel: ObservableObject {
     // MARK: семья
 
     func loadFamily() {
-        guard let t = token, !ReedSessionStore.joinedViaCode else { return }
+        guard live, let t = token, !ReedSessionStore.joinedViaCode else { return }
         Task {
             if let d = try? await api.devices(t) { devices = d }
             if let m = try? await api.members(t) { members = m }

@@ -2,10 +2,8 @@ package org.olcbox.app.ui.activities
 
 import android.app.Activity
 import android.content.Intent
-import android.net.Uri
 import android.net.VpnService
 import android.widget.Toast
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -16,11 +14,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.launch
-import org.olcbox.app.data.share.ConfigShareService
 import org.olcbox.app.update.AndroidUpdateSettingsStore
 import org.olcbox.app.update.AppUpdateInfo
 import org.olcbox.app.update.AppUpdateSettings
@@ -30,16 +26,19 @@ import org.olcbox.app.update.identity
 import org.olcbox.app.update.isDownloaded
 import org.olcbox.app.update.isUpdateCheckDue
 import org.olcbox.app.update.shouldShowOffer
-import org.olcbox.app.ui.OlcboxAppContent
 import org.olcbox.app.ui.components.ApplicationUpdateOfferSheet
 import org.olcbox.app.ui.features.home.HomeScreenViewModel
 import org.olcbox.app.ui.features.locations.LocationViewModel
-import org.olcbox.app.ui.navigation.AppScreen
 import org.olcbox.app.vpn.AndroidConnectionMode
 import org.olcbox.app.vpn.AndroidSplitTunnelList
 import org.olcbox.app.vpn.AndroidSplitTunnelMode
 import org.olcbox.app.vpn.AndroidVpnManager
 
+/**
+ * Android-обвязка Reed 2.0: разрешение на туннель, QR-камера, «Приложения напрямую»
+ * (исключения VpnService), само-обновление direct-сборки. Весь интерфейс — Reed2AppContent.
+ * Старые экраны olcbox (настройки, выбор локаций, импорт файлом) отсюда убраны (ТЗ §8).
+ */
 @Composable
 fun AndroidMainScreen(
     viewModel: HomeScreenViewModel,
@@ -47,47 +46,15 @@ fun AndroidMainScreen(
     vpnManager: AndroidVpnManager,
     appUpdateService: AppUpdateService? = null
 ) {
-
-    var currentScreenRoute by rememberSaveable { mutableStateOf("home") }
-    var currentLocationId by rememberSaveable { mutableStateOf<String?>(null) }
-
-    val currentScreen: AppScreen =
-        when (currentScreenRoute) {
-            "location_settings" -> AppScreen.LocationSettings(currentLocationId)
-            else -> AppScreen.Home
-        }
-
-    val navigate: (AppScreen) -> Unit = { screen ->
-        when (screen) {
-            AppScreen.Home -> {
-                currentScreenRoute = "home"
-                currentLocationId = null
-            }
-            is AppScreen.LocationSettings -> {
-                currentScreenRoute = "location_settings"
-                currentLocationId = screen.locationId
-            }
-        }
-    }
-
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val connectionMode by vpnManager.connectionMode.collectAsState()
-    val proxySettings by vpnManager.proxySettings.collectAsState()
     val splitTunnelSettings by vpnManager.splitTunnelSettings.collectAsState()
-    val dynamicThemeEnabled by vpnManager.dynamicThemeEnabled.collectAsState()
     val installedApps by vpnManager.installedApps.collectAsState()
     val homeState by viewModel.state.collectAsState()
-    val logs by viewModel.logs.collectAsState()
-    val pendingLogSaveCallbacks = remember {
-        mutableStateOf<Pair<(String) -> Unit, (String) -> Unit>?>(null)
-    }
     val pendingVpnAction = remember {
         mutableStateOf<PendingVpnPermissionAction?>(null)
     }
-    var isAppSettingsOpen by remember { mutableStateOf(false) }
-    var appSettingsInitialRoute by remember { mutableStateOf(AppSettingsInitialRoute.Hub) }
-    var shareSheetPayload by remember { mutableStateOf<Pair<String, String>?>(null) }
     var splitTunnelRestartPending by remember { mutableStateOf(false) }
     val updateSettingsStore = remember(context) {
         AndroidUpdateSettingsStore(context)
@@ -102,28 +69,6 @@ fun AndroidMainScreen(
     var updateDownloadProgress by remember { mutableStateOf<Float?>(null) }
     var updateOffer by remember { mutableStateOf<AppUpdateInfo?>(null) }
     var relaunchAfterInstall by remember { mutableStateOf(false) }
-    val subscriptionShareItems = locationViewModel.locations.toList()
-        .mapNotNull { item ->
-            val url = item.subscriptionUrl
-                ?.trim()
-                ?.takeIf { it.startsWith("https://") || it.startsWith("http://") }
-                ?: return@mapNotNull null
-            url to item
-        }
-        .groupBy({ it.first }, { it.second })
-        .entries
-        .sortedBy { it.key }
-        .map { (url, items) ->
-            val metadata = items.firstNotNullOfOrNull { it.metadata?.subscription }
-            org.olcbox.app.data.share.SubscriptionShareItem(
-                url = url,
-                name = metadata?.name?.takeIf { it.isNotBlank() }
-                    ?: items.first().fullName,
-                updateIntervalHours = metadata?.updateIntervalHours,
-                lastRefreshAtEpochMs = metadata?.lastRefreshAtEpochMs,
-                locationCount = items.size
-            )
-        }
 
     val updateInstallLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -160,20 +105,20 @@ fun AndroidMainScreen(
     fun showUpdateResult(info: AppUpdateInfo) {
         if (info.isDownloaded(updateSettings)) {
             updateOffer = null
-            updateStatusText = "Latest ${info.channel.name.lowercase()} is already downloaded"
+            updateStatusText = "Последняя версия уже скачана"
         } else if (info.isUpdateAvailable) {
             updateOffer = info
-            updateStatusText = "${info.channel.name} update available: ${info.version}"
+            updateStatusText = "Доступно обновление ${info.version}"
         } else {
             updateOffer = null
-            updateStatusText = "Olcbox is up to date"
+            updateStatusText = "Установлена последняя версия"
         }
     }
 
     fun checkUpdate(manual: Boolean) {
         val service = appUpdateService
         if (service == null) {
-            updateStatusText = "Update service unavailable"
+            updateStatusText = null
             return
         }
         scope.launch {
@@ -181,7 +126,7 @@ fun AndroidMainScreen(
             val checkStartedAt = kotlin.time.Clock.System.now().toEpochMilliseconds()
             if (!manual && !previousSettings.isUpdateCheckDue(checkStartedAt)) return@launch
 
-            updateStatusText = "Checking ${previousSettings.channel.name.lowercase()}..."
+            updateStatusText = null
             val result = service.check(
                 previousSettings.channel,
                 vpnManager.subscriptionFetchProxy()
@@ -199,7 +144,7 @@ fun AndroidMainScreen(
                     }
                 },
                 onFailure = { error ->
-                    updateStatusText = error.message ?: "Update check failed"
+                    updateStatusText = null
                 }
             )
         }
@@ -209,23 +154,23 @@ fun AndroidMainScreen(
         scope.launch {
             if (!updateInstaller.canRequestPackageInstalls()) {
                 updateInstaller.openUnknownSourcesSettings()
-                updateStatusText = "Allow Olcbox to install updates, then tap Download again"
+                updateStatusText = "Разреши Reed устанавливать обновления и нажми «Скачать» ещё раз"
                 Toast.makeText(context, updateStatusText, Toast.LENGTH_LONG).show()
                 return@launch
             }
 
             updateDownloadProgress = 0f
-            updateStatusText = "Downloading ${info.asset.name}..."
+            updateStatusText = null
             val result = updateInstaller.download(info.asset) { progress ->
                 updateDownloadProgress = progress
             }
             val file = result.getOrElse { error ->
-                updateStatusText = "Download failed: ${error.message ?: "unknown error"}"
+                updateStatusText = "Не удалось скачать обновление"
                 updateDownloadProgress = null
                 Toast.makeText(context, updateStatusText, Toast.LENGTH_LONG).show()
                 return@launch
             }
-            updateStatusText = "Installing ${info.asset.name}"
+            updateStatusText = null
             saveUpdateSettings(
                 updateSettings.copy(
                     lastSeenUpdateVersion = info.identity(),
@@ -243,6 +188,17 @@ fun AndroidMainScreen(
         scope.launch {
             saveUpdateSettings(updateSettings.copy(lastSeenUpdateVersion = info.identity()))
             updateOffer = null
+        }
+    }
+
+    // В 2.0 есть только «напрямую» (исключения). Старый режим «только выбранные через туннель»
+    // в новом интерфейсе не виден — переводим его в понятное состояние.
+    LaunchedEffect(splitTunnelSettings.mode) {
+        if (splitTunnelSettings.mode == AndroidSplitTunnelMode.ProxySelected) {
+            vpnManager.selectSplitTunnelMode(
+                if (splitTunnelSettings.bypassPackages.isEmpty()) AndroidSplitTunnelMode.AllApps
+                else AndroidSplitTunnelMode.BypassSelected
+            )
         }
     }
 
@@ -276,16 +232,6 @@ fun AndroidMainScreen(
         pendingVpnAction.value = null
     }
 
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let {
-            viewModel.onFileSelected(it) {
-                reloadLocationsAfterImport()
-            }
-        }
-    }
-
     // Reed 2.0: результат QR отдаём экрану входа (код RD/RDI/RDX или ссылка), если он ждёт.
     val qrHandler = remember { mutableStateOf<((String) -> Unit)?>(null) }
     val qrScannerLauncher = rememberLauncherForActivityResult(
@@ -302,37 +248,11 @@ fun AndroidMainScreen(
         if (rawText.isBlank()) return@rememberLauncherForActivityResult
         if (handler != null) { handler(rawText); return@rememberLauncherForActivityResult }
 
-        viewModel.onImportFullConfig(rawText) {
-            reloadLocationsAfterImport {
-                Toast.makeText(context, "QR imported", Toast.LENGTH_SHORT).show()
-            }
-        }
+        viewModel.onImportFullConfig(rawText) { reloadLocationsAfterImport() }
     }
 
-    val logSaveLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("text/plain")
-    ) { uri: Uri? ->
-        val callbacks = pendingLogSaveCallbacks.value
-        pendingLogSaveCallbacks.value = null
-        if (uri == null || callbacks == null) return@rememberLauncherForActivityResult
 
-        viewModel.onSaveLogsToFile(
-            target = uri,
-            onSaved = callbacks.first,
-            onError = callbacks.second
-        )
-    }
-
-    fun navigateHomeFromLocationSettings() {
-        viewModel.loadCurrentConfig()
-        navigate(AppScreen.Home)
-    }
-
-    BackHandler(enabled = currentScreen is AppScreen.LocationSettings) {
-        navigateHomeFromLocationSettings()
-    }
-
-    // Reed 2.0: новый интерфейс (ТЗ). Вся платформенная обвязка выше не менялась.
+    // Reed 2.0: новый интерфейс (ТЗ).
     org.olcbox.app.ui.reed2.Reed2AppContent(
         homeViewModel = viewModel,
         locationViewModel = locationViewModel,
@@ -353,20 +273,27 @@ fun AndroidMainScreen(
             qrHandler.value = onResult
             qrScannerLauncher.launch(Intent(context, QrScannerActivity::class.java))
         },
-        onOpenAppsDirect = {
-            appSettingsInitialRoute = AppSettingsInitialRoute.SplitTunneling
-            vpnManager.refreshInstalledApps()
-            isAppSettingsOpen = true
+        // «Приложения напрямую» = список исключений (addDisallowedApplication).
+        installedApps = installedApps,
+        directApps = splitTunnelSettings.bypassPackages,
+        onToggleDirectApp = { pkg ->
+            vpnManager.toggleSplitTunnelApp(AndroidSplitTunnelList.Bypass, pkg)
+            val next = splitTunnelSettings.bypassPackages.let { if (pkg in it) it - pkg else it + pkg }
+            vpnManager.selectSplitTunnelMode(
+                if (next.isEmpty()) AndroidSplitTunnelMode.AllApps else AndroidSplitTunnelMode.BypassSelected
+            )
+            markSplitTunnelChanged()
         },
+        onSetDirectApps = { pkgs ->
+            vpnManager.setSplitTunnelApps(AndroidSplitTunnelList.Bypass, pkgs)
+            vpnManager.selectSplitTunnelMode(
+                if (pkgs.isEmpty()) AndroidSplitTunnelMode.AllApps else AndroidSplitTunnelMode.BypassSelected
+            )
+            markSplitTunnelChanged()
+        },
+        onAppsDirectOpened = { vpnManager.refreshInstalledApps() },
+        onAppsDirectClosed = { applyPendingSplitTunnelRestart() },
     )
-
-    shareSheetPayload?.let { (title, payload) ->
-        AndroidConfigShareSheet(
-            title = title,
-            payload = payload,
-            onDismiss = { shareSheetPayload = null }
-        )
-    }
 
     updateOffer?.let { info ->
         ApplicationUpdateOfferSheet(
@@ -374,111 +301,6 @@ fun AndroidMainScreen(
             downloadProgress = updateDownloadProgress,
             onLater = { postponeUpdate(info) },
             onDownload = { downloadUpdate(info) }
-        )
-    }
-
-    if (isAppSettingsOpen) {
-        AppSettingsSheet(
-            initialRoute = appSettingsInitialRoute,
-            selectedMode = connectionMode,
-            proxySettings = proxySettings,
-            splitTunnelSettings = splitTunnelSettings,
-            installedApps = installedApps,
-            logs = logs,
-            dynamicThemeEnabled = dynamicThemeEnabled,
-            updateSettings = updateSettings,
-            updateStatusText = updateStatusText,
-            updateDownloadProgress = updateDownloadProgress,
-            subscriptions = subscriptionShareItems,
-            enabled = !homeState.isVpnLoading,
-            isConnectionActive = homeState.isVpnConnected,
-            onDismiss = {
-                isAppSettingsOpen = false
-                applyPendingSplitTunnelRestart()
-            },
-            onCopyConfigClick = {
-                viewModel.onCopyFullConfigClicked()
-                Toast.makeText(context, "Config copied", Toast.LENGTH_SHORT).show()
-            },
-            onSaveLogsClick = {
-                val showToast: (String) -> Unit = { message ->
-                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                }
-                pendingLogSaveCallbacks.value = showToast to showToast
-                logSaveLauncher.launch(viewModel.suggestedLogsFileName())
-            },
-            onShareLogsClick = {
-                val showToast: (String) -> Unit = { message ->
-                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                }
-                viewModel.onShareLogs(showToast, showToast)
-            },
-            onUpdateIntervalSelected = { hours ->
-                scope.launch {
-                    saveUpdateSettings(updateSettings.copy(intervalHours = hours))
-                }
-            },
-            onCheckUpdatesClick = {
-                checkUpdate(manual = true)
-            },
-            onSubscriptionShareClick = { url ->
-                shareSheetPayload = "Subscription QR" to ConfigShareService.subscriptionQrText(url)
-            },
-            onSubscriptionRefreshClick = { url ->
-                viewModel.refreshSubscription(url) { updatedCount ->
-                    reloadLocationsAfterImport {
-                        viewModel.restartVpnIfRunning()
-                        Toast.makeText(
-                            context,
-                            if (updatedCount > 0) "Subscription updated" else "Subscription not updated",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                }
-            },
-            onDynamicThemeChanged = vpnManager::setDynamicThemeEnabled,
-            onModeSelected = { mode ->
-                if (mode != connectionMode && homeState.isVpnConnected) {
-                    val prepIntent = if (mode == AndroidConnectionMode.Tun) {
-                        VpnService.prepare(context)
-                    } else {
-                        null
-                    }
-                    if (prepIntent != null) {
-                        pendingVpnAction.value = PendingVpnPermissionAction.RestartWithMode(mode)
-                        vpnRequestLauncher.launch(prepIntent)
-                    } else {
-                        vpnManager.selectConnectionMode(mode)
-                        viewModel.restartVpnIfRunning()
-                    }
-                } else if (mode != connectionMode) {
-                    vpnManager.selectConnectionMode(mode)
-                }
-            },
-            onProxySettingsSaved = { host, username, password, port ->
-                vpnManager.updateProxySettings(host, username, password, port)
-                if (homeState.isVpnConnected) {
-                    viewModel.restartVpnIfRunning()
-                }
-            },
-            onProxyPasswordRegenerated = {
-                vpnManager.regenerateProxyPassword()
-                if (homeState.isVpnConnected) {
-                    viewModel.restartVpnIfRunning()
-                }
-            },
-            onSplitTunnelModeSelected = { mode: AndroidSplitTunnelMode ->
-                vpnManager.selectSplitTunnelMode(mode)
-                markSplitTunnelChanged()
-            },
-            onSplitTunnelAppToggled = { list: AndroidSplitTunnelList, packageName: String ->
-                vpnManager.toggleSplitTunnelApp(list, packageName)
-                markSplitTunnelChanged()
-            },
-            onSplitTunnelAppsSelected = { list: AndroidSplitTunnelList, packages: Set<String> ->
-                vpnManager.setSplitTunnelApps(list, packages)
-                markSplitTunnelChanged()
-            }
         )
     }
 }

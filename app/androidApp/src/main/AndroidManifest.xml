@@ -28,10 +28,9 @@
     <application
         android:name=".App"
         android:icon="@mipmap/ic_launcher"
-        android:label="Reed"
+        android:label="Reed Client"
         android:networkSecurityConfig="@xml/network_security_config"
-        android:theme="@style/Theme.Reed"
-        android:usesCleartextTraffic="true">
+        android:theme="@style/Theme.Reed">
 
         <activity
             android:name=".AppActivity"
@@ -50,7 +49,6 @@
 
         <activity
             android:name="org.olcbox.app.ui.activities.QrScannerActivity"
-            android:screenOrientation="portrait"
             android:exported="false" />
 
         <provider
@@ -69,7 +67,12 @@
             android:excludeFromRecents="true"
             android:exported="false" />
 
-        <!-- Автозапуск VPN при загрузке телефона (если включено авто-подключение). -->
+        <!-- Reed 2.0: кнопки уведомления «Новое устройство» (Это я / Заблокировать). -->
+        <receiver
+            android:name="org.olcbox.app.ui.reed2.ReedDeviceAlertReceiver"
+            android:exported="false" />
+
+        <!-- Автоподключение при загрузке телефона (если включено авто-подключение). -->
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"

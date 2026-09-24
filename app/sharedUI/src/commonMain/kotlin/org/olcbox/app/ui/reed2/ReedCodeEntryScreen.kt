@@ -117,12 +117,12 @@ fun ReedCodeEntryScreen(
             Box(Modifier.weight(1f)) {
                 if (code.isEmpty()) {
                     Text("RD-XXXX  или  ссылка", color = Reed2.chrome600,
-                        fontFamily = FontFamily.Monospace, fontSize = 15.sp)
+                        fontFamily = LocalReedFonts.current.mono, fontSize = 15.sp)
                 }
                 BasicTextField(
                     value = code, onValueChange = onCodeChange,
                     singleLine = true, enabled = !busy,
-                    textStyle = TextStyle(color = Reed2.ink, fontFamily = FontFamily.Monospace, fontSize = 15.sp),
+                    textStyle = TextStyle(color = Reed2.ink, fontFamily = LocalReedFonts.current.mono, fontSize = 15.sp),
                     cursorBrush = SolidColor(Reed2.lime),
                     keyboardOptions = KeyboardOptions(
                         capitalization = KeyboardCapitalization.Characters,

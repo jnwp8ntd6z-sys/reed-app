@@ -153,7 +153,7 @@ fun ReedHomeScreen(
                             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                         if (subscription.totalGb > 0) {
                             Text(subscription.usageLabel, color = Reed2.inkMuted,
-                                fontFamily = FontFamily.Monospace, fontSize = 13.sp,
+                                fontFamily = LocalReedFonts.current.mono, fontSize = 13.sp,
                                 maxLines = 1, modifier = Modifier.padding(start = 8.dp))
                         }
                         if (onSubscriptionClick != null) {
@@ -233,14 +233,14 @@ fun ReedHomeScreen(
 @Composable
 private fun HomeLogo() {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("REED", color = Reed2.ink, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold,
+        Text("REED", color = Reed2.ink, fontSize = 18.sp, fontFamily = LocalReedFonts.current.headline, fontWeight = FontWeight.Bold,
             letterSpacing = 1.sp)
         Spacer(Modifier.width(6.dp))
         Box(Modifier.size(6.dp).clip(RoundedCornerShape(50)).background(Reed2.lime))
         Spacer(Modifier.width(6.dp))
-        Text("CLIENT", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp,
+        Text("CLIENT", fontSize = 18.sp, fontFamily = LocalReedFonts.current.headline, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
             style = chromeTextStyle(androidx.compose.material3.MaterialTheme.typography.titleMedium)
-                .copy(fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp))
+                .copy(fontSize = 18.sp, fontFamily = LocalReedFonts.current.headline, fontWeight = FontWeight.Bold, letterSpacing = 1.sp))
     }
 }
 

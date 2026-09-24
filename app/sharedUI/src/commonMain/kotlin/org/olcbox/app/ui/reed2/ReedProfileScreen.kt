@@ -87,7 +87,7 @@ fun ReedProfileScreen(
         Spacer(Modifier.height(16.dp))
         // Долгое нажатие 1,5с на заголовок → выгрузка логов (ТЗ 4.6). Кнопки логов в интерфейсе нет.
         val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
-        Text("ПРОФИЛЬ", color = Reed2.ink, fontSize = 30.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.5.sp,
+        Text("ПРОФИЛЬ", color = Reed2.ink, fontSize = 30.sp, fontFamily = LocalReedFonts.current.headline, fontWeight = FontWeight.Bold, letterSpacing = 0.5.sp,
             modifier = Modifier.pointerInput(Unit) {
                 awaitEachGesture {
                     awaitFirstDown(requireUnconsumed = false)
@@ -150,7 +150,7 @@ fun ReedProfileScreen(
                     Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(icon, null, tint = Reed2.inkMuted, modifier = Modifier.size(20.dp))
                         Text(r.label, color = Reed2.ink, fontSize = 15.sp, modifier = Modifier.weight(1f).padding(start = 12.dp))
-                        Text(Reed2.pingText(r.pingMs), color = Reed2.inkMuted, fontFamily = FontFamily.Monospace,
+                        Text(Reed2.pingText(r.pingMs), color = Reed2.inkMuted, fontFamily = LocalReedFonts.current.mono,
                             fontSize = 13.sp, modifier = Modifier.padding(end = 12.dp))
                         Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(statusColor))
                         Text(r.statusWord, color = statusColor, fontSize = 13.sp, modifier = Modifier.padding(start = 6.dp))
@@ -200,7 +200,7 @@ fun ReedProfileScreen(
         NavRow(Icons.Rounded.DeleteOutline, "Удалить аккаунт", null, onDeleteAccount, tint = Reed2.statusDanger)
 
         Spacer(Modifier.height(24.dp))
-        Text(version, color = Reed2.chrome600, fontFamily = FontFamily.Monospace, fontSize = 12.sp,
+        Text(version, color = Reed2.chrome600, fontFamily = LocalReedFonts.current.mono, fontSize = 12.sp,
             modifier = Modifier.fillMaxWidth(), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         Spacer(Modifier.height(20.dp))
     }

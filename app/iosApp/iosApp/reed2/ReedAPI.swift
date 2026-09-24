@@ -75,8 +75,6 @@ struct RNotification: Codable, Sendable, Identifiable {
 struct RNotifications: Codable, Sendable { var notifications: [RNotification]? }
 
 struct RSession: Codable, Sendable { var kind: String?; var blocked: Bool?; var member_status: String? }
-struct RAuthStart: Codable, Sendable { var nonce: String; var deeplink: String }
-struct RAuthPoll: Codable, Sendable { var status: String; var token: String?; var has_subscription: Bool? }
 
 /// Минимальное JSON-значение (для поля data уведомлений).
 enum RJSONValue: Codable, Sendable {
@@ -187,8 +185,6 @@ final class ReedAPI: NSObject, Sendable {
     func redeem(_ code: String, name: String, hwid: String, model: String) async throws -> RRedeemResult {
         try await post("/app/share/redeem", ["code": code, "name": name, "hwid": hwid, "device_model": model, "device_os": "iOS"], as: RRedeemResult.self)
     }
-    func authStart() async throws -> RAuthStart { try await post("/app/auth/start", [:], as: RAuthStart.self) }
-    func authPoll(_ nonce: String) async throws -> RAuthPoll { try await get("/app/auth/poll", ["nonce": nonce], as: RAuthPoll.self) }
     func linkLogin(_ t: String) async throws -> RLinkLoginResult { try await post("/app/link/login", ["t": t], as: RLinkLoginResult.self) }
     func shareCreate(_ t: String, type: String) async throws -> RShareCreateResult {
         try await post("/app/share/create", ["token": t, "type": type], as: RShareCreateResult.self)

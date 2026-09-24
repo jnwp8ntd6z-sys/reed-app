@@ -55,36 +55,8 @@ targets:
         LD_RUNPATH_SEARCH_PATHS:
           - "$(inherited)"
           - "@executable_path/Frameworks"
-        OTHER_LDFLAGS:
-          - "$(inherited)"
-          - "-ObjC"
-          - "-framework"
-          - "SharedUI"
-          - "-framework"
-          - "OlcRtcMobile"
-        "FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]":
-          - "$(inherited)"
-          - "$(SRCROOT)/../sharedUI/build/generated/olcrtc/ios/OlcRtcMobile.xcframework/ios-arm64"
-          - "$(SRCROOT)/../sharedUI/build/bin/iosArm64/$(KOTLIN_FRAMEWORK_BUILD_TYPE)Framework"
-        "FRAMEWORK_SEARCH_PATHS[sdk=iphonesimulator*]":
-          - "$(inherited)"
-          - "$(SRCROOT)/../sharedUI/build/generated/olcrtc/ios/OlcRtcMobile.xcframework/ios-arm64_x86_64-simulator"
-          - "$(SRCROOT)/../sharedUI/build/bin/iosSimulatorArm64/$(KOTLIN_FRAMEWORK_BUILD_TYPE)Framework"
-    preBuildScripts:
-      - name: "Build Shared Frameworks"
-        basedOnDependencyAnalysis: false
-        script: |
-          set -e
-          export PATH="$HOME/go/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
-          if [ -z "$ARCHS" ] || [ "$ARCHS" = "undefined_arch" ]; then
-            export ARCHS=arm64
-          fi
-          GRADLE_VERSION_ARGS=""
-          if [ -n "$OLCBOX_VERSION" ]; then
-            GRADLE_VERSION_ARGS="-Polcbox.version=$OLCBOX_VERSION"
-          fi
-          cd "$SRCROOT/.."
-          ./gradlew $GRADLE_VERSION_ARGS :sharedUI:buildOlcrtcIosXcframework :sharedUI:embedAndSignAppleFrameworkForXcode --no-configuration-cache
+    # Приложение — чистый SwiftUI без Kotlin/Go: движки (sing-box/olcRTC) живут только в
+    # PacketTunnel extension, приложение управляет им через NETunnelProviderManager.
 
   PacketTunnel:
     type: app-extension

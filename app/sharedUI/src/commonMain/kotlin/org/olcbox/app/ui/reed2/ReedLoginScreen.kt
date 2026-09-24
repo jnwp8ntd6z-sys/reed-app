@@ -104,13 +104,17 @@ fun ReedLoginScreen(
                 )
             }
             // Заголовок в две строки поверх декора, снизу-слева.
-            Column(Modifier.align(Alignment.BottomStart).padding(bottom = 8.dp)) {
-                Text("ИНТЕРНЕТ", color = Reed2.ink, fontSize = 34.sp, fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 0.5.sp)
-                Text("БЕЗ ОБРЫВОВ", fontSize = 34.sp, fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 0.5.sp,
-                    style = chromeTextStyle(androidx.compose.material3.MaterialTheme.typography.headlineLarge)
-                        .copy(fontSize = 34.sp, fontWeight = FontWeight.ExtraBold))
+            // Unbounded широкий: «БЕЗ ОБРЫВОВ» ≈ 9,3 dp на 1 sp — на узких экранах уменьшаем кегль.
+            androidx.compose.foundation.layout.BoxWithConstraints(Modifier.align(Alignment.BottomStart).fillMaxWidth()) {
+                val headSize = minOf(34f, (maxWidth.value - 4f) / 9.4f).sp
+                Column(Modifier.padding(bottom = 8.dp)) {
+                    Text("ИНТЕРНЕТ", color = Reed2.ink, fontSize = headSize, fontFamily = LocalReedFonts.current.headline, fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp, maxLines = 1, softWrap = false)
+                    Text("БЕЗ ОБРЫВОВ", fontSize = headSize, fontFamily = LocalReedFonts.current.headline, fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp, maxLines = 1, softWrap = false,
+                        style = chromeTextStyle(androidx.compose.material3.MaterialTheme.typography.headlineLarge)
+                            .copy(fontSize = headSize, fontFamily = LocalReedFonts.current.headline, fontWeight = FontWeight.Bold))
+                }
             }
         }
 
@@ -136,7 +140,7 @@ fun ReedLoginScreen(
                 contentAlignment = Alignment.CenterStart,
             ) {
                 Text("RD-XXXX  или  ссылка", color = Reed2.chrome600,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 15.sp)
+                    fontFamily = LocalReedFonts.current.mono, fontSize = 15.sp)
             }
             Spacer(Modifier.width(10.dp))
             Box(
@@ -195,14 +199,14 @@ fun ReedLoginScreen(
 @Composable
 private fun ReedLogoRow() {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text("REED", color = Reed2.ink, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold,
+        Text("REED", color = Reed2.ink, fontSize = 20.sp, fontFamily = LocalReedFonts.current.headline, fontWeight = FontWeight.Bold,
             letterSpacing = 1.sp)
         Spacer(Modifier.width(8.dp))
         Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(Reed2.lime))
         Spacer(Modifier.width(8.dp))
-        Text("CLIENT", fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp,
+        Text("CLIENT", fontSize = 20.sp, fontFamily = LocalReedFonts.current.headline, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
             style = chromeTextStyle(androidx.compose.material3.MaterialTheme.typography.titleLarge)
-                .copy(fontSize = 20.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp))
+                .copy(fontSize = 20.sp, fontFamily = LocalReedFonts.current.headline, fontWeight = FontWeight.Bold, letterSpacing = 1.sp))
     }
 }
 

@@ -1,13 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Reed VPN — всегда тёмная тема. Фон окна делаем брендовым тёмным (#0A0A0A),
-         чтобы при запуске и до отрисовки Compose не мелькало серое/белое окно платформы,
-         и чтобы за системными барами (status/navigation) был тот же тёмный цвет, а не
-         «белая полоса». Бары прозрачные — рисуем edge-to-edge из кода. -->
+    <!-- Reed Client — всегда тёмная тема. Фон окна брендовый тёмный, чтобы при запуске не
+         мелькало белое окно. Цвета баров не задаём (Play Console: устаревшие атрибуты) —
+         прозрачность и edge-to-edge включает AppActivity через enableEdgeToEdge. -->
     <style name="Theme.Reed" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/reed_window_bg</item>
-        <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
     </style>

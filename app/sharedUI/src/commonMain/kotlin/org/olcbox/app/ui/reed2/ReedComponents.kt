@@ -76,7 +76,7 @@ fun ReedMonoCapsule(text: String, modifier: Modifier = Modifier, color: Color = 
             .background(Reed2.surface300)
             .padding(horizontal = 12.dp, vertical = 5.dp),
     ) {
-        Text(text, color = color, fontFamily = FontFamily.Monospace, fontSize = 15.sp)
+        Text(text, color = color, fontFamily = LocalReedFonts.current.mono, fontSize = 15.sp)
     }
 }
 
@@ -114,7 +114,7 @@ fun ReedFlag(country: String, modifier: Modifier = Modifier) {
         Text(
             text = country.take(2).uppercase().ifBlank { "··" },
             color = Reed2.chrome200,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = LocalReedFonts.current.mono,
             fontSize = 10.sp,
             fontWeight = FontWeight.Medium,
         )
@@ -155,7 +155,7 @@ fun ReedServerRow(
         Text(
             Reed2.pingText(pingMs),
             color = Reed2.pingColor(pingMs),
-            fontFamily = FontFamily.Monospace,
+            fontFamily = LocalReedFonts.current.mono,
             fontSize = 13.sp,
             modifier = Modifier.padding(end = 12.dp),
         )

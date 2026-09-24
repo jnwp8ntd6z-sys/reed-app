@@ -43,11 +43,11 @@ fun ReedHomeNoCodeScreen(
     Column(modifier.fillMaxSize().background(Reed2.ground000).padding(horizontal = 20.dp)) {
         Spacer(Modifier.height(16.dp))
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("REED", color = Reed2.ink, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
+            Text("REED", color = Reed2.ink, fontSize = 18.sp, fontFamily = LocalReedFonts.current.headline, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             Spacer(Modifier.width(6.dp))
             Box(Modifier.size(6.dp).clip(RoundedCornerShape(50)).background(Reed2.lime))
             Spacer(Modifier.width(6.dp))
-            Text("CLIENT", color = Reed2.chrome400, fontSize = 18.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
+            Text("CLIENT", color = Reed2.chrome400, fontSize = 18.sp, fontFamily = LocalReedFonts.current.headline, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             Spacer(Modifier.weight(1f))
             Box(Modifier.size(44.dp).clip(RoundedCornerShape(50)).background(Reed2.surface200)
                 .clickable(onClick = onBell), contentAlignment = Alignment.Center) {

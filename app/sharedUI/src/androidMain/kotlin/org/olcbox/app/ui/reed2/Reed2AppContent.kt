@@ -20,6 +20,8 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -30,6 +32,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import kotlinx.coroutines.CancellationException
@@ -58,6 +61,7 @@ import org.olcbox.app.ui.features.home.HomeScreenViewModel
 import org.olcbox.app.ui.features.locations.LocationItem
 import org.olcbox.app.ui.features.locations.LocationViewModel
 import org.olcbox.app.ui.features.locations.PingsState
+import org.olcbox.app.vpn.AndroidInstalledApp
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
@@ -86,7 +90,12 @@ fun Reed2AppContent(
     locationViewModel: LocationViewModel,
     onToggleClick: () -> Unit,
     onScanQr: (onResult: (String) -> Unit) -> Unit,
-    onOpenAppsDirect: () -> Unit,
+    installedApps: List<AndroidInstalledApp>,
+    directApps: Set<String>,
+    onToggleDirectApp: (String) -> Unit,
+    onSetDirectApps: (Set<String>) -> Unit,
+    onAppsDirectOpened: () -> Unit,
+    onAppsDirectClosed: () -> Unit,
 ) {
     val context = LocalContext.current
     val uri = LocalUriHandler.current
@@ -107,6 +116,7 @@ fun Reed2AppContent(
     var token by remember { mutableStateOf(ReedSession.token) }
     var sheet by remember { mutableStateOf<ReedSheetSpec?>(null) }
     var showNotifications by remember { mutableStateOf(false) }
+    var showAppsDirect by remember { mutableStateOf(false) }
     var consent by remember { mutableStateOf(ReedSession.consentAccepted) }
 
     // ── Вход ──
@@ -445,6 +455,11 @@ fun Reed2AppContent(
         ServerUi(loc.storageId, geo.iso, geo.name, geo.city, pingOf(pingsState, loc.storageId), serverNetwork(loc))
     }
     val selected = servers.firstOrNull { it.key == selectedId }
+    // Название сервера для уведомления туннеля: «Reed Client · Подключено · Германия».
+    LaunchedEffect(selected?.countryName) {
+        context.getSharedPreferences("reed2", Context.MODE_PRIVATE).edit()
+            .putString("server_label", selected?.countryName.orEmpty()).apply()
+    }
     val connState = when {
         state.isVpnLoading -> ReedConnState.Connecting
         state.isVpnConnected -> ReedConnState.On
@@ -459,16 +474,24 @@ fun Reed2AppContent(
 
     // ─────────────────────────── экраны ───────────────────────────
 
-    BackHandler(enabled = sheet != null || showNotifications || stage == Stage.Codes ||
+    BackHandler(enabled = sheet != null || showNotifications || showAppsDirect || stage == Stage.Codes ||
         (stage == Stage.App && tab != ReedTab.Home)) {
         when {
             sheet != null -> sheet = null
+            showAppsDirect -> { showAppsDirect = false; onAppsDirectClosed() }
             showNotifications -> showNotifications = false
             stage == Stage.Codes -> { if (!codeBusy) stage = codesReturn }
             else -> tab = ReedTab.Home
         }
     }
 
+    // Шрифты Reed (ТЗ 3.3): Unbounded / Golos Text / JetBrains Mono — из ресурсов приложения.
+    val reedFonts = rememberReedFonts()
+    androidx.compose.runtime.CompositionLocalProvider(
+        LocalReedFonts provides reedFonts,
+        androidx.compose.material3.LocalTextStyle provides androidx.compose.material3.LocalTextStyle.current
+            .merge(androidx.compose.ui.text.TextStyle(fontFamily = reedFonts.body)),
+    ) {
     Box(Modifier.fillMaxSize().background(Reed2.ground000)) {
         AnimatedContent(
             targetState = if (memberBlocked && stage == Stage.App) null else stage,
@@ -480,7 +503,7 @@ fun Reed2AppContent(
         ) { st ->
             when (st) {
                 null -> ReedBlockedScreen(onLogout = { doLogout() })
-                Stage.Login -> ReedLoginScreen(
+                Stage.Login -> NarrowOnTablet { ReedLoginScreen(
                     consent = consent,
                     onConsentChange = { consent = it; ReedSession.consentAccepted = it },
                     onOpenCodeEntry = { openCodes(Stage.Login) },
@@ -497,8 +520,8 @@ fun Reed2AppContent(
                     onOpenPrivacy = { uri.openUri(ReedLinks.PRIVACY_POLICY) },
                     telegramBusy = tgBusy,
                     statusText = loginStatus,
-                )
-                Stage.Codes -> ReedCodeEntryScreen(
+                ) }
+                Stage.Codes -> NarrowOnTablet { ReedCodeEntryScreen(
                     code = code,
                     onCodeChange = { new ->
                         val grewByPaste = new.length - code.length > 1
@@ -517,7 +540,7 @@ fun Reed2AppContent(
                     busy = codeBusy,
                     name = codeName,
                     onNameChange = { codeName = it },
-                )
+                ) }
                 Stage.App -> ReedAppShell(selectedTab = tab, onSelectTab = { tab = it }) {
                     Crossfade(targetState = tab, animationSpec = tween(260), label = "tab") { t ->
                         when (t) {
@@ -734,7 +757,7 @@ fun Reed2AppContent(
                                             ruDirectUi = it; ReedSession.splitRouting = it
                                             homeViewModel.restartVpnIfRunning()
                                         },
-                                        onServicesDirect = { onOpenAppsDirect() },
+                                        onServicesDirect = { onAppsDirectOpened(); showAppsDirect = true },
                                         onNotifications = { showNotifications = true },
                                         onSupport = { uri.openUri(SUPPORT_URL) },
                                         onTerms = { uri.openUri(ReedLinks.TERMS_OF_SERVICE) },
@@ -798,7 +821,118 @@ fun Reed2AppContent(
             )
         }
 
+        // «Приложения напрямую» (ТЗ 7.5) — поверх, въезжает справа, как уведомления.
+        androidx.compose.animation.AnimatedVisibility(
+            visible = showAppsDirect,
+            enter = slideInHorizontally(tween(320, easing = FastOutSlowInEasing)) { it } + fadeIn(tween(240)),
+            exit = slideOutHorizontally(tween(280, easing = FastOutSlowInEasing)) { it } + fadeOut(tween(200)),
+        ) {
+            val all = installedApps
+                .filter { it.packageName != context.packageName }
+                .map { DirectAppUi(it.packageName, it.label) }
+                .sortedBy { it.label.lowercase() }
+            val presets = all.filter { it.packageName in DIRECT_APP_PRESETS }
+            ReedAppsDirectScreen(
+                presets = presets,
+                apps = all,
+                selected = directApps,
+                loading = installedApps.isEmpty(),
+                onToggle = onToggleDirectApp,
+                onSetPresets = { on ->
+                    val pkgs = presets.map { it.packageName }.toSet()
+                    onSetDirectApps(if (on) directApps + pkgs else directApps - pkgs)
+                },
+                onBack = { showAppsDirect = false; onAppsDirectClosed() },
+                icon = { pkg -> AppIcon(pkg) },
+            )
+        }
+
         ReedSheetHost(spec = sheet, onDismiss = { sheet = null })
+    }
+    }
+}
+
+/**
+ * Шрифты Reed из assets приложения (androidApp/src/main/assets/fonts). Compose-ресурсы в APK
+ * не упаковываются, поэтому не Res.font, а AssetManager — файлы всегда в APK, R8 их не трогает.
+ */
+@Composable
+private fun rememberReedFonts(): ReedFontSet {
+    val am = LocalContext.current.assets
+    return remember(am) {
+        fun f(name: String, w: androidx.compose.ui.text.font.FontWeight) =
+            androidx.compose.ui.text.font.Font("fonts/$name.ttf", am, w)
+        val W = androidx.compose.ui.text.font.FontWeight
+        try {
+            ReedFontSet(
+                headline = androidx.compose.ui.text.font.FontFamily(f("unbounded_semibold", W.SemiBold), f("unbounded_bold", W.Bold)),
+                body = androidx.compose.ui.text.font.FontFamily(f("golos_regular", W.Normal), f("golos_medium", W.Medium),
+                    f("golos_semibold", W.SemiBold), f("golos_semibold", W.Bold)),
+                mono = androidx.compose.ui.text.font.FontFamily(f("jetbrains_mono_medium", W.Medium), f("jetbrains_mono_medium", W.Normal)),
+            )
+        } catch (e: Throwable) {
+            ReedFontSet(androidx.compose.ui.text.font.FontFamily.Default, androidx.compose.ui.text.font.FontFamily.Default,
+                androidx.compose.ui.text.font.FontFamily.Monospace)
+        }
+    }
+}
+
+/** Планшет (≥ 600 dp, ТЗ 7.6.5): экран входа по центру, не шире 560 dp. */
+@Composable
+private fun NarrowOnTablet(content: @Composable () -> Unit) {
+    androidx.compose.foundation.layout.BoxWithConstraints(
+        Modifier.fillMaxSize().background(Reed2.ground000),
+        contentAlignment = androidx.compose.ui.Alignment.TopCenter,
+    ) {
+        if (maxWidth >= 600.dp) {
+            Box(Modifier.widthIn(max = 560.dp).fillMaxSize()) { content() }
+        } else content()
+    }
+}
+
+/** Банки и госуслуги — предустановленная группа «напрямую» (показываются только установленные). */
+private val DIRECT_APP_PRESETS = setOf(
+    "ru.sberbankmobile",                    // СберБанк Онлайн
+    "com.idamob.tinkoff.android",           // Т-Банк
+    "ru.tinkoff.mb",                        // Т-Бизнес
+    "ru.vtb24.mobilebanking.android",       // ВТБ Онлайн
+    "ru.alfabank.mobile.android",           // Альфа-Банк
+    "ru.gazprombank.android.mobilebank.app",// Газпромбанк
+    "ru.raiffeisennews",                    // Райффайзен Банк
+    "ru.rosbank.android",                   // Росбанк
+    "ru.psbank.online",                     // ПСБ
+    "ru.sovcombank.halvacard",              // Халва (Совкомбанк)
+    "ru.pochta.bank",                       // Почта Банк
+    "ru.mtsbank.app",                       // МТС Банк
+    "ru.ozon.fintech.finance",              // Ozon Банк
+    "ru.yoo.money",                         // ЮMoney
+    "ru.rostel",                            // Госуслуги
+    "com.gnivts.selfemployed",              // Мой налог
+    "ru.fns.lkfl",                          // Налоги ФЛ
+    "ru.mos.app",                           // Моя Москва
+    "ru.nspk.mirpay",                       // Mir Pay
+)
+
+/** Иконка установленного приложения (грузится вне главного потока, кэш на время экрана). */
+@Composable
+private fun AppIcon(pkg: String) {
+    val context = LocalContext.current
+    val bmp by androidx.compose.runtime.produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, pkg) {
+        value = withContext(Dispatchers.IO) {
+            try {
+                val d = context.packageManager.getApplicationIcon(pkg)
+                val size = 96
+                val b = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+                val c = android.graphics.Canvas(b)
+                d.setBounds(0, 0, size, size)
+                d.draw(c)
+                b.asImageBitmap()
+            } catch (e: Throwable) { null }
+        }
+    }
+    val img = bmp
+    if (img != null) {
+        androidx.compose.foundation.Image(img, null, modifier = Modifier.fillMaxSize())
     }
 }
 

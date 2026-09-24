@@ -88,14 +88,18 @@ extension View {
     }
 }
 
-// MARK: - Шрифты (ТЗ 3.3: заголовки Unbounded, коды JetBrains Mono; пока системные + monospaced)
+// MARK: - Шрифты (ТЗ 3.3): заголовки и логотип — Unbounded, коды/пинг/таймер/версия — JetBrains Mono,
+// остальной текст — системный SF Pro. Файлы лежат в приложении (Fonts/, UIAppFonts), из сети не грузятся.
 
 extension Font {
-    /// Заголовок экрана капсом (ПРОФИЛЬ, СЕМЬЯ). Пока системный heavy; позже — Unbounded.
-    static func reedTitle(_ size: CGFloat = 30) -> Font { .system(size: size, weight: .heavy) }
-    static func reedHeadline(_ size: CGFloat = 34) -> Font { .system(size: size, weight: .heavy) }
-    /// Коды/пинг/таймер/версия — моноширинный (позже JetBrains Mono).
+    /// Заголовок экрана капсом (ПРОФИЛЬ, СЕМЬЯ).
+    static func reedTitle(_ size: CGFloat = 28) -> Font { .custom("Unbounded-Bold", fixedSize: size) }
+    /// Крупный заголовок входа («ИНТЕРНЕТ / БЕЗ ОБРЫВОВ»).
+    static func reedHeadline(_ size: CGFloat = 36) -> Font { .custom("Unbounded-Bold", fixedSize: size) }
+    /// Логотип REED · CLIENT.
+    static func reedLogo(_ size: CGFloat = 20) -> Font { .custom("Unbounded-SemiBold", fixedSize: size) }
+    /// Коды/пинг/таймер/трафик/версия.
     static func reedMono(_ size: CGFloat = 15, weight: Font.Weight = .medium) -> Font {
-        .system(size: size, weight: weight, design: .monospaced)
+        .custom("JetBrainsMonoRoman-Medium", fixedSize: size)
     }
 }

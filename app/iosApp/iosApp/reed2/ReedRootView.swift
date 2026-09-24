@@ -18,13 +18,9 @@ struct ReedRootView: View {
                     case .login:
                         ReedLoginView(
                             consent: Binding(get: { m.consent }, set: { m.acceptConsent($0) }),
-                            showTelegram: m.showTelegram,
-                            telegramBusy: m.tgBusy,
-                            statusText: m.loginStatus,
                             onOpenCodeEntry: { m.openCodes(from: .login) },
                             onScanQr: { scanner = true },
                             onContinueWithoutCode: { m.continueWithoutCode() },
-                            onTelegram: { m.startTelegram() },
                             onTerms: { open("https://reedapp.ru/terms") },
                             onPrivacy: { open("https://reedapp.ru/privacy-app") }
                         )

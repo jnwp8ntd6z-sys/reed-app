@@ -97,7 +97,7 @@ import Foundation
             proto.providerBundleIdentifier = self.providerBundleID
             proto.serverAddress = "Reed"
             mgr.protocolConfiguration = proto
-            mgr.localizedDescription = "Reed"
+            mgr.localizedDescription = "Reed Client"
             mgr.isEnabled = true
             mgr.saveToPreferences { _ in
                 mgr.loadFromPreferences { _ in

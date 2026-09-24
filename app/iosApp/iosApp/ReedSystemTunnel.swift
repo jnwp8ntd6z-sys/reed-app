@@ -92,13 +92,12 @@ final class ReedSystemTunnel: ReedTunnel {
         guard !servers.isEmpty else { return }
         let d = direct.joined(separator: ",")
         Task.detached(priority: .utility) {
-            let sb = SwiftSingBoxManager()
-            _ = sb.prewarmTunnelConfigs(token: token, servers: servers, split: split, direct: d, force: false)
-            _ = sb.prewarmTunnelConfigs(token: token, servers: servers, split: !split, direct: d, force: false)
+            ReedTunnelCache.prewarm(token: token, servers: servers, split: split, direct: d, force: false)
+            ReedTunnelCache.prewarm(token: token, servers: servers, split: !split, direct: d, force: false)
         }
     }
 
     func extensionLog() -> String? {
-        SwiftSingBoxManager().readExtensionLog()
+        ReedTunnelCache.extensionLog()
     }
 }
