@@ -122,7 +122,8 @@ internal object SingBoxDesktopRunner {
      * Если имя адаптера не определилось, конфиг возвращаем как есть: лучше рабочий VPN
      * без РФ-сплита, чем упавший старт.
      */
-    internal fun bindDirectToInterface(configJson: String, bindInterface: String?): String {
+    internal fun bindDirectToInterface(rawConfigJson: String, bindInterface: String?): String {
+        val configJson = if (ReedSession.splitRouting) addRuZonesDirect(rawConfigJson) else rawConfigJson
         if (bindInterface.isNullOrBlank()) return configJson
         return runCatching {
             val root = json.parseToJsonElement(configJson).jsonObject
@@ -158,6 +159,36 @@ internal object SingBoxDesktopRunner {
             json.encodeToString(JsonObject.serializer(), JsonObject(patched))
         }.getOrElse { configJson }
     }
+
+    /**
+     * «Российские сайты напрямую» на компьютере: кроме серверного списка (~300 доменов и
+     * подсетей РФ) пускаем мимо туннеля ВСЕ зоны .ru / .su / .рф — банки, 1С, Контур, СБИС,
+     * госсервисы и любые российские программы, которых нет в списке. Правило ставим перед
+     * серверным direct-списком: YouTube/Google-правила выше по списку сохраняют приоритет.
+     */
+    internal fun addRuZonesDirect(configJson: String): String = runCatching {
+        val root = json.parseToJsonElement(configJson).jsonObject
+        val route = root["route"] as? JsonObject ?: return configJson
+        val rules = route["rules"]?.jsonArray ?: return configJson
+        val hasDirect = root["outbounds"]?.jsonArray?.any {
+            it.jsonObject["tag"]?.jsonPrimitive?.content == "direct"
+        } == true
+        if (!hasDirect) return configJson
+        val zoneRule = JsonObject(mapOf(
+            "domain_suffix" to JsonArray(RU_ZONES.map { JsonPrimitive(it) }),
+            "outbound" to JsonPrimitive("direct"),
+        ))
+        if (rules.any { it == zoneRule }) return configJson
+        // Перед первым «общим» direct-правилом по доменам (без network/port — это не QUIC-правило).
+        val at = rules.indexOfFirst { r ->
+            val o = r as? JsonObject ?: return@indexOfFirst false
+            o["outbound"]?.jsonPrimitive?.content == "direct" && o["domain_suffix"] != null && o["network"] == null
+        }.let { if (it < 0) rules.size else it }
+        val patchedRules = JsonArray(rules.take(at) + zoneRule + rules.drop(at))
+        val patched = root.toMutableMap()
+        patched["route"] = JsonObject(route + ("rules" to patchedRules))
+        json.encodeToString(JsonObject.serializer(), JsonObject(patched))
+    }.getOrElse { configJson }
 
     /** Уже есть кэш конфига для (сервер, порт)? */
     fun isCached(serverId: String, socksPort: Int): Boolean =
@@ -231,9 +262,13 @@ internal object SingBoxDesktopRunner {
     }.getOrDefault(false)
 
     /** Файл кэша sing-box-конфига в каталоге настроек приложения. */
+    private val RU_ZONES = listOf("ru", "su", "xn--p1ai") // xn--p1ai = .рф
+
     private fun cacheFile(serverId: String, socksPort: Int): File {
         val dir = File(System.getProperty("user.home"), ".reedvpn/cache").apply { mkdirs() }
         val safe = serverId.map { if (it.isLetterOrDigit()) it else '_' }.joinToString("")
-        return File(dir, "singbox_cache_${safe}_$socksPort.json")
+        // Режим «РФ напрямую» — часть конфига: без него в кэше после переключения лежал бы старый вариант.
+        val split = if (ReedSession.splitRouting) "s1" else "s0"
+        return File(dir, "singbox_cache_${safe}_${socksPort}_$split.json")
     }
 }
