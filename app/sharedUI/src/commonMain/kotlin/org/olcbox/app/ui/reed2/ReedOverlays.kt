@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -87,7 +88,7 @@ fun ReedSheetHost(spec: ReedSheetSpec?, onDismiss: () -> Unit) {
             if (shown != null) {
                 val i = remember { MutableInteractionSource() }
                 Column(
-                    Modifier.fillMaxWidth()
+                    Modifier.widthIn(max = 640.dp).fillMaxWidth() // планшет/компьютер: лист не во всю ширину
                         .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
                         .background(Reed2.surface200)
                         .clickable(i, null) {}   // клики по карточке не закрывают лист

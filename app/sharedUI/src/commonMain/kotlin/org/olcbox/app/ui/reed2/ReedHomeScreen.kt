@@ -21,6 +21,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -81,14 +84,11 @@ fun ReedHomeScreen(
     refreshing: Boolean = false,
     pinging: Boolean = false,
     emptyServersText: String = "Серверы загружаются…",
+    showNetworkSwitch: Boolean = true, // Windows: только Wi-Fi-серверы, переключателя нет
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier.fillMaxSize().background(Reed2.ground000)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp),
-    ) {
-        Spacer(Modifier.height(16.dp))
+    // Блоки экрана — одни и те же для телефона и широкого окна (компьютер).
+    val headerBlock: @Composable () -> Unit = {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             HomeLogo()
             Spacer(Modifier.weight(1f))
@@ -108,9 +108,12 @@ fun ReedHomeScreen(
             }
         }
 
+    }
+    val connectBlock: @Composable (connectSize: Int) -> Unit = { connectSize ->
+      Column {
         Spacer(Modifier.height(18.dp))
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            ReedConnectButton(state = connState, onClick = onToggleConnect, size = 170)
+            ReedConnectButton(state = connState, onClick = onToggleConnect, size = connectSize)
         }
 
         Spacer(Modifier.height(14.dp))
@@ -151,6 +154,10 @@ fun ReedHomeScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp), textAlign = TextAlign.Center)
         }
 
+      }
+    }
+    val subscriptionBlock: @Composable () -> Unit = {
+      Column {
         // Карточка подписки / сообщение о подписке.
         if (subscription != null) {
             Spacer(Modifier.height(18.dp))
@@ -198,14 +205,20 @@ fun ReedHomeScreen(
             }
         }
 
-        Spacer(Modifier.height(18.dp))
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            ReedSegmented(
-                options = listOf("Wi-Fi", "Мобильный"),
-                selectedIndex = if (network == "cell") 1 else 0,
-                onSelect = { onSelectNetwork(if (it == 1) "cell" else "wifi") },
-                modifier = Modifier.width(260.dp),
-            )
+      }
+    }
+    val serversBlock: @Composable () -> Unit = {
+      Column {
+        if (showNetworkSwitch) {
+            Spacer(Modifier.height(18.dp))
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                ReedSegmented(
+                    options = listOf("Wi-Fi", "Мобильный"),
+                    selectedIndex = if (network == "cell") 1 else 0,
+                    onSelect = { onSelectNetwork(if (it == 1) "cell" else "wifi") },
+                    modifier = Modifier.width(260.dp),
+                )
+            }
         }
 
         Spacer(Modifier.height(20.dp))
@@ -237,7 +250,48 @@ fun ReedHomeScreen(
                 }
             }
         }
-        Spacer(Modifier.height(24.dp))
+      }
+    }
+
+    BoxWithConstraints(modifier.fillMaxSize().background(Reed2.ground000)) {
+        if (maxWidth >= 860.dp) {
+            // Широкое окно: слева подписка и серверы, справа — кнопка подключения (своя панель).
+            Row(Modifier.fillMaxSize()) {
+                Column(
+                    Modifier.weight(1f).widthIn(max = 620.dp).fillMaxHeight()
+                        .verticalScroll(rememberScrollState()).padding(horizontal = 28.dp),
+                ) {
+                    Spacer(Modifier.height(20.dp))
+                    headerBlock()
+                    subscriptionBlock()
+                    serversBlock()
+                    Spacer(Modifier.height(24.dp))
+                }
+                Box(
+                    Modifier.weight(1f).fillMaxHeight().padding(16.dp)
+                        .clip(RoundedCornerShape(32.dp)).background(Reed2.surface100),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    // Без прокрутки: скролл обрезал бы сияние кнопки прямоугольником.
+                    Column(Modifier.widthIn(max = 420.dp).padding(24.dp)) {
+                        connectBlock(210)
+                    }
+                }
+            }
+        } else {
+            Column(
+                Modifier.fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp),
+            ) {
+                Spacer(Modifier.height(16.dp))
+                headerBlock()
+                connectBlock(170)
+                subscriptionBlock()
+                serversBlock()
+                Spacer(Modifier.height(24.dp))
+            }
+        }
     }
 }
 

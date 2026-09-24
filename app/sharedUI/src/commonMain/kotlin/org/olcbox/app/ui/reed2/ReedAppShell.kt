@@ -39,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -53,6 +54,7 @@ fun ReedAppShell(
     selectedTab: ReedTab,
     onSelectTab: (ReedTab) -> Unit,
     modifier: Modifier = Modifier,
+    contentMaxWidth: Dp = 560.dp, // компьютер: шире
     content: @Composable () -> Unit,
 ) {
     BoxWithConstraints(modifier.fillMaxSize().background(Reed2.ground000)) {
@@ -64,7 +66,7 @@ fun ReedAppShell(
                         .windowInsetsPadding(WindowInsets.safeDrawing),
                     contentAlignment = Alignment.TopCenter,
                 ) {
-                    Box(Modifier.widthIn(max = 560.dp).fillMaxSize()) { content() }
+                    Box(Modifier.widthIn(max = contentMaxWidth).fillMaxSize()) { content() }
                 }
             }
         } else {

@@ -80,6 +80,7 @@ fun ReedProfileScreen(
     onBotSubscription: () -> Unit = {},
     onReferrals: () -> Unit = {},
     servicesDirectLabel: String = "Приложения напрямую", // iOS: «Сервисы напрямую»
+    showServicesDirect: Boolean = true, // Windows: пункта нет
     servicesDirectSubtitle: String = "Банки, госуслуги и другие",
     autoConnectSubtitle: String = "При запуске и после перезагрузки",
     onTitleLongPress: () -> Unit = {},
@@ -185,7 +186,7 @@ fun ReedProfileScreen(
         Spacer(Modifier.height(8.dp))
         ToggleRow(Icons.Rounded.Bolt, "Автоподключение", autoConnectSubtitle, autoConnect, onAutoConnect)
         ToggleRow(Icons.Rounded.Language, "Российские сайты напрямую", "Мимо туннеля", ruDirect, onRuDirect)
-        NavRow(Icons.Rounded.Apps, servicesDirectLabel, servicesDirectSubtitle, onServicesDirect)
+        if (showServicesDirect) NavRow(Icons.Rounded.Apps, servicesDirectLabel, servicesDirectSubtitle, onServicesDirect)
         NavRow(Icons.Rounded.Notifications, "Уведомления", null, onNotifications)
 
         // ПОМОЩЬ.

@@ -114,7 +114,7 @@ val olcrtcRepoDir = olcrtcRepo.map { rootProject.file(it) }
 val generatedNativeResources = layout.buildDirectory.dir("generated/desktopNativeResources")
 val hevSocks5TunnelSourceDir = rootProject.layout.projectDirectory.dir("androidApp/src/main/jni/hev-socks5-tunnel")
 val currentBuildOs = OperatingSystem.current()
-val desktopPackageName = "ReedVPN"
+val desktopPackageName = "Reed Client"
 val desktopPackageVersion = providers.gradleProperty("olcbox.version").orElse("1.0.0").get()
 val tun2SocksVersion = "2.6.0"
 val wintunVersion = "0.14.1"
@@ -486,13 +486,16 @@ compose.desktop {
             targetFormats(*currentBuildTargetFormats)
             packageName = desktopPackageName
             packageVersion = desktopPackageVersion
+            vendor = "Reed"
+            description = "Reed Client"
+            copyright = "© 2026 Reed"
 
             linux {
                 iconFile.set(project.file("appIcons/LinuxIcon.png"))
             }
             windows {
                 iconFile.set(project.file("appIcons/WindowsIcon.ico"))
-                menuGroup = "Reed VPN"
+                menuGroup = "Reed"
                 shortcut = true
                 dirChooser = true
                 upgradeUuid = "6f0aaf78-dbed-4745-9d95-9e63f10a30de"

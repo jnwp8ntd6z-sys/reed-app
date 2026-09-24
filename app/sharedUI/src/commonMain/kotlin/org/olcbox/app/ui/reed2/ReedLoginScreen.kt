@@ -67,6 +67,7 @@ fun ReedLoginScreen(
     onOpenTerms: () -> Unit = {},
     onOpenPrivacy: () -> Unit = {},
     telegramBusy: Boolean = false,
+    introText: String = "Вставь код, ключ подписки или приглашение — или отсканируй QR.",
     statusText: String? = null,
     modifier: Modifier = Modifier,
 ) {
@@ -133,7 +134,7 @@ fun ReedLoginScreen(
         ) {
         Spacer(Modifier.height(20.dp))
         Text(
-            "Вставь код, ключ подписки или приглашение — или отсканируй QR.",
+            introText,
             color = Reed2.inkMuted, fontSize = 15.sp, lineHeight = 21.sp,
         )
 

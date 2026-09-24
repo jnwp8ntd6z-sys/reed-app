@@ -72,6 +72,9 @@ import java.security.SecureRandom
 import kotlin.math.min
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import org.olcbox.app.ui.reed2.DesktopReed2AppContent
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.MultiFormatWriter
 import com.google.zxing.common.BitMatrix
@@ -193,7 +196,7 @@ fun main(args: Array<String>) = application {
                             updateMessage = "${info.channel.name} update found: ${info.version}"
                         } else {
                             updateOffer = null
-                            updateMessage = "Reed VPN is up to date"
+                            updateMessage = "Reed Client is up to date"
                         }
                     } else {
                         updateOffer = null
@@ -259,37 +262,51 @@ fun main(args: Array<String>) = application {
     Tray(
         state = trayState,
         icon = painterResource(trayIconResourceName()),
-        tooltip = "Reed VPN",
+        tooltip = "Reed Client",
         menu = {
-            Item("Open", onClick = { isWindowVisible = true })
+            Item("Открыть", onClick = { isWindowVisible = true })
             Item(
-                if (trayHomeState.isVpnConnected || trayHomeState.isVpnLoading) "Stop" else "Start",
+                if (trayHomeState.isVpnConnected || trayHomeState.isVpnLoading) "Отключить" else "Подключить",
                 enabled = trayHomeState.isVpnConnected || trayHomeState.isVpnLoading || trayHomeState.canStartVpn,
                 onClick = {
                     dependencies.homeViewModel.ToggleVpn()
                 }
             )
-            Item("Settings", onClick = {
-                isWindowVisible = true
-                showDesktopSettings = true
-            })
             Separator()
-            Item("Quit", onClick = {
+            Item("Выход", onClick = {
                 dependencies.close()
                 exitApplication()
             })
         }
     )
 
+    val windowState = rememberWindowState(width = 440.dp, height = 880.dp)
     Window(
-        title = "Reed VPN",
+        title = "Reed Client",
+        icon = painterResource(trayIconResourceName()),
         visible = isWindowVisible,
-        state = rememberWindowState(width = 430.dp, height = 780.dp),
+        state = windowState,
+        onKeyEvent = { e ->
+            // F11 — во весь экран и обратно, Esc — выйти из полноэкранного режима.
+            if (e.type != androidx.compose.ui.input.key.KeyEventType.KeyDown) false
+            else when (e.key) {
+                androidx.compose.ui.input.key.Key.F11 -> {
+                    windowState.placement = if (windowState.placement == androidx.compose.ui.window.WindowPlacement.Fullscreen)
+                        androidx.compose.ui.window.WindowPlacement.Floating else androidx.compose.ui.window.WindowPlacement.Fullscreen
+                    true
+                }
+                androidx.compose.ui.input.key.Key.Escape ->
+                    if (windowState.placement == androidx.compose.ui.window.WindowPlacement.Fullscreen) {
+                        windowState.placement = androidx.compose.ui.window.WindowPlacement.Floating; true
+                    } else false
+                else -> false
+            }
+        },
         onCloseRequest = {
             isWindowVisible = false
         },
     ) {
-        window.minimumSize = Dimension(350, 600)
+        window.minimumSize = Dimension(380, 640)
 
         DisposableEffect(Unit) {
             onDispose {
@@ -309,148 +326,13 @@ fun main(args: Array<String>) = application {
             }
 
             Box(modifier = Modifier.fillMaxSize()) {
-                OlcboxAppContent(
+                // Reed 2.0: новый интерфейс (общие экраны с Android), только Wi-Fi-серверы.
+                DesktopReed2AppContent(
                     homeViewModel = dependencies.homeViewModel,
                     locationViewModel = dependencies.locationViewModel,
-                    currentScreen = currentScreen,
-                    onNavigate = { screen ->
-                        currentScreen = screen
-                    },
-                    onToggleClick = {
-                        dependencies.homeViewModel.ToggleVpn()
-                    },
-                    onImportFileRequested = {
-                        chooseConfigFile(window)?.let { file ->
-                            dependencies.homeViewModel.onFileSelected(file) {
-                                reloadLocationsAfterImport()
-                            }
-                        }
-                    },
-                    onImportFromClipboardRequested = { onImported, onError ->
-                        dependencies.homeViewModel.onPasteFromClipboard(
-                            onComplete = {
-                                reloadLocationsAfterImport(onImported)
-                            },
-                            onError = onError
-                        )
-                    },
-                    onScanQrRequested = {},
-                    onCopyConfigRequested = {
-                        dependencies.homeViewModel.onCopyFullConfigClicked()
-                    },
-                    onShareLocationRequested = { config ->
-                        sharePayload = "Location QR" to ConfigShareService.olcRtcUri(config)
-                    },
-                    onSaveLogsRequested = { onSaved, onError ->
-                        chooseSaveFile(
-                            owner = window,
-                            defaultName = dependencies.homeViewModel.suggestedLogsFileName()
-                        )?.let { file ->
-                            dependencies.homeViewModel.onSaveLogsToFile(
-                                target = file,
-                                onSaved = onSaved,
-                                onError = onError
-                            )
-                        }
-                    },
-                    showAppSettingsButton = true,
-                    showSplitTunnelingButton = false,
-                    canScanQr = false,
-                    onAppSettingsClick = { showDesktopSettings = true },
-                    onSplitTunnelingClick = {}
+                    onToggleClick = { dependencies.homeViewModel.ToggleVpn() },
+                    onScanQr = { onResult -> readQrOrCodeFromDesktop(window)?.let(onResult) },
                 )
-
-                if (showDesktopSettings) {
-                    ApplicationSettingsSheet(
-                        updateSettings = updateSettings,
-                        updateStatusText = updateMessage,
-                        updateDownloadProgress = updateProgress,
-                        updateOffer = updateOffer,
-                        subscriptions = desktopSubscriptionItems(dependencies.locationViewModel.locations.toList()),
-                        logs = logs,
-                        connectionSummary = "SOCKS5 ${socksProxySettings.host}:${socksProxySettings.port}",
-                        connectionDetails = listOf(
-                            "PAC URL" to "http://127.0.0.1:10809/proxy.pac",
-                            "PAC Target" to "SOCKS5 ${socksProxySettings.host}:${socksProxySettings.port}"
-                        ),
-                        socksProxySettings = socksProxySettings.toApplicationSocksProxySettings(),
-                        isConnectionActive = homeState.isVpnConnected,
-                        onDismiss = { showDesktopSettings = false },
-                        onCopyConfigClick = {
-                            dependencies.homeViewModel.onCopyFullConfigClicked()
-                            desktopNotice = "Copied"
-                        },
-                        onSaveLogsClick = {
-                            chooseSaveFile(
-                                owner = window,
-                                defaultName = dependencies.homeViewModel.suggestedLogsFileName()
-                            )?.let { file ->
-                                dependencies.homeViewModel.onSaveLogsToFile(
-                                    target = file,
-                                    onSaved = { message -> updateMessage = message },
-                                    onError = { message -> updateMessage = message }
-                                )
-                            }
-                        },
-                        onShareLogsClick = {
-                            dependencies.homeViewModel.onShareLogs(
-                                onShared = { message -> updateMessage = message },
-                                onError = { message -> updateMessage = message }
-                            )
-                        },
-                        onUpdateIntervalSelected = { hours ->
-                            scope.launch {
-                                saveUpdateSettings(updateSettings.copy(intervalHours = hours))
-                            }
-                        },
-                        onCheckUpdatesClick = { checkUpdate(manual = true) },
-                        onDownloadUpdateClick = { info -> downloadUpdate(info) },
-                        onLaterUpdateClick = { info -> postponeUpdate(info) },
-                        onSubscriptionShareClick = { url ->
-                            sharePayload = "Subscription QR" to ConfigShareService.subscriptionQrText(url)
-                        },
-                        onSubscriptionRefreshClick = { url ->
-                            dependencies.homeViewModel.refreshSubscription(url) { updatedCount ->
-                                reloadLocationsAfterImport {
-                                    dependencies.homeViewModel.restartVpnIfRunning()
-                                    updateMessage = if (updatedCount > 0) {
-                                        "Subscription updated"
-                                    } else {
-                                        "Subscription not updated"
-                                    }
-                                }
-                            }
-                        },
-                        onSocksProxySettingsSaved = { username, password, port ->
-                            val settings = socksProxySettings.copy(
-                                port = port,
-                                username = username,
-                                password = password
-                            ).normalized()
-                            dependencies.vpnManager.updateSocksProxySettings(settings)
-                            scope.launch {
-                                dependencies.socksProxySettingsStore.save(settings)
-                            }
-                            desktopNotice = "SOCKS proxy saved"
-                            if (homeState.isVpnConnected) {
-                                dependencies.homeViewModel.restartVpnIfRunning()
-                            }
-                        },
-                        onSocksProxyPasswordRegenerated = {
-                            val settings = socksProxySettings.copy(
-                                password = generateDesktopProxyPassword()
-                            ).normalized()
-                            dependencies.vpnManager.updateSocksProxySettings(settings)
-                            scope.launch {
-                                dependencies.socksProxySettingsStore.save(settings)
-                            }
-                            desktopNotice = "Password regenerated"
-                            if (homeState.isVpnConnected) {
-                                dependencies.homeViewModel.restartVpnIfRunning()
-                            }
-                        }
-                    )
-                }
 
                 updateOffer?.let { info ->
                     ApplicationUpdateOfferSheet(
@@ -716,4 +598,37 @@ private fun chooseSaveFile(owner: Frame, defaultName: String): File? {
     val directory = dialog.directory ?: return File(fileName)
 
     return File(directory, fileName)
+}
+
+/**
+ * «QR» на компьютере: камеры нет, поэтому берём код/ссылку из буфера обмена, иначе картинку
+ * с QR из буфера (скриншот) или из файла и распознаём её.
+ */
+private fun readQrOrCodeFromDesktop(owner: Frame): String? {
+    val cb = try { java.awt.Toolkit.getDefaultToolkit().systemClipboard } catch (e: Throwable) { null }
+    try {
+        val text = cb?.getData(java.awt.datatransfer.DataFlavor.stringFlavor) as? String
+        if (!text.isNullOrBlank()) return text.trim()
+    } catch (e: Throwable) { }
+    try {
+        val img = cb?.getData(java.awt.datatransfer.DataFlavor.imageFlavor) as? java.awt.Image
+        if (img != null) decodeQr(img)?.let { return it }
+    } catch (e: Throwable) { }
+    val dialog = java.awt.FileDialog(owner, "Картинка с QR-кодом", java.awt.FileDialog.LOAD)
+    dialog.isVisible = true
+    val file = dialog.file?.let { File(dialog.directory, it) } ?: return null
+    return try { javax.imageio.ImageIO.read(file)?.let { decodeQr(it) } } catch (e: Throwable) { null }
+}
+
+private fun decodeQr(image: java.awt.Image): String? {
+    val w = image.getWidth(null); val h = image.getHeight(null)
+    if (w <= 0 || h <= 0) return null
+    val bi = java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_RGB)
+    bi.createGraphics().apply { drawImage(image, 0, 0, null); dispose() }
+    val px = IntArray(w * h); bi.getRGB(0, 0, w, h, px, 0, w)
+    val src = com.google.zxing.RGBLuminanceSource(w, h, px)
+    return try {
+        com.google.zxing.MultiFormatReader().decode(com.google.zxing.BinaryBitmap(com.google.zxing.common.HybridBinarizer(src)))
+            .text?.trim()
+    } catch (e: Throwable) { null }
 }
