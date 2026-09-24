@@ -74,6 +74,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import org.olcbox.app.ui.reed2.DesktopReed2AppContent
 import androidx.compose.ui.input.key.key
+import kotlinx.coroutines.flow.first
+import org.olcbox.app.data.reed.ReedSession
 import androidx.compose.ui.input.key.type
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.MultiFormatWriter
@@ -145,7 +147,12 @@ private fun trayIconResourceName(): String {
     return if ("win" in osName) "WindowsTrayIcon.png" else "LinuxIcon.png"
 }
 
-fun main(args: Array<String>) = application {
+fun main(args: Array<String>) {
+    if ("--selftest" in args) { runSelfTest(); return }
+    reedApp(args)
+}
+
+private fun reedApp(args: Array<String>) = application {
     // Configure JNA to find native libraries in resources
     System.setProperty(
         "jna.library.path",
@@ -631,4 +638,89 @@ private fun decodeQr(image: java.awt.Image): String? {
         com.google.zxing.MultiFormatReader().decode(com.google.zxing.BinaryBitmap(com.google.zxing.common.HybridBinarizer(src)))
             .text?.trim()
     } catch (e: Throwable) { null }
+}
+
+/**
+ * Самопроверка Windows-клиента (CI): вход по токену из REED_SELFTEST_TOKEN, импорт серверов аккаунта,
+ * подключение к первому Wi-Fi-серверу через НАСТОЯЩИЙ TUN, запросы к российским и зарубежным сайтам
+ * системной сетью (т.е. через туннель и сплит-роутинг), отчёт в REED_SELFTEST_REPORT. Окно не открывается.
+ */
+private fun runSelfTest() = kotlinx.coroutines.runBlocking {
+    val out = StringBuilder()
+    fun log(s: String) { println(s); out.appendLine(s) }
+    val reportFile = File(System.getenv("REED_SELFTEST_REPORT") ?: "reed-selftest.txt")
+    val token = System.getenv("REED_SELFTEST_TOKEN").orEmpty()
+    val deps = DesktopAppDependencies()
+    fun ipVia(url: String): String = try {
+        val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        c.connectTimeout = 10000; c.readTimeout = 10000
+        val body = c.inputStream.bufferedReader().readText()
+        body.lineSequence().firstOrNull { it.startsWith("ip=") }?.removePrefix("ip=") ?: body.trim().take(60)
+    } catch (e: Throwable) { "ошибка: ${e.javaClass.simpleName}" }
+    fun probe(url: String): String = try {
+        val t0 = System.nanoTime()
+        val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        c.connectTimeout = 12000; c.readTimeout = 12000; c.instanceFollowRedirects = false
+        c.setRequestProperty("User-Agent", "Mozilla/5.0 ReedSelfTest")
+        val code = c.responseCode; c.disconnect()
+        "HTTP $code за ${(System.nanoTime() - t0) / 1_000_000} мс"
+    } catch (e: Throwable) { "НЕ ОТКРЫЛСЯ (${e.javaClass.simpleName}: ${e.message?.take(80)})" }
+
+    try {
+        val before = ipVia("https://www.cloudflare.com/cdn-cgi/trace")
+        log("IP до подключения: $before")
+        // Без токена — «временный сервер» (работает без входа): проверяем TUN и путь «напрямую».
+        if (token.isNotBlank()) ReedSession.token = token
+        ReedSession.splitRouting = true
+        ReedSession.onboardingDone = true; ReedSession.consentAccepted = true
+        suspend fun import(url: String): String? = kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+            deps.homeViewModel.onImportFullConfig(url, onComplete = { if (cont.isActive) cont.resume(null) {} },
+                onError = { m -> if (cont.isActive) cont.resume(m) {} })
+        }
+        if (token.isNotBlank()) {
+            val err = import("https://reedapp.ru/app/locations?token=$token")
+            log("импорт серверов: ${err ?: "ок"}")
+        } else log("режим: временный сервер (без входа)")
+        kotlinx.coroutines.suspendCancellableCoroutine<Unit> { c -> deps.locationViewModel.loadLocations { c.resume(Unit) {} } }
+        val locs = deps.locationViewModel.locations.toList()
+        val wifi = locs.filter { it.config?.isVless() == true &&
+            org.olcbox.app.ui.reed2.ReedServerNaming.describe(it.fullName, isOlcRtc = false).network == "wifi" }
+        log("серверов: ${locs.size}, Wi-Fi: ${wifi.size} (${wifi.take(6).joinToString { it.fullName }})")
+        val target = (if (token.isBlank()) locs.firstOrNull { org.olcbox.app.data.datasource.ReedTempServer.isTemp(it.storageId) }
+            else wifi.firstOrNull()) ?: error("нет сервера для проверки")
+        kotlinx.coroutines.suspendCancellableCoroutine<Unit> { c -> deps.locationViewModel.selectLocation(target.storageId) { c.resume(Unit) {} } }
+        kotlinx.coroutines.suspendCancellableCoroutine<Unit> { c -> deps.homeViewModel.loadCurrentConfig { c.resume(Unit) {} } }
+        log("подключаюсь к: ${target.fullName}")
+        deps.homeViewModel.ToggleVpn()
+        val ok = kotlinx.coroutines.withTimeoutOrNull(90_000) {
+            deps.homeViewModel.state.first { it.isVpnConnected || it.connectionErrorMessage != null }
+        }
+        val st = deps.homeViewModel.state.value
+        log("состояние: connected=${st.isVpnConnected} error=${st.connectionErrorMessage}")
+        if (ok == null || !st.isVpnConnected) {
+            deps.homeViewModel.logs.value.takeLast(40).forEach { log("  log: $it") }
+            error("не подключилось")
+        }
+        kotlinx.coroutines.delay(3000)
+        log("IP заграница (cloudflare) после подключения: ${ipVia("https://www.cloudflare.com/cdn-cgi/trace")}")
+        log("IP Россия (yandex) после подключения: ${ipVia("https://ipv4-internet.yandex.net/api/v0/ip")}")
+        for (u in listOf("https://www.gosuslugi.ru/", "https://www.nalog.gov.ru/", "https://online.sberbank.ru/",
+                "https://www.tbank.ru/", "https://ya.ru/", "https://vk.com/", "https://www.ozon.ru/", "https://1c.ru/",
+                "https://kontur.ru/", "https://www.wildberries.ru/",
+                "https://www.google.com/", "https://www.youtube.com/", "https://github.com/", "https://www.instagram.com/",
+                "https://chatgpt.com/", "https://discord.com/", "https://t.me/", "https://reedapp.ru/")) {
+            log("$u → ${probe(u)}")
+        }
+        deps.homeViewModel.logs.value.takeLast(15).forEach { log("  log: $it") }
+    } catch (e: Throwable) {
+        log("FAIL ${e.javaClass.simpleName}: ${e.message}")
+    } finally {
+        try {
+            if (deps.homeViewModel.state.value.isVpnConnected) { deps.homeViewModel.ToggleVpn(); kotlinx.coroutines.delay(3000) }
+            deps.close()
+        } catch (e: Throwable) { }
+        reportFile.writeText(out.toString())
+        log("отчёт: ${reportFile.absolutePath}")
+        kotlin.system.exitProcess(0)
+    }
 }
