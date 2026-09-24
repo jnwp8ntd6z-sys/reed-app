@@ -202,6 +202,8 @@ internal class WindowsTunController(
             New-NetRoute -InterfaceIndex ${'$'}ifIndex -DestinationPrefix '0.0.0.0/1' -NextHop '0.0.0.0' -RouteMetric 1 | Out-Null
             New-NetRoute -InterfaceIndex ${'$'}ifIndex -DestinationPrefix '128.0.0.0/1' -NextHop '0.0.0.0' -RouteMetric 1 | Out-Null
             Set-DnsClientServerAddress -InterfaceIndex ${'$'}ifIndex -ServerAddresses '$MAPDNS_ADDRESS'
+            ${'$'}ErrorActionPreference = 'Continue'
+            $QUIC_BLOCK_INSTALL
             """.trimIndent()
         )
     }
@@ -222,6 +224,7 @@ internal class WindowsTunController(
     private suspend fun removeRoutes() {
         runPowerShell(
             """
+            $QUIC_BLOCK_REMOVE
             ${serverBypassRemoveScript()}
             ${'$'}adapter = Get-NetAdapter -Name '$TUN_NAME' -ErrorAction SilentlyContinue
             if (${'$'}null -eq ${'$'}adapter) { exit 0 }
@@ -237,6 +240,19 @@ internal class WindowsTunController(
             """.trimIndent()
         )
     }
+
+    /**
+     * QUIC (UDP 443) на время подключения запрещаем брандмауэром Windows. Серверный конфиг
+     * выбрасывает QUIC (drop), но через tun2socks это «тихая» потеря: Chrome ждёт ответа и
+     * показывает ERR_QUIC_PROTOCOL_ERROR (Google не открывался). Отказ брандмауэра приходит
+     * браузеру сразу — он мгновенно переходит на обычный HTTPS по TCP, который идёт в туннель.
+     */
+    private val QUIC_BLOCK_REMOVE = """
+        Get-NetFirewallRule -DisplayName '$QUIC_RULE' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+    """.trimIndent()
+    private val QUIC_BLOCK_INSTALL = QUIC_BLOCK_REMOVE + "\n" + """
+        New-NetFirewallRule -DisplayName '$QUIC_RULE' -Direction Outbound -Protocol UDP -RemotePort 443 -Action Block -Profile Any -ErrorAction SilentlyContinue | Out-Null
+    """.trimIndent()
 
     private suspend fun runPowerShell(script: String): String = withContext(Dispatchers.IO) {
         val process = ProcessBuilder(
@@ -276,6 +292,7 @@ internal class WindowsTunController(
 
     internal companion object {
         const val TUN_NAME = "Olcbox"
+        const val QUIC_RULE = "Reed Client - QUIC"
         // 1280: double-hop (bridge → exit) double-encapsulates packets; 1500 overflows
         // the path MTU and big packets get black-holed. See OlcboxVpnService.TUN_MTU.
         const val TUN_MTU = 1500
