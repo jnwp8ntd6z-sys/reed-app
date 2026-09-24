@@ -31,6 +31,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.olcbox.app.data.reed.CodeKind
 
 /**
  * Reed 2.0 — Ввод кода (ТЗ 4.2). Чип распознавания с точкой lime, «Войти» над клавиатурой:
