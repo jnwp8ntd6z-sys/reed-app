@@ -25,7 +25,9 @@ env:
   # Пин на июльский коммит форка reedvpnbot/olcrtc (последняя зелёная эпоха 16.07): в нём пакет
   # mobile ещё экспортирует SetProtector/Check/Ping/IsRunning/... — их зовёт Kotlin приложения.
   # НЕ "master": upstream/форк master может уехать (05.09 API пропал → пустой класс Mobile).
-  OLCRTC_REF: "e3db1d25f5f427f183f997b98ed981a2c16cc0f5"
+  # 24.09: e3db1d2 + ветка reed-no-rtp-ka (703d653): VP8-keepalive (upstream 2614169) по умолчанию выкл —
+  # ломал ICE на публичных JVB (olcRTC «не подключается»); первое рукопожатие клиента 30 с.
+  OLCRTC_REF: "703d653568206e1773153e50bdaf572b585d381a"
   ANDROID_NDK_VERSION: "28.2.13676358"
 
 jobs:
