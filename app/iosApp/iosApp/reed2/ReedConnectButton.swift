@@ -58,6 +58,7 @@ struct ReedConnectButton: View {
             .animation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true), value: breathe)
         }
         .buttonStyle(.plain)
+        .sensoryFeedback(.impact(weight: .medium), trigger: state)
         .onChange(of: state) { _, newValue in
             breathe = (newValue == .connecting)
         }

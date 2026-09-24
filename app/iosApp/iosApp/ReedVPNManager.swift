@@ -111,6 +111,12 @@ import Foundation
     /// Запуск туннеля с параметрами текущей подписки/сервера.
     @objc func start(token: String, server: String, split: Bool,
                      completion: @escaping (Bool) -> Void) {
+        start(token: token, server: server, split: split, direct: "", completion: completion)
+    }
+
+    /// Reed 2.0: то же + «Сервисы напрямую» (id через запятую; пусто — как раньше).
+    @objc func start(token: String, server: String, split: Bool, direct: String,
+                     completion: @escaping (Bool) -> Void) {
         loadOrCreate { mgr in
             guard let mgr = mgr,
                   let proto = mgr.protocolConfiguration as? NETunnelProviderProtocol else {
@@ -120,6 +126,7 @@ import Foundation
                 "token": token,
                 "server": server,
                 "split": split,
+                "direct": direct,
             ]
             mgr.protocolConfiguration = proto
             mgr.saveToPreferences { _ in

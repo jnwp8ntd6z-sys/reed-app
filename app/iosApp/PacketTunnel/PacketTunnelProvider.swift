@@ -157,13 +157,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         let token = (conf["token"] as? String) ?? ""
         let server = (conf["server"] as? String) ?? ""
         let split = (conf["split"] as? Bool) ?? true
+        let direct = (conf["direct"] as? String) ?? ""   // Reed 2.0: «Сервисы напрямую»
         guard !token.isEmpty else {
             ExtLog.write("vless: no token")
             completionHandler(NSError(domain: "ReedVPN", code: 1,
                 userInfo: [NSLocalizedDescriptionKey: "no token"]))
             return
         }
-        resolveVlessConfig(token: token, server: server, split: split) { [weak self] configJson, fromCache in
+        resolveVlessConfig(token: token, server: server, split: split, direct: direct) { [weak self] configJson, fromCache in
             guard let self = self else { return }
             guard let configJson = configJson else {
                 ExtLog.write("vless: no config (cache empty, fetch failed)")
@@ -188,7 +189,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 if ok {
                     self.startHeartbeat()
                     // Конфиг был из кэша → тихо обновляем его уже через поднятый туннель.
-                    if fromCache { self.refreshVlessConfigInBackground(token: token, server: server, split: split) }
+                    if fromCache { self.refreshVlessConfigInBackground(token: token, server: server, split: split, direct: direct) }
                     completionHandler(nil)
                 } else {
                     // Ядро не поднялось (битый конфиг/covert/OOM). Маршруты уже применены —
@@ -320,27 +321,27 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     /// VLESS-конфиг для старта: 1) App Group (кладёт приложение по «Обновить»/при запуске),
     /// 2) старый кэш extension, 3) сеть — ДО подъёма TUN, с таймаутом. completion(config, fromCache).
-    private func resolveVlessConfig(token: String, server: String, split: Bool,
+    private func resolveVlessConfig(token: String, server: String, split: Bool, direct: String = "",
                                     completion: @escaping (String?, Bool) -> Void) {
         if let dir = TunnelConfigStore.directory(),
-           let data = try? Data(contentsOf: TunnelConfigStore.fileURL(dir: dir, server: server, split: split)),
+           let data = try? Data(contentsOf: TunnelConfigStore.fileURL(dir: dir, server: server, split: split, direct: direct)),
            TunnelConfigStore.isValidConfig(data), let s = String(data: data, encoding: .utf8) {
             ExtLog.write("vless: config from App Group cache server=\(server) split=\(split)")
             completion(s, true); return
         }
-        if let data = try? Data(contentsOf: configCacheURL(server: server, split: split)),
+        if direct.isEmpty, let data = try? Data(contentsOf: configCacheURL(server: server, split: split)),
            TunnelConfigStore.isValidConfig(data), let s = String(data: data, encoding: .utf8) {
             ExtLog.write("vless: config from legacy extension cache server=\(server)")
             completion(s, true); return
         }
         ExtLog.write("vless: no cache, fetching config BEFORE tun server=\(server)…")
-        TunnelConfigStore.fetchConfig(token: token, server: server, split: split, timeout: 10) { body, via in
+        TunnelConfigStore.fetchConfig(token: token, server: server, split: split, direct: direct, timeout: 10) { body, via in
             guard let body = body, let s = String(data: body, encoding: .utf8) else {
                 ExtLog.write("vless: config fetch FAILED \(via)")
                 completion(nil, false); return
             }
             if let dir = TunnelConfigStore.directory() {
-                try? body.write(to: TunnelConfigStore.fileURL(dir: dir, server: server, split: split), options: .atomic)
+                try? body.write(to: TunnelConfigStore.fileURL(dir: dir, server: server, split: split, direct: direct), options: .atomic)
             }
             ExtLog.write("vless: config fetched via \(via) (\(body.count) B) and cached")
             completion(s, false)
@@ -348,10 +349,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     /// Фоновое обновление кэша после TUNNEL UP (best-effort, результат — только на следующий старт).
-    private func refreshVlessConfigInBackground(token: String, server: String, split: Bool) {
+    private func refreshVlessConfigInBackground(token: String, server: String, split: Bool, direct: String = "") {
         guard let dir = TunnelConfigStore.directory() else { return }
-        let target = TunnelConfigStore.fileURL(dir: dir, server: server, split: split)
-        TunnelConfigStore.fetchConfig(token: token, server: server, split: split, timeout: 20) { body, via in
+        let target = TunnelConfigStore.fileURL(dir: dir, server: server, split: split, direct: direct)
+        TunnelConfigStore.fetchConfig(token: token, server: server, split: split, direct: direct, timeout: 20) { body, via in
             guard let body = body else { return }
             try? body.write(to: target, options: .atomic)
             ExtLog.write("vless: background config refresh via \(via) ok (\(body.count) B)")
@@ -419,11 +420,13 @@ enum TunnelConfigStore {
         return dir
     }
 
-    static func fileURL(dir: URL, server: String, split: Bool) -> URL {
+    static func fileURL(dir: URL, server: String, split: Bool, direct: String = "") -> URL {
         let safe = String(server.unicodeScalars.map {
             CharacterSet.alphanumerics.contains($0) ? Character($0) : "_"
         })
-        return dir.appendingPathComponent("singbox_\(safe)_\(split ? "1" : "0").json")
+        // Reed 2.0: свой файл кэша для набора «Сервисов напрямую» (пусто — прежнее имя).
+        let d = direct.isEmpty ? "" : "_d" + String(direct.utf8.reduce(UInt32(5381)) { ($0 &* 33) &+ UInt32($1) }, radix: 16)
+        return dir.appendingPathComponent("singbox_\(safe)_\(split ? "1" : "0")\(d).json")
     }
 
 
@@ -431,7 +434,7 @@ enum TunnelConfigStore {
 
     /// Конфиг: сначала https://reedapp.ru, при сбое — напрямую на IP РФ-фронта (DNS-кэш провайдера
     /// со старым зарубежным IP / ТСПУ). completion(body, "host"|"front"|"fail http=… err=…").
-    static func fetchConfig(token: String, server: String, split: Bool, timeout: TimeInterval,
+    static func fetchConfig(token: String, server: String, split: Bool, direct: String = "", timeout: TimeInterval,
                             completion: @escaping (Data?, String) -> Void) {
         let cfg = URLSessionConfiguration.ephemeral
         cfg.timeoutIntervalForRequest = timeout
@@ -440,8 +443,8 @@ enum TunnelConfigStore {
         // Фронт-IP ПЕРВЫМ: у РФ-провайдеров reedapp.ru часто в старом DNS-кэше (заблокирован),
         // ожидание его таймаута рвало загрузку (499). Московский IP доступен всегда → пробуем его,
         // reedapp.ru — как запасной (для сетей, где DNS уже указывает на Москву напрямую).
-        guard let primary = configURL(token: token, server: server, split: split, host: frontIP),
-              let fallback = configURL(token: token, server: server, split: split, host: apiHost) else {
+        guard let primary = configURL(token: token, server: server, split: split, direct: direct, host: frontIP),
+              let fallback = configURL(token: token, server: server, split: split, direct: direct, host: apiHost) else {
             session.finishTasksAndInvalidate(); completion(nil, "fail bad url"); return
         }
         session.dataTask(with: primary) { data, response, error in
@@ -461,14 +464,16 @@ enum TunnelConfigStore {
         }.resume()
     }
 
-    static func configURL(token: String, server: String, split: Bool, host: String = apiHost) -> URL? {
+    static func configURL(token: String, server: String, split: Bool, direct: String = "", host: String = apiHost) -> URL? {
         var comps = URLComponents(string: "https://\(host)/app/singbox")
-        comps?.queryItems = [
+        var items = [
             URLQueryItem(name: "token", value: token),
             URLQueryItem(name: "server", value: server),
             URLQueryItem(name: "split", value: split ? "1" : "0"),
             URLQueryItem(name: "inbound", value: "tun"),
         ]
+        if !direct.isEmpty { items.append(URLQueryItem(name: "direct", value: direct)) }
+        comps?.queryItems = items
         return comps?.url
     }
 

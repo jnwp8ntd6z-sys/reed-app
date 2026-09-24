@@ -1,165 +1,313 @@
 import SwiftUI
 
-/// Reed 2.0 — корень iOS. Гейт входа → таб-бар (Главная / Семья / Профиль).
-/// TabView на iOS 26 сам получает Liquid Glass; на 17–25 — системный тёмный.
-/// Пока демо-данные для валидации нативного вида; подключение к ReedApi/туннелю — следующий шаг.
+/// Reed 2.0 — корень iOS: вход → ввод кода → приложение (три раздела).
+/// На iOS 26 — системный TabView (Liquid Glass «из коробки»), на 17–25 — своя стеклянная капсула.
 struct ReedRootView: View {
-    enum Stage { case login, codes, app }
-    @State private var stage: Stage = .login
-    @State private var consent = false
-    @State private var conn: ReedConnState = .off
-    @State private var selectedTab = 0
+    @EnvironmentObject var m: ReedAppModel
+    @Environment(\.scenePhase) private var phase
+    @State private var scanner = false
 
     var body: some View {
-        Group {
-            switch stage {
-            case .login:
-                ReedLoginView(
-                    consent: $consent, showTelegram: false,
-                    onOpenCodeEntry: { stage = .codes },
-                    onScanQr: { stage = .app },
-                    onContinueWithoutCode: { stage = .app }
-                )
-            case .codes:
-                ReedCodeEntryView(onSubmit: { stage = .app }, onBack: { stage = .login })
-            case .app:
-                TabView(selection: $selectedTab) {
-                    ReedHomeView(conn: $conn).tag(0)
-                        .tabItem { Label("Главная", systemImage: "house") }
-                    ReedFamilyDemoView().tag(1)
-                        .tabItem { Label("Семья", systemImage: "person.2") }
-                    ReedProfileDemoView(onLogout: { stage = .login }).tag(2)
-                        .tabItem { Label("Профиль", systemImage: "person") }
+        ZStack(alignment: .top) {
+            Reed.screenBackground.ignoresSafeArea()
+            Group {
+                if m.memberBlocked && m.stage == .app {
+                    ReedBlockedView().transition(.opacity)
+                } else {
+                    switch m.stage {
+                    case .login:
+                        ReedLoginView(
+                            consent: Binding(get: { m.consent }, set: { m.acceptConsent($0) }),
+                            showTelegram: m.showTelegram,
+                            telegramBusy: m.tgBusy,
+                            statusText: m.loginStatus,
+                            onOpenCodeEntry: { m.openCodes(from: .login) },
+                            onScanQr: { scanner = true },
+                            onContinueWithoutCode: { m.continueWithoutCode() },
+                            onTelegram: { m.startTelegram() },
+                            onTerms: { open("https://reedapp.ru/terms") },
+                            onPrivacy: { open("https://reedapp.ru/privacy-app") }
+                        )
+                        .transition(.asymmetric(insertion: .opacity, removal: .opacity.combined(with: .move(edge: .leading))))
+                    case .codes:
+                        ReedCodeEntryView(onScanQr: { scanner = true })
+                            .transition(.asymmetric(insertion: .move(edge: .trailing).combined(with: .opacity),
+                                                    removal: .move(edge: .trailing).combined(with: .opacity)))
+                    case .app:
+                        ReedTabsView(onScanQr: { scanner = true })
+                            .transition(.opacity)
+                    }
                 }
-                .tint(Reed.ink)
+            }
+            .animation(.smooth(duration: 0.38), value: m.stage)
+
+            if let t = m.toast {
+                Text(t)
+                    .font(.system(size: 14, weight: .medium)).foregroundStyle(Reed.ink)
+                    .padding(.horizontal, 16).padding(.vertical, 11)
+                    .reedGlass(Capsule())
+                    .padding(.top, 8)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(10)
             }
         }
+        .sheet(isPresented: $scanner) {
+            ReedQRScannerSheet { m.scanned($0) }
+                .presentationBackground(.black)
+        }
+        .sheet(item: Binding(get: { m.shareLogURL.map(ShareItem.init) }, set: { if $0 == nil { m.shareLogURL = nil } })) { item in
+            ActivityView(items: [item.url]).ignoresSafeArea()
+        }
+        .fullScreenCover(isPresented: $m.showNotifications) {
+            ReedNotificationsView().environmentObject(m)
+        }
+        .onAppear { m.onAppear() }
+        .onChange(of: phase) { old, new in
+            if new == .active && old == .background { m.onForeground() }
+        }
+        .onOpenURL { m.scanned($0.absoluteString) }
+        .preferredColorScheme(.dark)
+    }
+
+    private func open(_ s: String) { if let u = URL(string: s) { UIApplication.shared.open(u) } }
+}
+
+struct ShareItem: Identifiable { let url: URL; var id: String { url.absoluteString } }
+
+struct ActivityView: UIViewControllerRepresentable {
+    let items: [Any]
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+    func updateUIViewController(_ vc: UIActivityViewController, context: Context) {}
+}
+
+// MARK: - Разделы
+
+struct ReedTabsView: View {
+    @EnvironmentObject var m: ReedAppModel
+    var onScanQr: () -> Void
+
+    var body: some View {
+        if #available(iOS 26, *) {
+            TabView(selection: $m.tab) {
+                Tab("Главная", systemImage: "house", value: ReedAppModel.Tab.home) { ReedHomeView(onScanQr: onScanQr) }
+                Tab("Семья", systemImage: "person.2", value: ReedAppModel.Tab.family) { ReedFamilyView(onScanQr: onScanQr) }
+                Tab("Профиль", systemImage: "person", value: ReedAppModel.Tab.profile) { ReedProfileView(onScanQr: onScanQr) }
+            }
+            .tint(Reed.ink)
+        } else {
+            ZStack {
+                switch m.tab {
+                case .home: ReedHomeView(onScanQr: onScanQr).transition(.opacity)
+                case .family: ReedFamilyView(onScanQr: onScanQr).transition(.opacity)
+                case .profile: ReedProfileView(onScanQr: onScanQr).transition(.opacity)
+                }
+            }
+            .animation(.smooth(duration: 0.25), value: m.tab)
+            .safeAreaInset(edge: .bottom) { ReedCapsuleTabBar(selection: $m.tab) }
+        }
+    }
+}
+
+/// Плавающая стеклянная капсула (iOS 17–25). Подсветка выбранного раздела переезжает пружиной.
+struct ReedCapsuleTabBar: View {
+    @Binding var selection: ReedAppModel.Tab
+    @Namespace private var ns
+    private let items: [(ReedAppModel.Tab, String, String)] = [
+        (.home, "Главная", "house"), (.family, "Семья", "person.2"), (.profile, "Профиль", "person"),
+    ]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(items, id: \.0) { item in
+                let active = selection == item.0
+                Button {
+                    withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) { selection = item.0 }
+                } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: item.2).font(.system(size: 19, weight: .regular))
+                        Text(item.1).font(.system(size: 10.5, weight: active ? .semibold : .regular))
+                    }
+                    .foregroundStyle(active ? Reed.ink : Reed.inkMuted)
+                    .frame(maxWidth: .infinity).frame(height: 54)
+                    .background {
+                        if active {
+                            Capsule().fill(Color.white.opacity(0.12)).matchedGeometryEffect(id: "pill", in: ns)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .sensoryFeedback(.selection, trigger: active)
+            }
+        }
+        .padding(5)
+        .reedGlass(Capsule())
+        .overlay(Capsule().strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+        .padding(.horizontal, 20)
+        .padding(.bottom, 6)
+    }
+}
+
+// MARK: - Уведомления
+
+struct ReedNotificationsView: View {
+    @EnvironmentObject var m: ReedAppModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                ReedBackButton { dismiss() }
+                Text("Уведомления").font(.system(size: 17, weight: .semibold)).foregroundStyle(Reed.ink)
+                Spacer()
+            }
+            .padding(.top, 8)
+            if m.notifications.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "bell.slash").font(.system(size: 34)).foregroundStyle(Reed.chrome600)
+                    Text("Уведомлений пока нет").font(.system(size: 15)).foregroundStyle(Reed.inkMuted)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(m.notifications.sorted { $0.id > $1.id }) { n in
+                            let isDevice = n.kind == "new_device"
+                            Button {
+                                if isDevice { dismiss(); m.tab = .family }
+                            } label: {
+                                HStack(alignment: .top, spacing: 10) {
+                                    if n.id > m.notifSeen {
+                                        Circle().fill(isDevice ? Reed.statusWarn : Reed.chrome200)
+                                            .frame(width: 8, height: 8).padding(.top, 6)
+                                    }
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(n.title ?? "Уведомление").font(.system(size: 15, weight: .semibold)).foregroundStyle(Reed.ink)
+                                        if let b = n.body, !b.isEmpty {
+                                            Text(b).font(.system(size: 13)).foregroundStyle(Reed.inkMuted)
+                                                .multilineTextAlignment(.leading)
+                                        }
+                                        Text(ReedFormat.relative(n.created_at)).font(.system(size: 12)).foregroundStyle(Reed.chrome600)
+                                    }
+                                    Spacer(minLength: 0)
+                                    if isDevice { Image(systemName: "chevron.right").foregroundStyle(Reed.chrome600) }
+                                }
+                                .padding(14)
+                                .background(Reed.surface200, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.top, 18)
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .background(Reed.screenBackground.ignoresSafeArea())
+        .onDisappear { m.markNotificationsSeen() }
         .preferredColorScheme(.dark)
     }
 }
 
-/// Демо-Главная: кнопка-стекло, статус, таймер, карточка подписки, список серверов.
-struct ReedHomeView: View {
-    @Binding var conn: ReedConnState
-    @State private var selected = "v0"
-    private let servers: [(String, String, String, String, Int)] = [
-        ("v0", "DE", "Германия", "Франкфурт", 42),
-        ("v1", "NL", "Нидерланды", "Амстердам", 48),
-        ("v2", "FI", "Финляндия", "Хельсинки", 51),
-        ("v3", "TR", "Турция", "Стамбул", 63),
-    ]
-    private var statusWord: String {
-        switch conn { case .on: return "Подключено"; case .connecting: return "Подключаюсь…"; case .off: return "Не подключено" }
-    }
-    private var dotColor: Color {
-        switch conn { case .on: return Reed.lime; case .connecting: return Reed.statusWarn; case .off: return Reed.chrome600 }
-    }
+// MARK: - Мелкие общие элементы
 
+struct ReedBackButton: View {
+    var action: () -> Void
     var body: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                HStack {
-                    ReedLogo(size: 18)
-                    Spacer()
-                    Image(systemName: "bell").font(.system(size: 20)).foregroundStyle(Reed.ink)
-                        .frame(width: 44, height: 44).reedGlass(Circle())
-                }.padding(.top, 8)
-
-                ReedConnectButton(state: conn, size: 150, onTap: {
-                    conn = conn == .off ? .connecting : (conn == .connecting ? .on : .off)
-                }).padding(.top, 12)
-
-                HStack(spacing: 8) {
-                    Circle().fill(dotColor).frame(width: 8, height: 8)
-                    Text(statusWord).font(.system(size: 17, weight: .semibold)).foregroundStyle(Reed.ink)
-                }.padding(.top, 8)
-                if conn == .on {
-                    Text("01:24:07").font(.reedMono(15))
-                        .padding(.horizontal, 12).padding(.vertical, 5)
-                        .background(Reed.surface300, in: Capsule()).padding(.top, 8)
-                }
-                Text("Германия · Франкфурт").font(.system(size: 14)).foregroundStyle(Reed.inkMuted).padding(.top, 6)
-
-                // Карточка подписки.
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text("Подписка до 15 октября").font(.system(size: 14, weight: .semibold)).foregroundStyle(Reed.ink)
-                        Spacer()
-                        Text("12,4 / 50 ГБ").font(.reedMono(13)).foregroundStyle(Reed.inkMuted)
-                    }
-                    ProgressView(value: 0.248).tint(Reed.chrome200)
-                    Text("Трафик обновится 1 ноября · мобильный без лимита")
-                        .font(.system(size: 12)).foregroundStyle(Reed.inkMuted)
-                }
-                .padding(16)
-                .background(Reed.surface200, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-                .padding(.top, 18)
-
-                HStack {
-                    Text("СЕРВЕРЫ").font(.system(size: 12, weight: .semibold)).foregroundStyle(Reed.inkMuted).kerning(1.5)
-                    Spacer()
-                }.padding(.top, 20)
-
-                VStack(spacing: 0) {
-                    ForEach(servers, id: \.0) { s in
-                        Button(action: { selected = s.0 }) {
-                            HStack {
-                                ReedFlagView(country: s.1)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(s.2).font(.system(size: 16, weight: .semibold)).foregroundStyle(Reed.ink)
-                                    Text(s.3).font(.system(size: 13)).foregroundStyle(Reed.inkMuted)
-                                }
-                                Spacer()
-                                Text(Reed.pingText(s.4)).font(.reedMono(13)).foregroundStyle(Reed.pingColor(s.4))
-                                Image(systemName: selected == s.0 ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(selected == s.0 ? Reed.ink : Reed.chrome600)
-                            }
-                            .padding(12)
-                            .background(selected == s.0 ? Color.white.opacity(0.06) : .clear,
-                                        in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-                        }.buttonStyle(.plain)
-                    }
-                }.padding(.top, 10)
-            }
-            .padding(.horizontal, 20)
+        Button(action: action) {
+            Image(systemName: "chevron.left").font(.system(size: 18, weight: .semibold)).foregroundStyle(Reed.ink)
+                .frame(width: 40, height: 40).reedGlass(Circle(), interactive: true)
         }
-        .background(Reed.screenBackground.ignoresSafeArea())
+        .buttonStyle(.plain)
     }
 }
 
-/// Флаг-плашка (ТЗ 3.5): пока ISO-2 моно на surface (без набора флагов).
-struct ReedFlagView: View {
-    let country: String
+struct ReedBlockedView: View {
+    @EnvironmentObject var m: ReedAppModel
     var body: some View {
-        Text(country.prefix(2)).font(.reedMono(10, weight: .medium)).foregroundStyle(Reed.chrome200)
-            .frame(width: 30, height: 20)
-            .background(Reed.surface300, in: RoundedRectangle(cornerRadius: 5))
-            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.white.opacity(0.14), lineWidth: 1))
+        VStack(spacing: 14) {
+            Image(systemName: "shield.lefthalf.filled").font(.system(size: 34)).foregroundStyle(Reed.statusWarn)
+                .frame(width: 72, height: 72).reedGlass(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            Text("Доступ приостановлен").font(.system(size: 20, weight: .semibold)).foregroundStyle(Reed.ink)
+            Text("Владелец подписки приостановил твой доступ. Когда он его вернёт, всё заработает само.")
+                .font(.system(size: 15)).foregroundStyle(Reed.inkMuted).multilineTextAlignment(.center)
+            Button("Выйти") { m.logout() }
+                .font(.system(size: 15, weight: .medium)).foregroundStyle(Reed.ink)
+                .frame(maxWidth: .infinity).frame(height: 50)
+                .background(Reed.surface300, in: Capsule())
+                .padding(.top, 10)
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-struct ReedFamilyDemoView: View {
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("СЕМЬЯ").font(.reedTitle()).foregroundStyle(Reed.ink).padding(.top, 8)
-                Text("3 из 5 мест занято").font(.system(size: 14)).foregroundStyle(Reed.inkMuted)
-                Text("Подключено к данным — следующий шаг.").font(.system(size: 13)).foregroundStyle(Reed.chrome600)
-            }.padding(.horizontal, 20).frame(maxWidth: .infinity, alignment: .leading)
-        }.background(Reed.screenBackground.ignoresSafeArea())
-    }
-}
+/// Форматирование дат/трафика (как на Android).
+enum ReedFormat {
+    static let monthsGen = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля",
+                            "августа", "сентября", "октября", "ноября", "декабря"]
 
-struct ReedProfileDemoView: View {
-    var onLogout: () -> Void = {}
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("ПРОФИЛЬ").font(.reedTitle()).foregroundStyle(Reed.ink).padding(.top, 8)
-                Text("@username").font(.system(size: 16, weight: .semibold)).foregroundStyle(Reed.ink)
-                Text("Reed 2.0 · превью").font(.reedMono(12)).foregroundStyle(Reed.chrome600)
-                Button("Выйти", action: onLogout).foregroundStyle(Reed.ink).padding(.top, 8)
-            }.padding(.horizontal, 20).frame(maxWidth: .infinity, alignment: .leading)
-        }.background(Reed.screenBackground.ignoresSafeArea())
+    static func parse(_ s: String?, utc: Bool = false) -> Date? {
+        guard let s, !s.isEmpty else { return nil }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        if utc { f.timeZone = TimeZone(identifier: "UTC") }
+        for p in ["yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd"] {
+            f.dateFormat = p
+            if let d = f.date(from: String(s.prefix(19))) { return d }
+        }
+        return nil
+    }
+
+    /// «до 15 октября» (год — если не текущий).
+    static func until(_ s: String?) -> String {
+        guard let d = parse(s) else { return "" }
+        let c = Calendar.current
+        let y = c.component(.year, from: d)
+        let base = "до \(c.component(.day, from: d)) \(monthsGen[c.component(.month, from: d) - 1])"
+        return y == c.component(.year, from: Date()) ? base : "\(base) \(y)"
+    }
+
+    static func relative(_ s: String?) -> String {
+        guard let d = parse(s, utc: true) else { return "" }
+        return relative(Date().timeIntervalSince(d))
+    }
+
+    static func relative(_ seconds: TimeInterval) -> String {
+        let min = Int(seconds / 60)
+        switch min {
+        case ..<1: return "только что"
+        case ..<60: return "\(min) мин назад"
+        case ..<(24 * 60): return "\(min / 60) ч назад"
+        case ..<(48 * 60): return "вчера"
+        default: let d = min / (24 * 60); return "\(d) \(plural(d, "день", "дня", "дней")) назад"
+        }
+    }
+
+    static func plural(_ n: Int, _ one: String, _ few: String, _ many: String) -> String {
+        let m10 = n % 10, m100 = n % 100
+        if m10 == 1 && m100 != 11 { return one }
+        if (2...4).contains(m10) && !(12...14).contains(m100) { return few }
+        return many
+    }
+
+    static func gb(_ v: Double) -> String {
+        let r = (v * 10).rounded(.down) / 10
+        return r == r.rounded() ? String(Int(r)) : String(format: "%.1f", r).replacingOccurrences(of: ".", with: ",")
+    }
+
+    static func timer(_ sec: Int) -> String {
+        String(format: "%02d:%02d:%02d", sec / 3600, (sec % 3600) / 60, sec % 60)
+    }
+
+    /// ISO-2 → эмодзи-флаг.
+    static func flag(_ iso: String) -> String? {
+        let u = iso.uppercased()
+        guard u.count == 2, u.allSatisfy({ ("A"..."Z").contains($0) }) else { return nil }
+        var s = ""
+        for ch in u.unicodeScalars { if let sc = UnicodeScalar(0x1F1E6 + ch.value - 65) { s.unicodeScalars.append(sc) } }
+        return s
     }
 }

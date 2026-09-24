@@ -76,11 +76,15 @@ extension Color {
 // MARK: - Liquid Glass с откатом (ТЗ 6.2)
 
 extension View {
-    /// Стекло Apple. Пока .ultraThinMaterial (родной матовый эффект, любой SDK). Когда сборка
-    /// подтверждена на Xcode 26 SDK — здесь включается Liquid Glass (glassEffect) под #available.
+    /// Стекло Apple (ТЗ 6.2): Liquid Glass на iOS 26, .ultraThinMaterial на 17–25.
     @ViewBuilder
-    func reedGlass<S: Shape>(_ shape: S = Capsule()) -> some View {
-        self.background(.ultraThinMaterial, in: shape)
+    func reedGlass<S: Shape>(_ shape: S = Capsule(), interactive: Bool = false) -> some View {
+        if #available(iOS 26, *) {
+            // Настоящий Liquid Glass (Xcode 26 SDK на раннере).
+            self.glassEffect(interactive ? .regular.interactive() : .regular, in: shape)
+        } else {
+            self.background(.ultraThinMaterial, in: shape)
+        }
     }
 }
 
