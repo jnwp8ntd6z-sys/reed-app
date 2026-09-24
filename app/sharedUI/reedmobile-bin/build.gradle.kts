@@ -49,7 +49,9 @@ val buildReedmobileAar by tasks.registering(Exec::class) {
             // -tags with_utls ОБЯЗАТЕЛЕН: REALITY-клиент sing-box без него не работает
             // (VLESS Reality сразу падает на старте → мгновенный сброс на Android).
             "-tags with_utls " +
-            "-androidapi 21 -ldflags \"-s -w -checklinkname=0\" " +
+            // max-page-size=16384: Google Play требует страницы памяти 16 КБ (Android 15+) —
+            // без флага libgojni.so выровнена по 4 КБ и выпуск отклоняют.
+            "-androidapi 21 -ldflags \"-s -w -checklinkname=0 -extldflags=-Wl,-z,max-page-size=16384\" " +
             "-o \"$aar\" github.com/openlibrecommunity/olcrtc/mobile . ; " +
             // DIAG: какие версии olcrtc/pion зарезолвились и что реально в aar
             "echo '###GOLIST###'; go list -m all 2>/dev/null | grep -iE 'openlibrecommunity/olcrtc|pion/webrtc|golang.org/x/mobile' | head; " +
