@@ -17,7 +17,7 @@ object ReedServerNaming {
         val kind: Kind,
     )
 
-    const val SUB_FAST = "Быстрый обход белых списков"
+    const val SUB_FAST = "Быстрое подключение"
     const val SUB_STABLE = "Надёжный · подключение ~20 с"
     const val SUB_VIA_MOSCOW = "Через Москву"
 

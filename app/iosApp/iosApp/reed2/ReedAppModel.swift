@@ -792,7 +792,7 @@ final class ReedAppModel: ObservableObject {
 
     // MARK: названия серверов (как ReedServerNaming в Android)
 
-    nonisolated static let subFast = "Быстрый обход белых списков"
+    nonisolated static let subFast = "Быстрое подключение"
     nonisolated static let subStable = "Надёжный · подключение ~20 с"
     nonisolated static let subViaMoscow = "Через Москву"
     nonisolated static let countryNames: [String: String] = [
