@@ -153,7 +153,7 @@ enum PreviewSeed {
         if scene == "profile_netcheck" {
             m.netRows = [
                 ReedNetRow(label: "Wi-Fi", ping: 42, word: "Работает", kind: "ok"),
-                ReedNetRow(label: "Мобильный", ping: 88, word: "Ограничено", kind: "warn"),
+                ReedNetRow(label: "Мобильный", ping: 64, word: "Работает", kind: "ok"),
                 ReedNetRow(label: "Прямое", ping: 31, word: "Работает", kind: "ok"),
             ]
             m.netCheckedAt = Date().addingTimeInterval(-40)

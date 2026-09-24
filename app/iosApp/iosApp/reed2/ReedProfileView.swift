@@ -115,7 +115,8 @@ struct ReedProfileView: View {
             if m.sub?.subscription.status == "active" { return "Подписка активна \(ReedFormat.until(m.sub?.subscription.expires_at))" }
             return m.subLoaded ? "Подписка закончилась" : "Загружаем подписку…"
         }()
-        return HStack(spacing: 12) {
+        return VStack(alignment: .leading, spacing: 14) {
+          HStack(spacing: 12) {
             Text(String(name.replacingOccurrences(of: "@", with: "").prefix(1)).uppercased())
                 .font(.system(size: 18, weight: .semibold)).foregroundStyle(Reed.ink)
                 .frame(width: 48, height: 48)
@@ -125,10 +126,27 @@ struct ReedProfileView: View {
                 Text(sub).font(.system(size: 13)).foregroundStyle(Reed.inkMuted)
             }
             Spacer()
+          }
+          if let p = subProgress {
+            VStack(alignment: .leading, spacing: 6) {
+                ChromeProgress(value: p.fraction)
+                Text(p.label).font(.system(size: 12)).foregroundStyle(Reed.inkMuted)
+            }
+          }
         }
         .padding(16)
         .background(Reed.surface200, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Reed.hairline, lineWidth: 1))
+    }
+
+    /// Полоса срока подписки: сколько осталось от периода тарифа (месяц/квартал/полгода/год —
+    /// ближайший, в который укладывается остаток). Участникам и устройствам не показываем.
+    private var subProgress: (fraction: Double, label: String)? {
+        guard !ReedSessionStore.joinedViaCode, !ReedSessionStore.joinedAsDevice,
+              let s = m.sub?.subscription, s.status == "active", let d = s.days_left, d > 0 else { return nil }
+        let period = [30, 90, 180, 365].first { Int64($0) >= d } ?? Int(d)
+        let left = "Осталось \(d) \(ReedFormat.plural(Int(d), "день", "дня", "дней"))"
+        return (min(1, Double(d) / Double(period)), left)
     }
 
     private var netCard: some View {
