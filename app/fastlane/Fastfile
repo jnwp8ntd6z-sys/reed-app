@@ -119,11 +119,19 @@ platform :ios do
       UI.message("Версия #{ver.version_string}: выбрана сборка #{build}")
       sub = open_subs.first
       UI.message("Открытая подача #{sub.id} (#{sub.state}) — отправляю повторно")
+      # Только что обработанная сборка ещё несколько минут «не готова к подаче» — повторяем.
+      attempt = 0
       begin
+        attempt += 1
         sub.submit_for_review
       rescue => e
-        info = e.respond_to?(:error_info) ? e.error_info : nil
-        UI.error("Ответ Apple:\n" + (info ? JSON.pretty_generate(info) : e.message))
+        msg = e.message.to_s
+        if attempt < 20 && msg.include?("not ready to be submitted yet")
+          UI.message("Apple: версия ещё не готова, попытка #{attempt}/20 — жду минуту")
+          sleep 60
+          retry
+        end
+        UI.error("Ответ Apple:\n" + msg)
         raise
       end
       UI.success("Сборка #{version} (#{build}) повторно отправлена на ревью")
