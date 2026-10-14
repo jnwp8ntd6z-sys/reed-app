@@ -141,16 +141,31 @@ platform :ios do
       ver.select_build(build_id: b.id)
       UI.message("Версия #{ver.version_string}: выбрана сборка #{build}")
       sub = open_subs.first
-      UI.message("Открытая подача #{sub.id} (#{sub.state}) — отправляю повторно")
-      # Только что обработанная сборка ещё несколько минут «не готова к подаче» — повторяем.
+      UI.message("Открытая подача #{sub.id} (#{sub.state}) с отклонённой версией — снимаю её и подаю заново")
+      if sub.state == "UNRESOLVED_ISSUES"
+        sub.respond_to?(:cancel_submission) ? sub.cancel_submission : Spaceship::ConnectAPI.patch_review_submission(review_submission_id: sub.id, attributes: { canceled: true })
+        30.times do
+          st = app.get_review_submissions(filter: { platform: "IOS" }).find { |x| x.id == sub.id }&.state
+          UI.message("Старая подача: #{st}")
+          break unless %w[UNRESOLVED_ISSUES CANCELING].include?(st)
+          sleep 10
+        end
+      end
+      new_sub = app.get_review_submissions(filter: { state: "READY_FOR_REVIEW", platform: "IOS" }).first ||
+                app.create_review_submission(platform: Spaceship::ConnectAPI::Platform::IOS)
+      begin
+        new_sub.add_app_store_version_to_review_items(app_store_version_id: ver.id)
+      rescue => e
+        UI.message("Версия уже в подаче: #{e.message.to_s[0, 160]}")
+      end
       attempt = 0
       begin
         attempt += 1
-        sub.submit_for_review
+        new_sub.submit_for_review
       rescue => e
         msg = e.message.to_s
-        if attempt < 20 && msg.include?("not ready to be submitted yet")
-          UI.message("Apple: версия ещё не готова, попытка #{attempt}/20 — жду минуту")
+        if attempt < 10 && msg.include?("not ready to be submitted yet")
+          UI.message("Apple: ещё не готово, попытка #{attempt}/10 — жду минуту")
           sleep 60
           retry
         end
