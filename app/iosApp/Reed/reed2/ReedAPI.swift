@@ -75,8 +75,13 @@ struct RNotification: Codable, Sendable, Identifiable {
 struct RNotifications: Codable, Sendable { var notifications: [RNotification]? }
 
 struct RSession: Codable, Sendable { var kind: String?; var blocked: Bool?; var member_status: String? }
+struct RSupportMedia: Codable, Sendable, Equatable {
+    var kind: String          // photo | video | file
+    var mime: String?; var name: String?; var size: Int?; var url: String?
+}
 struct RSupportMessage: Codable, Sendable, Identifiable, Equatable {
     var id: Int; var direction: String; var text: String; var created_at: String?
+    var media: RSupportMedia?
     var isMine: Bool { direction == "in" }
 }
 struct RSupportMessages: Codable, Sendable { var messages: [RSupportMessage]? }
@@ -118,6 +123,9 @@ final class ReedAPI: NSObject, Sendable {
 
     private let session: URLSession
     private let frontSession: URLSession
+    // Файлы поддержки (видео до 50 МБ): те же пути, но без коротких таймаутов.
+    private let longSession: URLSession
+    private let longFrontSession: URLSession
 
     private override init() {
         let cfg = URLSessionConfiguration.ephemeral
@@ -126,6 +134,12 @@ final class ReedAPI: NSObject, Sendable {
         cfg.waitsForConnectivity = false
         session = URLSession(configuration: cfg)
         frontSession = URLSession(configuration: cfg, delegate: FrontTrustDelegate(), delegateQueue: nil)
+        let long = URLSessionConfiguration.ephemeral
+        long.timeoutIntervalForRequest = 60
+        long.timeoutIntervalForResource = 600
+        long.waitsForConnectivity = false
+        longSession = URLSession(configuration: long)
+        longFrontSession = URLSession(configuration: long, delegate: FrontTrustDelegate(), delegateQueue: nil)
         super.init()
     }
 
@@ -154,6 +168,19 @@ final class ReedAPI: NSObject, Sendable {
         } catch {
             do {
                 let (d, r) = try await session.data(for: request(path, query: query, body: body, host: ReedAPI.host))
+                return (d, (r as? HTTPURLResponse)?.statusCode ?? 0)
+            } catch { throw ReedAPIError.network }
+        }
+    }
+
+    /// Как raw, но для больших тел (загрузка/скачивание файлов поддержки): фронт, затем reedapp.ru.
+    private func longRaw(_ make: (String) -> URLRequest) async throws -> (Data, Int) {
+        do {
+            let (d, r) = try await longFrontSession.data(for: make(ReedAPI.frontIP))
+            return (d, (r as? HTTPURLResponse)?.statusCode ?? 0)
+        } catch {
+            do {
+                let (d, r) = try await longSession.data(for: make(ReedAPI.host))
                 return (d, (r as? HTTPURLResponse)?.statusCode ?? 0)
             } catch { throw ReedAPIError.network }
         }
@@ -209,7 +236,42 @@ final class ReedAPI: NSObject, Sendable {
                                              "platform": "iOS", "device": "iPhone"], as: RSupportSendResult.self)
     }
     func supportMessages(token: String?, hwid: String, after: Int) async throws -> RSupportMessages {
-        try await get("/app/support/messages", ["token": token ?? "", "hwid": hwid, "after": String(after)], as: RSupportMessages.self)
+        try await get("/app/support/messages", ["token": token ?? "", "hwid": hwid, "after": String(after), "media": "1"],
+                      as: RSupportMessages.self)
+    }
+    /// Фото/видео в поддержку (multipart). Сервер: фото до 15 МБ, видео до 50 МБ.
+    func supportUpload(token: String?, hwid: String, text: String, data: Data, mime: String,
+                       filename: String) async throws -> RSupportSendResult {
+        let boundary = "reed-" + UUID().uuidString
+        var body = Data()
+        func field(_ name: String, _ value: String) {
+            body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n".utf8))
+        }
+        field("token", token ?? ""); field("hwid", hwid); field("text", text)
+        field("platform", "iOS"); field("device", "iPhone")
+        let safeName = filename.replacingOccurrences(of: "\"", with: "")
+        body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(safeName)\"\r\nContent-Type: \(mime)\r\n\r\n".utf8))
+        body.append(data)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        let payload = body
+        let (d, code) = try await longRaw { host in
+            var comps = URLComponents()
+            comps.scheme = "https"; comps.host = host; comps.path = "/app/support/upload"
+            var req = URLRequest(url: comps.url!)
+            req.httpMethod = "POST"
+            req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+            req.httpBody = payload
+            return req
+        }
+        guard (200..<500).contains(code) else { throw ReedAPIError.badStatus(code) }
+        do { return try JSONDecoder().decode(RSupportSendResult.self, from: d) } catch { throw ReedAPIError.decode }
+    }
+    /// Файл из чата поддержки (сервер отдаёт только участнику этого диалога).
+    func supportMedia(id: Int, token: String?, hwid: String) async throws -> Data {
+        let q = ["token": token ?? "", "hwid": hwid]
+        let (d, code) = try await longRaw { host in self.request("/app/support/media/\(id)", query: q, host: host) }
+        guard code == 200 else { throw ReedAPIError.badStatus(code) }
+        return d
     }
     func deleteAccount(_ t: String) async throws -> ROk { try await post("/app/account/delete", ["token": t], as: ROk.self) }
     func session(_ t: String) async -> RSession? {

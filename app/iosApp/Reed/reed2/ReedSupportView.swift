@@ -1,4 +1,6 @@
 import SwiftUI
+import PhotosUI
+import UniformTypeIdentifiers
 
 /// Reed 2.0 — чат поддержки прямо в приложении. Сообщения уходят операторам в бота поддержки,
 /// их ответы приходят сюда же (опрос раз в 3 с, пока чат открыт).
@@ -10,6 +12,9 @@ struct ReedSupportView: View {
     @FocusState private var focused: Bool
     @State private var sentTick = 0
     @State private var chipsShown = false
+    @State private var pick: PhotosPickerItem?
+    @State private var preparing = false
+    @State private var viewer: ReedMediaViewerItem?
 
     private static let chips = ["Не подключается", "Медленно работает", "Не открывается сайт", "Вопрос по подписке"]
 
@@ -57,6 +62,7 @@ struct ReedSupportView: View {
         .background(Reed.screenBackground.ignoresSafeArea())
         .animation(.smooth(duration: 0.3), value: m.chat.isEmpty)
         .sensoryFeedback(.impact(weight: .light), trigger: sentTick)
+        .fullScreenCover(item: $viewer) { ReedMediaViewer(item: $0) }
         .preferredColorScheme(.dark)
     }
 
@@ -88,7 +94,7 @@ struct ReedSupportView: View {
                 .frame(width: 64, height: 64)
                 .reedGlass(Circle())
             Text("Напиши, что случилось").font(.system(size: 18, weight: .semibold)).foregroundStyle(Reed.ink)
-            Text("Опиши проблему своими словами — ответим прямо в этом чате.")
+            Text("Опиши проблему своими словами — можно приложить скриншот или видео. Ответим прямо в этом чате.")
                 .font(.system(size: 14)).foregroundStyle(Reed.inkMuted)
                 .multilineTextAlignment(.center).padding(.horizontal, 30)
             FlowChips(items: Self.chips, shown: chipsShown) { chip in
@@ -138,15 +144,23 @@ struct ReedSupportView: View {
             }
             HStack(spacing: 0) {
                 if item.mine { Spacer(minLength: 56) }
-                Text(Self.linkified(item.text))
-                    .font(.system(size: 16))
-                    .foregroundStyle(item.mine ? Reed.onInk : Reed.ink)
-                    .tint(item.mine ? Reed.onInk : Reed.chrome200)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 14).padding(.vertical, 10)
-                    .background(item.mine ? AnyShapeStyle(Reed.ink) : AnyShapeStyle(Reed.surface200), in: shape)
-                    .overlay(shape.strokeBorder(item.mine ? Color.clear : Reed.hairline, lineWidth: 1))
-                    .opacity(item.state == .failed ? 0.6 : 1)
+                VStack(alignment: item.mine ? .trailing : .leading, spacing: 6) {
+                    if let media = item.media {
+                        ReedChatMediaView(item: item, media: media) { viewer = $0 }
+                            .opacity(item.state == .failed ? 0.6 : 1)
+                    }
+                    if !item.text.isEmpty {
+                        Text(Self.linkified(item.text))
+                            .font(.system(size: 16))
+                            .foregroundStyle(item.mine ? Reed.onInk : Reed.ink)
+                            .tint(item.mine ? Reed.onInk : Reed.chrome200)
+                            .textSelection(.enabled)
+                            .padding(.horizontal, 14).padding(.vertical, 10)
+                            .background(item.mine ? AnyShapeStyle(Reed.ink) : AnyShapeStyle(Reed.surface200), in: shape)
+                            .overlay(shape.strokeBorder(item.mine ? Color.clear : Reed.hairline, lineWidth: 1))
+                            .opacity(item.state == .failed ? 0.6 : 1)
+                    }
+                }
                 if !item.mine { Spacer(minLength: 56) }
             }
             if lastInGroup || item.state != .sent {
@@ -190,6 +204,22 @@ struct ReedSupportView: View {
 
     private var inputBar: some View {
         HStack(alignment: .bottom, spacing: 10) {
+            PhotosPicker(selection: $pick, matching: .any(of: [.images, .videos]), photoLibrary: .shared()) {
+                Image(systemName: preparing ? "hourglass" : "paperclip")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(Reed.ink)
+                    .frame(width: 44, height: 44)
+                    .reedGlass(Circle(), interactive: true)
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            .buttonStyle(ReedPressStyle())
+            .disabled(preparing)
+            .accessibilityLabel("Прикрепить фото или видео")
+            .onChange(of: pick) { _, newItem in
+                guard let newItem else { return }
+                pick = nil
+                Task { await attach(newItem) }
+            }
             TextField("Сообщение", text: $m.chatDraft, axis: .vertical)
                 .lineLimit(1...6)
                 .font(.system(size: 16))
@@ -224,6 +254,34 @@ struct ReedSupportView: View {
             LinearGradient(colors: [Reed.ground100.opacity(0), Reed.ground100], startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
         }
+    }
+
+    // MARK: вложения
+
+    /// Фото → JPEG до 2048 px; видео — как есть (до 50 МБ) + кадр-обложка.
+    private func attach(_ item: PhotosPickerItem) async {
+        withAnimation(.smooth(duration: 0.2)) { preparing = true }
+        defer { withAnimation(.smooth(duration: 0.2)) { preparing = false } }
+        if item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) }) {
+            guard let movie = try? await item.loadTransferable(type: ReedPickedMovie.self) else {
+                m.show("Не удалось открыть видео"); return
+            }
+            let size = ReedMediaTools.fileSize(movie.url)
+            guard size > 0 else { m.show("Не удалось открыть видео"); return }
+            guard size <= 50 * 1024 * 1024 else { m.show("Видео больше 50 МБ — обрежь его в «Фото» и отправь снова"); return }
+            guard let data = try? Data(contentsOf: movie.url) else { m.show("Не удалось открыть видео"); return }
+            let poster = await ReedMediaTools.poster(movie.url)
+            let ext = movie.url.pathExtension.isEmpty ? "mov" : movie.url.pathExtension.lowercased()
+            m.sendMedia(data: data, mime: ReedMediaTools.videoMime(movie.url), name: "video.\(ext)",
+                        kind: "video", preview: poster, localURL: movie.url)
+        } else {
+            guard let raw = try? await item.loadTransferable(type: Data.self),
+                  let jpeg = ReedMediaTools.jpeg(raw) else {
+                m.show("Не удалось открыть фото"); return
+            }
+            m.sendMedia(data: jpeg, mime: "image/jpeg", name: "photo.jpg", kind: "photo", preview: jpeg, localURL: nil)
+        }
+        sentTick += 1
     }
 
     // MARK: форматирование

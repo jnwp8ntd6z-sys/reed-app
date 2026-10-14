@@ -23,6 +23,16 @@ struct ReedChatItem: Identifiable, Equatable, Sendable {
     var text: String
     var date: Date
     var state: State = .sent
+    var media: ReedChatMedia? = nil
+}
+
+/// Вложение сообщения поддержки: фото, видео или файл.
+struct ReedChatMedia: Equatable, Sendable {
+    var kind: String          // photo | video | file
+    var name: String?
+    var serverId: Int?        // id сообщения на сервере — по нему качается файл
+    var preview: Data?        // локальная картинка (своё фото / кадр своего видео)
+    var localURL: URL?        // локальная копия своего видео
 }
 
 struct ReedNetRow: Identifiable, Equatable, Sendable {
@@ -90,6 +100,8 @@ final class ReedAppModel: ObservableObject {
     private var chatPoll: Task<Void, Never>?
     private var chatLastId = 0
     private var chatFakeId = 0
+    private var pendingUploads: [String: (data: Data, mime: String, name: String)] = [:]
+    private var mediaCache: [Int: Data] = [:]
 
     @Published var showNotifications = false
     @Published var toast: String?
@@ -225,7 +237,75 @@ final class ReedAppModel: ObservableObject {
     func retryChat(_ id: String) {
         guard let i = chat.firstIndex(where: { $0.id == id }) else { return }
         withAnimation(.smooth(duration: 0.25)) { chat[i].state = .sending }
-        deliver(id, chat[i].text)
+        if pendingUploads[id] != nil { deliverMedia(id, chat[i].text) } else { deliver(id, chat[i].text) }
+    }
+
+    /// Фото/видео в поддержку. Текст из поля ввода уходит подписью к файлу.
+    func sendMedia(data: Data, mime: String, name: String, kind: String, preview: Data?, localURL: URL?) {
+        let text = chatDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        chatDraft = ""
+        let id = "l" + UUID().uuidString
+        let item = ReedChatItem(id: id, serverId: nil, mine: true, text: text, date: Date(), state: .sending,
+                                media: ReedChatMedia(kind: kind, name: name, serverId: nil, preview: preview, localURL: localURL))
+        pendingUploads[id] = (data, mime, name)
+        withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) { chat.append(item) }
+        deliverMedia(id, text)
+    }
+
+    private func deliverMedia(_ localId: String, _ text: String) {
+        guard let up = pendingUploads[localId] else { return }
+        Task {
+            var r: RSupportSendResult?
+            var networkFail = false
+            if live {
+                do {
+                    r = try await api.supportUpload(token: token, hwid: ReedSessionStore.hwid(), text: text,
+                                                    data: up.data, mime: up.mime, filename: up.name)
+                } catch { networkFail = true }
+            } else {   // превью: без сети
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                chatFakeId += 1
+                r = RSupportSendResult(ok: true, message: RSupportMessage(id: 10_000 + chatFakeId, direction: "in", text: text, created_at: nil))
+            }
+            guard let i = chat.firstIndex(where: { $0.id == localId }) else { return }
+            withAnimation(.smooth(duration: 0.25)) {
+                if let m = r?.message, r?.ok == true {
+                    chat[i].serverId = m.id
+                    chat[i].media?.serverId = m.id
+                    chat[i].state = .sent
+                    chatLastId = max(chatLastId, m.id)
+                    ReedSessionStore.supportUsed = true
+                    pendingUploads[localId] = nil
+                    if up.mime.hasPrefix("image/") { mediaCache[m.id] = up.data }
+                } else {
+                    chat[i].state = .failed
+                }
+            }
+            if networkFail { show("Файл не отправился — проверь интернет и нажми «Повторить»") }
+            else if r?.ok != true { show(r?.hint ?? "Файл не отправился") }
+        }
+    }
+
+    /// Файл сообщения поддержки: память → диск (Caches) → сервер.
+    func supportMedia(_ id: Int, name: String?) async -> Data? {
+        if let d = mediaCache[id] { return d }
+        let file = ReedMediaDisk.url(id, name)
+        if let d = try? Data(contentsOf: file) {
+            if d.count < 8_000_000 { mediaCache[id] = d }
+            return d
+        }
+        guard live, let d = try? await api.supportMedia(id: id, token: token, hwid: ReedSessionStore.hwid()) else { return nil }
+        if d.count < 8_000_000 { mediaCache[id] = d }
+        try? d.write(to: file, options: .atomic)
+        return d
+    }
+
+    /// Локальный путь к файлу (видео/документ) — для плеера и «Поделиться».
+    func supportMediaFile(_ id: Int, name: String?) async -> URL? {
+        let file = ReedMediaDisk.url(id, name)
+        if FileManager.default.fileExists(atPath: file.path) { return file }
+        guard await supportMedia(id, name: name) != nil else { return nil }
+        return FileManager.default.fileExists(atPath: file.path) ? file : nil
     }
 
     private func deliver(_ localId: String, _ text: String) {
@@ -264,7 +344,8 @@ final class ReedAppModel: ObservableObject {
 
     nonisolated static func chatItem(_ m: RSupportMessage) -> ReedChatItem {
         ReedChatItem(id: "s\(m.id)", serverId: m.id, mine: m.isMine, text: m.text,
-                     date: ReedFormat.parse(m.created_at, utc: true) ?? Date(), state: .sent)
+                     date: ReedFormat.parse(m.created_at, utc: true) ?? Date(), state: .sent,
+                     media: m.media.map { ReedChatMedia(kind: $0.kind, name: $0.name, serverId: m.id, preview: nil, localURL: nil) })
     }
 
     private func syncTunnel() {
