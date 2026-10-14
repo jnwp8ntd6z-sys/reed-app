@@ -87,7 +87,7 @@ platform :ios do
     dump = lambda do |title, path|
       begin
         UI.message("=== #{title}: #{path}")
-        puts JSON.pretty_generate(c.get(path).body)
+        puts JSON.pretty_generate(c.get("v1/" + path).body)
       rescue => e
         UI.error("#{title}: #{e.message}")
       end
