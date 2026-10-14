@@ -87,22 +87,27 @@ enum ReedSessionStore {
 
     private static func flag(_ k: String, _ v: Bool) { if v { d.set("1", forKey: k) } else { d.removeObject(forKey: k) } }
 
-    /// HWID устройства — тот же файл, что у прежней версии (Application Support/Olcbox/device_identity),
-    /// чтобы сервер узнал это устройство и не занял ещё один слот.
+    /// HWID устройства: Application Support/Reed/device_identity. Сборки до 2.0 хранили его в другой
+    /// папке — один раз переносим оттуда, чтобы сервер узнал устройство и не занял ещё один слот.
     static func hwid() -> String {
         let fm = FileManager.default
         let base = (try? fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true))
             ?? fm.temporaryDirectory
-        let dir = base.appendingPathComponent("Olcbox", isDirectory: true)
+        let dir = base.appendingPathComponent("Reed", isDirectory: true)
         let file = dir.appendingPathComponent("device_identity")
-        if let s = try? String(contentsOf: file, encoding: .utf8) {
-            let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !t.isEmpty { return t }
-        }
-        let fresh = UUID().uuidString.lowercased()
+        if let t = readId(file) { return t }
+        let legacy = base.appendingPathComponent("Olcbox", isDirectory: true)
+            .appendingPathComponent("device_identity")
+        let id = readId(legacy) ?? UUID().uuidString.lowercased()
         try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        try? fresh.write(to: file, atomically: true, encoding: .utf8)
-        return fresh
+        try? id.write(to: file, atomically: true, encoding: .utf8)
+        return id
+    }
+
+    private static func readId(_ url: URL) -> String? {
+        guard let s = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
     }
 }
 

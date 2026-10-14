@@ -50,13 +50,13 @@ platform :ios do
     next_build = latest_build.to_i + 1
     increment_build_number(
       build_number: next_build,
-      xcodeproj: "iosApp/iosApp.xcodeproj",
+      xcodeproj: "iosApp/Reed.xcodeproj",
     )
     UI.message("Building iOS build number #{next_build} (latest in TestFlight was #{latest_build})")
 
     build_app(
-      project: "iosApp/iosApp.xcodeproj",
-      scheme: "iosApp",
+      project: "iosApp/Reed.xcodeproj",
+      scheme: "Reed",
       configuration: "Release",
       export_method: "app-store",
       export_options: {

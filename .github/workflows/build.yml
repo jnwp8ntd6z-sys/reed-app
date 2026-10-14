@@ -308,7 +308,7 @@ jobs:
           OLCRTC_REPO: ${{ github.workspace }}/olcrtc
         run: |
           xcodegen generate
-          xcodebuild -project iosApp.xcodeproj -scheme iosApp -sdk iphonesimulator -configuration Debug \
+          xcodebuild -project Reed.xcodeproj -scheme Reed -sdk iphonesimulator -configuration Debug \
             -destination 'generic/platform=iOS Simulator' -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" PROVISIONING_PROFILE_SPECIFIER="" \
             build > build.log 2>&1 || { grep -E "error:|FAILED" build.log | sort -u | head -150; exit 1; }

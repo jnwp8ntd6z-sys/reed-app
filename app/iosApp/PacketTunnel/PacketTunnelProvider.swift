@@ -1,7 +1,7 @@
 import NetworkExtension
 import Foundation
 import Security
-import OlcRtcMobile   // Singboxmobile* (sing-box/libbox) + Mobile* (olcRTC) — один combined XCFramework
+import ReedCore   // Singboxmobile* (sing-box/libbox + covert) + Mobile* (olcRTC) — одна XCFramework
 
 /// Packet Tunnel Provider — системный VPN Reed на iOS.
 /// Запускается системой при старте VPN. Создаёт TUN, передаёт его sing-box (libbox),
@@ -430,7 +430,7 @@ enum TunnelConfigStore {
     }
 
 
-    static let frontIP = "135.106.182.198"
+    static let frontIP = "95.181.154.73"   // сервер №1, мост Москва (РФ-фронт reedapp.ru)
 
     /// Конфиг: сначала https://reedapp.ru, при сбое — напрямую на IP РФ-фронта (DNS-кэш провайдера
     /// со старым зарубежным IP / ТСПУ). completion(body, "host"|"front"|"fail http=… err=…").

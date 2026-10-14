@@ -114,7 +114,7 @@ enum ReedAPIError: Error, Sendable { case network, badStatus(Int), decode }
 final class ReedAPI: NSObject, Sendable {
     static let shared = ReedAPI()
     static let host = "reedapp.ru"
-    static let frontIP = "135.106.182.198"
+    static let frontIP = "95.181.154.73"   // сервер №1, мост Москва (РФ-фронт reedapp.ru)
 
     private let session: URLSession
     private let frontSession: URLSession

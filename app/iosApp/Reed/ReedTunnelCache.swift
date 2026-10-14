@@ -58,7 +58,7 @@ enum TunnelConfigStore {
     }
 
 
-    static let frontIP = "135.106.182.198"
+    static let frontIP = "95.181.154.73"   // сервер №1, мост Москва (РФ-фронт reedapp.ru)
 
     /// Конфиг: сначала https://reedapp.ru, при сбое — напрямую на IP РФ-фронта (DNS-кэш провайдера
     /// со старым зарубежным IP / ТСПУ). completion(body, "host"|"front"|"fail http=… err=…").

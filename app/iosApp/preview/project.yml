@@ -18,11 +18,11 @@ targets:
     type: application
     platform: iOS
     sources:
-      - path: ../iosApp/reed2
-      - path: ../iosApp/ReedSystemTunnel.swift
-      - path: ../iosApp/ReedVPNManager.swift
-      - path: ../iosApp/ReedTunnelCache.swift
-      - path: ../iosApp/Fonts
+      - path: ../Reed/reed2
+      - path: ../Reed/ReedSystemTunnel.swift
+      - path: ../Reed/ReedVPNManager.swift
+      - path: ../Reed/ReedTunnelCache.swift
+      - path: ../Reed/Fonts
         buildPhase: resources
       - path: Preview
         excludes: ["Info.plist"]

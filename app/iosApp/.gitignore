@@ -1,0 +1,4 @@
+# Генерируются на CI: xcodegen (Reed.xcodeproj) и scripts/build-core.sh (ядро)
+*.xcodeproj/
+Core/
+build/
