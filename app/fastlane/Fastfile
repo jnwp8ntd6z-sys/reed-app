@@ -77,4 +77,54 @@ platform :ios do
       skip_submission: true,
     )
   end
+
+  desc "Отправить сборку из TestFlight на ревью App Store (BUILD_NUMBER, по умолчанию — последняя версии APP_VERSION)"
+  lane :submit do
+    api_key = app_store_connect_api_key(
+      key_id: ENV["ASC_KEY_ID"],
+      issuer_id: ENV["ASC_ISSUER_ID"],
+      key_filepath: ENV["ASC_KEY_PATH"],
+      in_house: false,
+    )
+    version = ENV["APP_VERSION"].to_s.empty? ? "2.0" : ENV["APP_VERSION"]
+    build = ENV["BUILD_NUMBER"].to_s
+    if build.empty?
+      build = latest_testflight_build_number(api_key: api_key, app_identifier: "ru.reedapp.app", version: version).to_s
+    end
+
+    # Сборка только что залита — ждём, пока App Store Connect её обработает (до ~40 минут).
+    app = Spaceship::ConnectAPI::App.find("ru.reedapp.app")
+    UI.user_error!("Приложение ru.reedapp.app не найдено в App Store Connect") unless app
+    state = nil
+    80.times do
+      b = Spaceship::ConnectAPI::Build.all(app_id: app.id, version: version, build_number: build).first
+      state = b&.processing_state
+      UI.message("Сборка #{version} (#{build}): #{state || 'ещё не видна'}")
+      break if state == "VALID"
+      UI.user_error!("Сборка #{build}: #{state}") if %w[FAILED INVALID].include?(state)
+      sleep 30
+    end
+    UI.user_error!("Сборка #{build} так и не обработалась (#{state})") unless state == "VALID"
+
+    deliver(
+      api_key: api_key,
+      app_identifier: "ru.reedapp.app",
+      app_version: version,
+      build_number: build,
+      skip_binary_upload: true,
+      skip_metadata: true,
+      skip_screenshots: true,
+      submit_for_review: true,
+      automatic_release: false,
+      force: true,
+      run_precheck_before_submit: false,
+      precheck_include_in_app_purchases: false,
+      submission_information: {
+        add_id_info_uses_idfa: false,
+        export_compliance_uses_encryption: false,
+        content_rights_contains_third_party_content: false,
+      },
+    )
+    UI.success("Сборка #{version} (#{build}) отправлена на ревью")
+  end
 end
