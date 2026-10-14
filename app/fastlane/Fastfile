@@ -78,6 +78,29 @@ platform :ios do
     )
   end
 
+  desc "Диагностика: почему версия не подаётся на ревью"
+  lane :diag do
+    app_store_connect_api_key(key_id: ENV["ASC_KEY_ID"], issuer_id: ENV["ASC_ISSUER_ID"],
+                              key_filepath: ENV["ASC_KEY_PATH"], in_house: false)
+    app = Spaceship::ConnectAPI::App.find("ru.reedapp.app")
+    c = Spaceship::ConnectAPI.client.tunes_request_client
+    dump = lambda do |title, path|
+      begin
+        UI.message("=== #{title}: #{path}")
+        puts JSON.pretty_generate(c.get(path).body)
+      rescue => e
+        UI.error("#{title}: #{e.message}")
+      end
+    end
+    dump.call("versions", "apps/#{app.id}/appStoreVersions?limit=5&include=build")
+    ver = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::IOS)
+    if ver
+      dump.call("version", "appStoreVersions/#{ver.id}?include=build,appStoreReviewDetail,ageRatingDeclaration,appStoreVersionLocalizations")
+    end
+    dump.call("submissions", "reviewSubmissions?filter[app]=#{app.id}&filter[platform]=IOS&limit=5&include=items")
+    dump.call("builds", "builds?filter[app]=#{app.id}&sort=-uploadedDate&limit=3&fields[builds]=version,processingState,usesNonExemptEncryption,expired,buildAudienceType")
+  end
+
   desc "Отправить сборку из TestFlight на ревью App Store (BUILD_NUMBER, по умолчанию — последняя версии APP_VERSION)"
   lane :submit do
     api_key = app_store_connect_api_key(
