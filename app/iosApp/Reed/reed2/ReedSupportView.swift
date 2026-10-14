@@ -13,6 +13,7 @@ struct ReedSupportView: View {
     @State private var sentTick = 0
     @State private var chipsShown = false
     @State private var pick: PhotosPickerItem?
+    @State private var showPicker = false
     @State private var preparing = false
     @State private var viewer: ReedMediaViewerItem?
 
@@ -204,7 +205,7 @@ struct ReedSupportView: View {
 
     private var inputBar: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            PhotosPicker(selection: $pick, matching: .any(of: [.images, .videos]), photoLibrary: .shared()) {
+            Button { showPicker = true } label: {
                 Image(systemName: preparing ? "hourglass" : "paperclip")
                     .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(Reed.ink)
@@ -215,6 +216,8 @@ struct ReedSupportView: View {
             .buttonStyle(ReedPressStyle())
             .disabled(preparing)
             .accessibilityLabel("Прикрепить фото или видео")
+            .photosPicker(isPresented: $showPicker, selection: $pick, matching: .any(of: [.images, .videos]),
+                          photoLibrary: .shared())
             .onChange(of: pick) { _, newItem in
                 guard let newItem else { return }
                 pick = nil
