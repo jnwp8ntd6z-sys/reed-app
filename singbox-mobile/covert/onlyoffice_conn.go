@@ -263,6 +263,7 @@ func (c *OnlyOfficePacketConn) sessionLoopClient() {
 func (c *OnlyOfficePacketConn) sessionLoopExit() {
 	backoff := 200 * time.Millisecond
 	var prev *ooSession
+	var lastHold time.Time
 	for c.running.Load() {
 		info, err := c.fetchDocInfo()
 		if err != nil {
@@ -271,6 +272,12 @@ func (c *OnlyOfficePacketConn) sessionLoopExit() {
 			continue
 		}
 		if c.hasKey(info.key) {
+			// Сторож рестартит выход, если лог молчит >300 с. Стабильная комната
+			// сама ничего не пишет, поэтому раз в минуту оставляем пульс.
+			if time.Since(lastHold) > 45*time.Second {
+				lastHold = time.Now()
+				oodbg("exit hold key=%.16s", info.key)
+			}
 			select {
 			case <-c.closed:
 				return
