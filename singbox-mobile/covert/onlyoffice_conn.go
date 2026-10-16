@@ -553,7 +553,11 @@ func (c *OnlyOfficePacketConn) writeLoop() {
 		frame = append(frame, byte(c.selfID>>24), byte(c.selfID>>16), byte(c.selfID>>8), byte(c.selfID))
 		frame = append(frame, batch...)
 		b64 := base64.StdEncoding.EncodeToString(frame)
-		n := c.writeAll([]byte(`42["message",{"type":"cursor","cursor":"18;` + b64 + `"}]`))
+		// Префикс курсора = размер СЫРОГО кадра в байтах ДО base64 (апстрим OpenFlux #165, 0.4.3,
+		// 11.10.2026). Яндекс.Диск с начала октября 2026 трактует префикс как позицию курсора и
+		// дропает cursor-кадр, если он не равен реальному размеру пакета → раньше с фиксированным
+		// "18" терялись ВСЕ пакеты, Session-handshake истекал по таймауту (ЛТЕ умерла ~04.10).
+		n := c.writeAll([]byte(fmt.Sprintf(`42["message",{"type":"cursor","cursor":"%d;%s"}]`, len(frame), b64)))
 		oodbg("tx self=%d npkts=%d batch=%d b64=%d sessions=%d", c.selfID, len(pkts), len(batch), len(b64), n)
 	}
 }
