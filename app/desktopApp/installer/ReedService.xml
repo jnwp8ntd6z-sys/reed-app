@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Служба Reed Client (WinSW): java под LocalSystem держит sing-box с TUN. %BASE% = папка установки. -->
+<service>
+  <id>ReedClientService</id>
+  <name>Reed Client Service</name>
+  <description>Подключение Reed Client: туннель без запроса прав администратора.</description>
+  <executable>%BASE%\runtime\bin\java.exe</executable>
+  <arguments>-Xmx96m -XX:+UseSerialGC -Djpackage.app-version=3.0.1 -Dfile.encoding=UTF-8 -jar "%BASE%\app\reed.jar" --service</arguments>
+  <workingdirectory>%BASE%</workingdirectory>
+  <startmode>Automatic</startmode>
+  <stoptimeout>5 sec</stoptimeout>
+  <onfailure action="restart" delay="5 sec"/>
+  <resetfailure>1 hour</resetfailure>
+  <logpath>%BASE%\data\logs</logpath>
+  <log mode="roll-by-size">
+    <sizeThreshold>1024</sizeThreshold>
+    <keepFiles>2</keepFiles>
+  </log>
+</service>

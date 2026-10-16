@@ -52,7 +52,13 @@ internal object SingBoxDesktopRunner {
      * подключаемся СРАЗУ по нему, а свежий конфиг тянем в фоне для следующего раза.
      * Сеть блокирующе нужна только при ПЕРВОМ подключении к серверу.
      */
-    fun fetchConfig(location: LocationConfig, socksPort: Int, bindInterface: String? = null): String {
+    fun fetchConfig(
+        location: LocationConfig,
+        socksPort: Int,
+        bindInterface: String? = null,
+        // Служба Windows работает под SYSTEM и настроек пользователя не видит — режим передаёт окно.
+        splitRouting: Boolean = ReedSession.splitRouting,
+    ): String {
         val config = location.normalized()
         val token = config.key
         // «Любой» (чужой) ключ: key — это сам URI. Конфиг sing-box собираем локально.
@@ -63,10 +69,11 @@ internal object SingBoxDesktopRunner {
                 org.olcbox.app.data.datasource.ProxyKeyImport
                     .buildSingboxConfig(parsed.outbound, socksPort),
                 bindInterface,
+                splitRouting,
             )
         }
         val server = URLEncoder.encode(config.id, "UTF-8")
-        val split = if (ReedSession.splitRouting) "1" else "0"
+        val split = if (splitRouting) "1" else "0"
         // Временный VPN (id=reed-temp) — БЕЗ токена с /app/temp (работает до входа).
         val url = if (config.id == "reed-temp") {
             "$REED_API_BASE/app/temp?socks_port=$socksPort"
@@ -74,14 +81,14 @@ internal object SingBoxDesktopRunner {
             "$REED_API_BASE/app/singbox?token=$token&socks_port=$socksPort&server=$server&split=$split"
         }
 
-        val cached = cacheFile(config.id, socksPort).takeIf { it.exists() }
+        val cached = cacheFile(config.id, socksPort, splitRouting).takeIf { it.exists() }
             ?.readText()?.takeIf { it.isNotBlank() }
         if (cached != null) {
             // Есть кэш — отдаём сразу, свежий конфиг обновляем в фоне (не блокируем запуск).
             Thread {
-                httpGet(url)?.let { runCatching { cacheFile(config.id, socksPort).writeText(it) } }
+                httpGet(url)?.let { runCatching { cacheFile(config.id, socksPort, splitRouting).writeText(it) } }
             }.apply { isDaemon = true }.start()
-            return bindDirectToInterface(cached, bindInterface)
+            return bindDirectToInterface(cached, bindInterface, splitRouting)
         }
 
         // Кэша нет (первое подключение к серверу) — тянем с сети и сохраняем.
@@ -89,15 +96,15 @@ internal object SingBoxDesktopRunner {
         if (fetched != null) {
             // В кэш кладём ИСХОДНЫЙ конфиг сервера: привязка к адаптеру зависит от машины
             // и сети, её накладываем при каждом запуске заново.
-            runCatching { cacheFile(config.id, socksPort).writeText(fetched) }
-            return bindDirectToInterface(fetched, bindInterface)
+            runCatching { cacheFile(config.id, socksPort, splitRouting).writeText(fetched) }
+            return bindDirectToInterface(fetched, bindInterface, splitRouting)
         }
         // Временный VPN на свежей установке без доступа к API — берём ВШИТЫЙ конфиг,
         // чтобы поднять туннель и через него докачать реальные ключи (бутстрап).
         if (config.id == "reed-temp") {
             val baked = org.olcbox.app.data.reed.bakedTempSingboxConfig(socksPort)
-            runCatching { cacheFile(config.id, socksPort).writeText(baked) }
-            return bindDirectToInterface(baked, bindInterface)
+            runCatching { cacheFile(config.id, socksPort, splitRouting).writeText(baked) }
+            return bindDirectToInterface(baked, bindInterface, splitRouting)
         }
         error("VLESS config unavailable (no network, no cache)")
     }
@@ -122,8 +129,12 @@ internal object SingBoxDesktopRunner {
      * Если имя адаптера не определилось, конфиг возвращаем как есть: лучше рабочий VPN
      * без РФ-сплита, чем упавший старт.
      */
-    internal fun bindDirectToInterface(rawConfigJson: String, bindInterface: String?): String {
-        val configJson = if (ReedSession.splitRouting) addRuZonesDirect(rawConfigJson) else rawConfigJson
+    internal fun bindDirectToInterface(
+        rawConfigJson: String,
+        bindInterface: String?,
+        splitRouting: Boolean = ReedSession.splitRouting,
+    ): String {
+        val configJson = if (splitRouting) addRuZonesDirect(rawConfigJson) else rawConfigJson
         if (bindInterface.isNullOrBlank()) return configJson
         return runCatching {
             val root = json.parseToJsonElement(configJson).jsonObject
@@ -278,11 +289,11 @@ internal object SingBoxDesktopRunner {
             null
         }
 
-    private fun cacheFile(serverId: String, socksPort: Int): File {
+    private fun cacheFile(serverId: String, socksPort: Int, splitRouting: Boolean = ReedSession.splitRouting): File {
         val dir = File(System.getProperty("user.home"), ".reedvpn/cache").apply { mkdirs() }
         val safe = serverId.map { if (it.isLetterOrDigit()) it else '_' }.joinToString("")
         // Режим «РФ напрямую» — часть конфига: без него в кэше после переключения лежал бы старый вариант.
-        val split = if (ReedSession.splitRouting) "s1" else "s0"
+        val split = if (splitRouting) "s1" else "s0"
         // «_w3»: кэш 2.0.x хранит обходной Windows-конфиг (UA Java/), новому клиенту он не годится.
         val variant = if (CONFIG_USER_AGENT != null) "_w3" else ""
         return File(dir, "singbox_cache_${safe}_${socksPort}_$split$variant.json")

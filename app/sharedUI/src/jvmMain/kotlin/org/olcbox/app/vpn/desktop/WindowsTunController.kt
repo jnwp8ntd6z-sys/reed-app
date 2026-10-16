@@ -77,9 +77,12 @@ internal class WindowsTunController(
 
     private suspend fun requestAdministratorRestart() {
         val processInfo = ProcessHandle.current().info()
-        val currentCommand = processInfo.command().orElse(null)
+        // NSIS-лаунчер 3.0 передаёт свой путь в jpackage.app-path: перезапускаем его, а не javaw.exe
+        // (на Windows ProcessHandle не отдаёт аргументы, и javaw без «-jar …» не стартует).
+        val launcher = System.getProperty("jpackage.app-path")?.takeIf { java.io.File(it).isFile }
+        val currentCommand = launcher ?: processInfo.command().orElse(null)
             ?: error("Olcbox cannot resolve its Windows launcher for administrator restart")
-        val currentArguments = processInfo.arguments().orElse(emptyArray()).toList()
+        val currentArguments = if (launcher != null) emptyList() else processInfo.arguments().orElse(emptyArray()).toList()
         val restartArguments = if (ELEVATED_START_ARGUMENT in currentArguments) {
             currentArguments
         } else {

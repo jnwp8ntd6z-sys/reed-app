@@ -1,6 +1,6 @@
 Unicode true
 !define APPNAME "Reed Client"
-!define VER "3.0.0"
+!define VER "3.0.1"
 Name "${APPNAME}"
 OutFile "Reed-Client-${VER}-setup.exe"
 Icon "reed.ico"
@@ -37,6 +37,10 @@ VIAddVersionKey /LANG=${LANG_RUSSIAN} "LegalCopyright" "© 2026 Reed"
 
 Section "Install"
   SetRegView 64
+  ; Обновление поверх: служба держит файлы java — сначала останавливаем и снимаем её.
+  IfFileExists "$INSTDIR\ReedService.exe" 0 +3
+    nsExec::Exec '"$INSTDIR\ReedService.exe" stop'
+    nsExec::Exec '"$INSTDIR\ReedService.exe" uninstall'
   !insertmacro KillRunning
 
   ; Старая версия 2.0.x стояла MSI-пакетом (jpackage). Находим её по имени в списке
@@ -81,7 +85,15 @@ Section "Install"
   File "app\reed.jar"
   SetOutPath "$INSTDIR\runtime"
   File /r "runtime\*.*"
+  SetOutPath "$INSTDIR\bin"
+  File "bin\sing-box-windows-amd64.exe"
   SetOutPath "$INSTDIR"
+  File /oname=ReedService.exe "WinSW-net461.exe"
+  File "ReedService.xml"
+  CreateDirectory "$INSTDIR\data"
+  ; Служба: ставим и запускаем (автозапуск с Windows, перезапуск при сбое).
+  nsExec::ExecToLog '"$INSTDIR\ReedService.exe" install'
+  nsExec::ExecToLog '"$INSTDIR\ReedService.exe" start'
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   CreateDirectory "$SMPROGRAMS\Reed"
   CreateShortcut "$SMPROGRAMS\Reed\${APPNAME}.lnk" "$INSTDIR\Reed Client.exe" "" "$INSTDIR\reed.ico"
@@ -98,6 +110,8 @@ SectionEnd
 
 Section "Uninstall"
   SetRegView 64
+  nsExec::Exec '"$INSTDIR\ReedService.exe" stop'
+  nsExec::Exec '"$INSTDIR\ReedService.exe" uninstall'
   !insertmacro KillRunning
   Delete "$SMPROGRAMS\Reed\${APPNAME}.lnk"
   RMDir "$SMPROGRAMS\Reed"

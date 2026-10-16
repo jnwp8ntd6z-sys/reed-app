@@ -1,21 +1,21 @@
-; «Reed Client.exe»: запускает приложение встроенной Java. Сразу с правами администратора —
-; туннель (адаптер Reed) поднимается только с ними; служба Windows (этап 3) это уберёт.
+; «Reed Client.exe»: запускает приложение встроенной Java БЕЗ прав администратора —
+; туннель поднимает служба Reed Client Service (этап 3).
 Unicode true
 !include "FileFunc.nsh"
 Name "Reed Client"
 OutFile "Reed Client.exe"
 Icon "reed.ico"
-RequestExecutionLevel admin
+RequestExecutionLevel user
 SilentInstall silent
-VIProductVersion "3.0.0.0"
+VIProductVersion "3.0.1.0"
 VIAddVersionKey "ProductName" "Reed Client"
 VIAddVersionKey "FileDescription" "Reed Client"
-VIAddVersionKey "FileVersion" "3.0.0"
-VIAddVersionKey "ProductVersion" "3.0.0"
+VIAddVersionKey "FileVersion" "3.0.1"
+VIAddVersionKey "ProductVersion" "3.0.1"
 VIAddVersionKey "CompanyName" "Reed"
 VIAddVersionKey "LegalCopyright" "© 2026 Reed"
 Section
   ${GetParameters} $0
   SetOutPath "$EXEDIR"
-  Exec '"$EXEDIR\runtime\bin\javaw.exe" -Djpackage.app-version=3.0.0 -Djpackage.app-path="$EXEDIR\Reed Client.exe" -Dfile.encoding=UTF-8 -jar "$EXEDIR\app\reed.jar" $0'
+  Exec '"$EXEDIR\runtime\bin\javaw.exe" -Djpackage.app-version=3.0.1 -Djpackage.app-path="$EXEDIR\Reed Client.exe" -Dfile.encoding=UTF-8 -jar "$EXEDIR\app\reed.jar" $0'
 SectionEnd

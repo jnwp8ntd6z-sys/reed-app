@@ -30,7 +30,10 @@ import org.olcbox.app.vpn.desktop.LinuxTunController
 import org.olcbox.app.vpn.desktop.OlcRtcCommand
 import org.olcbox.app.vpn.desktop.PacServer
 import org.olcbox.app.vpn.desktop.SingBoxDesktopRunner
+import org.olcbox.app.vpn.desktop.ReedServiceClient
+import org.olcbox.app.vpn.desktop.ReedWindowsService
 import org.olcbox.app.vpn.desktop.WindowsSingBoxTun
+import org.olcbox.app.data.reed.ReedSession
 import org.olcbox.app.vpn.desktop.WindowsTunController
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -76,7 +79,69 @@ class DesktopVpnManager private constructor(
     private val linuxTunController = LinuxTunController(::addLog)
     private val windowsTunController = WindowsTunController(::addLog)
 
+    // Windows 3.0: подключением владеет служба Reed Client Service (без прав администратора у окна).
+    @Volatile private var serviceMode = false
+    private var serviceMonitorJob: Job? = null
+    private var serviceLogFrom = 0
+
+    init {
+        // Окно открыли, а служба уже держит подключение (приложение перезапустили) — показываем его.
+        if (DesktopPaths.os == DesktopOs.Windows) scope.launch {
+            val st = runCatching { ReedServiceClient.status(0) }.getOrNull()
+            if (st?.state == "on" && _status.value is VpnStatus.Disconnected) {
+                serviceMode = true
+                serviceLogFrom = st.logFrom + st.logs.size
+                setStatus(VpnStatus.Connected)
+                addLog("Служба Reed уже подключена (${st.serverId})")
+                startServiceMonitor()
+            }
+        }
+    }
+
     override fun needsPermission(): Boolean = false
+
+    private fun pullServiceLogs(st: ReedWindowsService.Status) {
+        st.logs.forEach { addLog("svc: $it") }
+        serviceLogFrom = st.logFrom + st.logs.size
+    }
+
+    /** Подключение через службу: команда /start и ожидание «on» / «error». */
+    private suspend fun startViaService(location: LocationConfig, requestGeneration: Long) {
+        serviceMode = true
+        addLog("Подключение через службу Reed Client Service")
+        ReedServiceClient.start(location, ReedSession.splitRouting) ?: error("Служба не ответила")
+        val deadline = System.currentTimeMillis() + SERVICE_CONNECT_TIMEOUT_MS
+        while (System.currentTimeMillis() < deadline) {
+            if (requestGeneration != generation) throw CancellationException("Desktop start superseded")
+            val st = runCatching { ReedServiceClient.status(serviceLogFrom) }.getOrNull()
+            if (st != null) {
+                pullServiceLogs(st)
+                when (st.state) {
+                    "on" -> { setStatus(VpnStatus.Connected); startServiceMonitor(); return }
+                    "error" -> error(st.error ?: "Не удалось подключиться")
+                }
+            }
+            delay(SERVICE_POLL_MS)
+        }
+        error("Служба не подключилась за ${SERVICE_CONNECT_TIMEOUT_MS / 1000} с")
+    }
+
+    /** Пока подключены — раз в 2 с сверяемся со службой: движок мог упасть сам. */
+    private fun startServiceMonitor() {
+        serviceMonitorJob?.cancel()
+        serviceMonitorJob = scope.launch {
+            while (isActive && serviceMode) {
+                delay(2_000)
+                val st = runCatching { ReedServiceClient.status(serviceLogFrom) }.getOrNull() ?: continue
+                pullServiceLogs(st)
+                if (st.state != "on" && serviceMode && _status.value is VpnStatus.Connected) {
+                    serviceMode = false
+                    setStatus(if (st.state == "error") VpnStatus.Error(st.error ?: "Подключение прервалось") else VpnStatus.Disconnected)
+                    return@launch
+                }
+            }
+        }
+    }
 
     override fun startVpn() {
         val requestGeneration = ++generation
@@ -232,6 +297,11 @@ class DesktopVpnManager private constructor(
             if (desktopMode == DesktopMode.WindowsTun) {
                 // olcRTC на Windows убран (3.0): подключаем только VLESS-серверы.
                 if (!location.isVless()) error("Этот сервер недоступен на компьютере")
+                // Есть служба — подключает она, окну права администратора не нужны.
+                if (ReedServiceClient.available()) {
+                    startViaService(location, requestGeneration)
+                    return
+                }
                 windowsTunController.ensureAdministratorOrRequestRestart()
             }
 
@@ -302,6 +372,11 @@ class DesktopVpnManager private constructor(
                 addLog("Desktop start cancelled")
             } else {
                 addLog("Desktop start failed: ${e.message}")
+                // Служба не подключилась — снимаем её с полпути, чтобы не осталось «подключаюсь».
+                if (serviceMode) {
+                    serviceMode = false
+                    runCatching { withContext(Dispatchers.IO) { ReedServiceClient.stop() } }
+                }
             }
 
             when (DesktopPaths.os) {
@@ -415,6 +490,19 @@ class DesktopVpnManager private constructor(
     }
 
     private suspend fun stopDesktopMode(finalStatus: Boolean) {
+        if (serviceMode) {
+            serviceMode = false
+            serviceMonitorJob?.cancel(); serviceMonitorJob = null
+            setStatus(VpnStatus.Stopping)
+            // При смене сервера (finalStatus=false) /stop не шлём: /start службы сам остановит старый движок.
+            if (finalStatus) {
+                runCatching { withContext(Dispatchers.IO) { ReedServiceClient.stop() } }
+                    .onFailure { addLog("Служба: отключение не прошло: ${it.message}") }
+                setStatus(VpnStatus.Disconnected)
+                addLog("Desktop Windows TUN stopped (служба)")
+            }
+            return
+        }
         if (_status.value is VpnStatus.Disconnected && process == null && tunProcess == null) {
             return
         }
@@ -764,6 +852,8 @@ class DesktopVpnManager private constructor(
         const val OLC_STARTUP_STABILITY_MS = 1_500L
         const val READY_POLL_INTERVAL_MS = 200L
         const val TUN_SETTLE_MS = 700L
+        const val SERVICE_CONNECT_TIMEOUT_MS = 45_000L
+        const val SERVICE_POLL_MS = 300L
         const val WINDOWS_PING_TIMEOUT_MS = 3_000
         const val TCP_CONNECT_TIMEOUT_MS = 250L
         const val PROCESS_STOP_TIMEOUT_MS = 3_000L

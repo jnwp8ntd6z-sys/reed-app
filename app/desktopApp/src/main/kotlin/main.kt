@@ -148,6 +148,8 @@ private fun trayIconResourceName(): String {
 }
 
 fun main(args: Array<String>) {
+    // Служба Windows (запускает WinSW под LocalSystem): без окна, только туннель.
+    if ("--service" in args) { org.olcbox.app.vpn.desktop.ReedWindowsService.run(); return }
     if ("--selftest" in args) { runSelfTest(); return }
     reedApp(args)
 }
