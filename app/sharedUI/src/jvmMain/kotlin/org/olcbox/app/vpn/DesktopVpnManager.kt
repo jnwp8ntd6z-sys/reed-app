@@ -113,6 +113,7 @@ class DesktopVpnManager private constructor(
     }
 
     override suspend fun ping(locationConfig: LocationConfig): Long? {
+        if (DesktopPaths.os == DesktopOs.Windows) return windowsPing(locationConfig)
         return OlcRtcConnectionChecker.ping(
             locationConfig = locationConfig,
             deviceId = locationsRepository.getDeviceIdentity()
@@ -120,10 +121,25 @@ class DesktopVpnManager private constructor(
     }
 
     override suspend fun checkConnection(locationConfig: LocationConfig): Long? {
+        if (DesktopPaths.os == DesktopOs.Windows) return windowsPing(locationConfig)
         return OlcRtcConnectionChecker.check(
             locationConfig = locationConfig,
             deviceId = locationsRepository.getDeviceIdentity()
         )
+    }
+
+    /**
+     * Windows: olcRTC убран, пинг серверов шёл через его библиотеку и для VLESS ничего не
+     * мерил. Пока — время TCP-соединения с сервером (мост), на этапе 4 будет пинг через туннель.
+     */
+    private suspend fun windowsPing(locationConfig: LocationConfig): Long? = withContext(Dispatchers.IO) {
+        val config = locationConfig.normalized()
+        if (!config.isVless() || config.host.isBlank() || config.port <= 0) return@withContext null
+        runCatching {
+            val startedAt = System.nanoTime()
+            Socket().use { it.connect(InetSocketAddress(config.host, config.port), WINDOWS_PING_TIMEOUT_MS) }
+            ((System.nanoTime() - startedAt) / 1_000_000).coerceAtLeast(1)
+        }.getOrNull()
     }
 
     override suspend fun prewarmConfigs(locations: List<LocationConfig>, force: Boolean) = withContext(Dispatchers.IO) {
@@ -214,11 +230,13 @@ class DesktopVpnManager private constructor(
             val socksSettings = _socksProxySettings.value.normalized()
 
             if (desktopMode == DesktopMode.WindowsTun) {
+                // olcRTC на Windows убран (3.0): подключаем только VLESS-серверы.
+                if (!location.isVless()) error("Этот сервер недоступен на компьютере")
                 windowsTunController.ensureAdministratorOrRequestRestart()
             }
 
-            // Windows + VLESS: туннель держит сам sing-box (WindowsSingBoxTun), tun2socks не нужен.
-            val singBoxOwnsTun = desktopMode == DesktopMode.WindowsTun && location.isVless()
+            // Windows: туннель держит сам sing-box (WindowsSingBoxTun).
+            val singBoxOwnsTun = desktopMode == DesktopMode.WindowsTun
 
             if (location.isVless()) {
                 // VLESS-Reality: локальный SOCKS поднимает sing-box (как на мобильных).
@@ -267,10 +285,7 @@ class DesktopVpnManager private constructor(
 
             when (desktopMode) {
                 DesktopMode.LinuxTun -> startLinuxTun(socksSettings.port, requestGeneration)
-                DesktopMode.WindowsTun -> if (!singBoxOwnsTun) {
-                    // olcRTC отдаёт только SOCKS — для него остаётся старая схема с tun2socks.
-                    startWindowsTun(socksSettings.port, requestGeneration, location.host)
-                }
+                DesktopMode.WindowsTun -> Unit
                 DesktopMode.SystemProxy -> startSystemProxy(socksSettings, requestGeneration)
             }
 
@@ -298,14 +313,7 @@ class DesktopVpnManager private constructor(
                     }
                     tunProcess = null
                 }
-                DesktopOs.Windows -> {
-                    runCatching {
-                        windowsTunController.stop(tunProcess)
-                    }.onFailure {
-                        addLog("Windows TUN cleanup failed: ${it.message}")
-                    }
-                    tunProcess = null
-                }
+                DesktopOs.Windows -> Unit // TUN живёт и умирает вместе с sing-box
                 DesktopOs.MacOS,
                 DesktopOs.Other -> {
                     runCatching {
@@ -336,19 +344,6 @@ class DesktopVpnManager private constructor(
         }
 
         startTunLogReader(tunProcess ?: error("hev-socks5-tunnel process is missing"))
-    }
-
-    private suspend fun startWindowsTun(socksPort: Int, requestGeneration: Long, serverHost: String) {
-        val tun2SocksBinary = DesktopNativeAssets.resolveWindowsTun2SocksBinary()
-        // serverHost (адрес VPN-сервера) пускаем В ОБХОД TUN, иначе соединение sing-box к
-        // самому серверу зацикливается обратно в туннель → переполнение сокетов на Windows.
-        tunProcess = windowsTunController.start(tun2SocksBinary, socksPort, serverHost)
-
-        if (requestGeneration != generation) {
-            throw CancellationException("Desktop start superseded")
-        }
-
-        startTunLogReader(tunProcess ?: error("tun2socks process is missing"))
     }
 
     private suspend fun startSystemProxy(
@@ -435,14 +430,7 @@ class DesktopVpnManager private constructor(
                 }
                 tunProcess = null
             }
-            DesktopOs.Windows -> {
-                runCatching {
-                    windowsTunController.stop(tunProcess)
-                }.onFailure {
-                    addLog("Windows TUN stop failed: ${it.message}")
-                }
-                tunProcess = null
-            }
+            DesktopOs.Windows -> Unit // TUN живёт и умирает вместе с sing-box
             DesktopOs.MacOS,
             DesktopOs.Other -> {
                 runCatching {
@@ -772,6 +760,7 @@ class DesktopVpnManager private constructor(
         const val OLC_STARTUP_STABILITY_MS = 1_500L
         const val READY_POLL_INTERVAL_MS = 200L
         const val TUN_SETTLE_MS = 700L
+        const val WINDOWS_PING_TIMEOUT_MS = 3_000
         const val TCP_CONNECT_TIMEOUT_MS = 250L
         const val PROCESS_STOP_TIMEOUT_MS = 3_000L
         const val PROCESS_KILL_TIMEOUT_MS = 1_000L

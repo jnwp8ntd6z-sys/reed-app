@@ -534,7 +534,8 @@ fun DesktopReed2AppContent(
     // ─────────────────────── производные данные ───────────────────────
 
     val realLocations = locations.filter { !ReedTempServer.isTemp(it.storageId) }
-    val servers = realLocations.filter { serverNetwork(it) == "wifi" }.map { loc ->
+    // Windows 3.0: только VLESS (olcRTC на компьютере убран).
+    val servers = realLocations.filter { serverNetwork(it) == "wifi" && it.config?.isVless() == true }.map { loc ->
         val geo = serverGeo(loc)
         ServerUi(loc.storageId, geo.iso, geo.name, geo.city, pingOf(pingsState, loc.storageId), serverNetwork(loc))
     }

@@ -649,7 +649,20 @@ private fun runSelfTest() = kotlinx.coroutines.runBlocking {
     val out = StringBuilder()
     fun log(s: String) { println(s); out.appendLine(s) }
     val reportFile = File(System.getenv("REED_SELFTEST_REPORT") ?: "reed-selftest.txt")
-    val token = System.getenv("REED_SELFTEST_TOKEN").orEmpty()
+    // Код проверяющих магазинов (REED-…) из секрета CI → sub_token. hwid постоянный, чтобы
+    // каждая сборка занимала одно и то же место в «Устройствах», а не новое.
+    val code = System.getenv("REED_SELFTEST_CODE").orEmpty().trim()
+    val token = System.getenv("REED_SELFTEST_TOKEN").orEmpty().ifBlank {
+        if (code.isBlank()) "" else try {
+            val c = java.net.URL("https://reedapp.ru/app/code/login").openConnection() as java.net.HttpURLConnection
+            c.requestMethod = "POST"; c.doOutput = true; c.connectTimeout = 15000; c.readTimeout = 15000
+            c.setRequestProperty("Content-Type", "application/json")
+            c.outputStream.use { it.write("""{"code":"$code","hwid":"reed-ci-windows","name":"CI Windows","device_model":"GitHub Actions","device_os":"Windows"}""".toByteArray()) }
+            val body = (if (c.responseCode in 200..299) c.inputStream else c.errorStream).bufferedReader().readText()
+            Regex("\"sub_token\"\\s*:\\s*\"([^\"]+)\"").find(body)?.groupValues?.get(1)
+                ?: run { println("вход по коду: ${body.take(200)}"); "" }
+        } catch (e: Throwable) { println("вход по коду: ${e.javaClass.simpleName}"); "" }
+    }
     val deps = DesktopAppDependencies()
     fun ipVia(url: String): String = try {
         val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
@@ -694,7 +707,7 @@ private fun runSelfTest() = kotlinx.coroutines.runBlocking {
             org.olcbox.app.ui.reed2.ReedServerNaming.describe(it.fullName, isOlcRtc = false).network == "wifi" }
         log("серверов: ${locs.size}, Wi-Fi: ${wifi.size} (${wifi.take(6).joinToString { it.fullName }})")
         val target = (if (token.isBlank()) locs.firstOrNull { org.olcbox.app.data.datasource.ReedTempServer.isTemp(it.storageId) }
-            else wifi.firstOrNull()) ?: error("нет сервера для проверки")
+            else wifi.firstOrNull { it.fullName.contains("Автовыбор") } ?: wifi.firstOrNull()) ?: error("нет сервера для проверки")
         kotlinx.coroutines.suspendCancellableCoroutine<Unit> { c -> deps.locationViewModel.selectLocation(target.storageId) { c.resume(Unit) {} } }
         kotlinx.coroutines.suspendCancellableCoroutine<Unit> { c -> deps.homeViewModel.loadCurrentConfig { c.resume(Unit) {} } }
         log("подключаюсь к: ${target.fullName}")
@@ -720,6 +733,28 @@ private fun runSelfTest() = kotlinx.coroutines.runBlocking {
             log("$u → ${probe(u)}")
         }
         deps.homeViewModel.logs.value.takeLast(15).forEach { log("  log: $it") }
+
+        // Смена сервера: отключиться → выбрать другой → подключиться (как при тапе по серверу).
+        val other = wifi.firstOrNull { it.storageId != target.storageId && it.fullName.contains("Германия") }
+            ?: wifi.firstOrNull { it.storageId != target.storageId }
+        if (other != null) {
+            deps.homeViewModel.ToggleVpn()
+            kotlinx.coroutines.withTimeoutOrNull(20_000) { deps.homeViewModel.state.first { !it.isVpnConnected } }
+            kotlinx.coroutines.suspendCancellableCoroutine<Unit> { c -> deps.locationViewModel.selectLocation(other.storageId) { c.resume(Unit) {} } }
+            kotlinx.coroutines.suspendCancellableCoroutine<Unit> { c -> deps.homeViewModel.loadCurrentConfig { c.resume(Unit) {} } }
+            log("смена сервера на: ${other.fullName}")
+            deps.homeViewModel.ToggleVpn()
+            kotlinx.coroutines.withTimeoutOrNull(90_000) {
+                deps.homeViewModel.state.first { it.isVpnConnected || it.connectionErrorMessage != null }
+            }
+            val st2 = deps.homeViewModel.state.value
+            log("состояние: connected=${st2.isVpnConnected} error=${st2.connectionErrorMessage}")
+            kotlinx.coroutines.delay(3000)
+            log("IP заграница (cloudflare): ${ipVia("https://www.cloudflare.com/cdn-cgi/trace")}")
+            for (u in listOf("https://ya.ru/", "https://www.google.com/", "https://www.youtube.com/", "https://t.me/")) {
+                log("$u → ${probe(u)}")
+            }
+        }
     } catch (e: Throwable) {
         log("FAIL ${e.javaClass.simpleName}: ${e.message}")
     } finally {

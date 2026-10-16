@@ -288,9 +288,10 @@ val desktopNativeAssetTasks = mutableListOf<Any>(
     buildOlcRtcLibWindowsAmd64,
     copyOlcRtcDataAssets
 )
-val hostDesktopNativeAssetTasks = mutableListOf<Any>(
-    copyOlcRtcDataAssets
-)
+// Windows 3.0: olcRTC на компьютере убран — в установщике только sing-box (он же держит TUN).
+val hostDesktopNativeAssetTasks = mutableListOf<Any>().apply {
+    if (!currentBuildOs.isWindows) add(copyOlcRtcDataAssets)
+}
 
 when {
     currentBuildOs.isMacOsX -> when (hostDesktopArch) {
@@ -303,10 +304,7 @@ when {
             hostDesktopNativeAssetTasks.add(buildOlcRtcLibDarwinArm64)
         }
     }
-    currentBuildOs.isWindows -> {
-        hostDesktopNativeAssetTasks.add(buildOlcRtcWindowsAmd64)
-        hostDesktopNativeAssetTasks.add(buildOlcRtcLibWindowsAmd64)
-    }
+    currentBuildOs.isWindows -> Unit
     currentBuildOs.isLinux -> when (hostDesktopArch) {
         "amd64" -> {
             hostDesktopNativeAssetTasks.add(buildOlcRtcLinuxAmd64)
@@ -384,27 +382,21 @@ if (currentBuildOs.isWindows) {
     }
 
     desktopNativeAssetTasks.add(extractSingBoxWindowsAmd64)
-    desktopNativeAssetTasks.add(extractTun2SocksWindowsAmd64)
-    desktopNativeAssetTasks.add(extractWintunWindowsAmd64)
     hostDesktopNativeAssetTasks.add(extractSingBoxWindowsAmd64)
-    hostDesktopNativeAssetTasks.add(extractTun2SocksWindowsAmd64)
-    hostDesktopNativeAssetTasks.add(extractWintunWindowsAmd64)
 }
 
 fun requiredHostNativeResourcePaths(): List<String> = buildList {
-    add("olcrtc-data/names")
-    add("olcrtc-data/surnames")
+    if (!currentBuildOs.isWindows) {
+        add("olcrtc-data/names")
+        add("olcrtc-data/surnames")
+    }
     when {
         currentBuildOs.isMacOsX -> {
             add("native/olcrtc-darwin-$hostDesktopArch")
             add("native/libolcrtc-darwin-$hostDesktopArch.dylib")
         }
         currentBuildOs.isWindows -> {
-            add("native/olcrtc-windows-amd64.exe")
-            add("native/olcrtc-windows-amd64.dll")
             add("native/sing-box-windows-amd64.exe")
-            add("native/tun2socks-windows-amd64.exe")
-            add("native/wintun.dll")
         }
         currentBuildOs.isLinux -> {
             add("native/olcrtc-linux-$hostDesktopArch")
