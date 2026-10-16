@@ -41,9 +41,9 @@ import (
 )
 
 const (
-	ooMagic   = "0FLXo1"          // отсекает чужие cursor/шум OnlyOffice
-	ooVersion = "2024.1.1-375"    // версия редактора (подтверждена live: buildNumber 375)
-	ooKAEvery = 20 * time.Second  // cursor-keepalive, чтобы соавтор не считался ушедшим
+	ooMagic   = "0FLXo1"         // отсекает чужие cursor/шум OnlyOffice
+	ooVersion = "2024.1.1-375"   // версия редактора (подтверждена live: buildNumber 375)
+	ooKAEvery = 20 * time.Second // cursor-keepalive, чтобы соавтор не считался ушедшим
 	// make-before-break: Яндекс дропает co-editing-сессию ~раз в 70с (4007 «drop»). Заранее
 	// (< 70с) поднимаем НОВУЮ сессию (со своим userID → уживается как отдельный соавтор),
 	// переключаем на неё запись без разрыва, старую гасим с нахлёстом. 70-сек дроп тогда
@@ -68,6 +68,9 @@ func oodbg(format string, a ...any) {
 type ooSession struct {
 	conn    *websocket.Conn
 	writeMu sync.Mutex
+	key     string
+	opened  time.Time
+	sawPeer atomic.Bool // был чужой кадр: в этой комнате есть клиент, не закрывать
 }
 
 func (s *ooSession) write(b []byte) error {
@@ -196,6 +199,18 @@ func (c *OnlyOfficePacketConn) removeSession(o *ooSession) {
 }
 
 func (c *OnlyOfficePacketConn) sessionLoop() {
+	if c.exit {
+		// Страница документа отдаёт новую комнату (key) примерно раз в 1–2 с.
+		// Клиент забирает ту, что объявлена в момент его захода, и сидит в ней до drop.
+		// Выход обязан быть уже в этой комнате, а не в той, что открыл 50 с назад.
+		c.sessionLoopExit()
+		return
+	}
+	c.sessionLoopClient()
+}
+
+// sessionLoopClient — одна комната за раз, ротация до того, как Яндекс пришлёт drop.
+func (c *OnlyOfficePacketConn) sessionLoopClient() {
 	var cur *ooSession
 	backoff := 200 * time.Millisecond
 	for c.running.Load() {
@@ -213,11 +228,8 @@ func (c *OnlyOfficePacketConn) sessionLoop() {
 		// старую гасим с нахлёстом (успеет отдать запоздавшие downstream-кадры). KCP-сессия
 		// живёт на PacketConn, не на WS → переключение без разрыва.
 		old := cur
-		c.mu.Lock()
-		c.sessions = append(c.sessions, s) // с этого момента writeLoop дублирует и в новую
-		c.mu.Unlock()
+		c.attach(s)
 		cur = s
-		c.connected.Store(true)
 
 		dead := make(chan struct{})
 		go func() { c.readLoop(s); c.removeSession(s); close(dead) }()
@@ -245,6 +257,83 @@ func (c *OnlyOfficePacketConn) sessionLoop() {
 	}
 }
 
+// sessionLoopExit входит в комнату, которую страница отдаёт прямо сейчас, и держит её.
+// Следующий заход — только когда страница начала отдавать другую комнату.
+// Комнату без клиента отпускаем через несколько секунд. Комнату, где клиент уже есть, держим.
+func (c *OnlyOfficePacketConn) sessionLoopExit() {
+	backoff := 200 * time.Millisecond
+	var prev *ooSession
+	for c.running.Load() {
+		info, err := c.fetchDocInfo()
+		if err != nil {
+			oodbg("exit fetch: %v", err)
+			c.sleepBackoff(&backoff)
+			continue
+		}
+		if c.hasKey(info.key) {
+			select {
+			case <-c.closed:
+				return
+			case <-time.After(time.Second):
+			}
+			continue
+		}
+		s, err := c.launchWith(info)
+		if err != nil {
+			oodbg("exit launch: %v", err)
+			c.sleepBackoff(&backoff)
+			continue
+		}
+		backoff = 200 * time.Millisecond
+		c.attach(s)
+		go func(s *ooSession) {
+			c.readLoop(s)
+			c.removeSession(s)
+			s.conn.Close()
+		}(s)
+		if prev != nil {
+			old := prev
+			go func() {
+				select {
+				case <-c.closed:
+					return
+				case <-time.After(6 * time.Second):
+				}
+				if old.sawPeer.Load() {
+					return
+				}
+				c.removeSession(old)
+				old.conn.Close()
+				oodbg("drop empty room key=%.16s", old.key)
+			}()
+		}
+		prev = s
+		select {
+		case <-c.closed:
+			return
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func (c *OnlyOfficePacketConn) attach(s *ooSession) {
+	c.mu.Lock()
+	c.sessions = append(c.sessions, s)
+	c.mu.Unlock()
+	c.connected.Store(true)
+}
+
+func (c *OnlyOfficePacketConn) hasKey(key string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	for _, s := range c.sessions {
+		if s.key == key {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *OnlyOfficePacketConn) sleepBackoff(b *time.Duration) {
 	select {
 	case <-c.closed:
@@ -265,6 +354,10 @@ func (c *OnlyOfficePacketConn) launch() (*ooSession, error) {
 	if err != nil {
 		return nil, err
 	}
+	return c.launchWith(info)
+}
+
+func (c *OnlyOfficePacketConn) launchWith(info ooDocInfo) (*ooSession, error) {
 	base := fmt.Sprintf("https://%s/%s/doc/%s/c/", info.host, ooVersion, info.key)
 	setHdr := func(r *http.Request) {
 		r.Header.Set("User-Agent", userAgent)
@@ -336,7 +429,7 @@ func (c *OnlyOfficePacketConn) launch() (*ooSession, error) {
 	}
 	conn.SetReadDeadline(time.Time{})
 	conn.WriteMessage(websocket.TextMessage, []byte("5"))
-	s := &ooSession{conn: conn}
+	s := &ooSession{conn: conn, key: info.key, opened: time.Now()}
 	// open doc (co-editing) — включает broadcast cursor между соавторами
 	// свой userID НА КАЖДУЮ сессию: при make-before-break старая и новая должны уживаться
 	// как РАЗНЫЕ соавторы (одинаковый userID → Яндекс кикнул бы старую сразу, был бы разрыв).
@@ -501,6 +594,9 @@ func (c *OnlyOfficePacketConn) readLoop(s *ooSession) {
 			default: // переполнение — дропаем, KCP переспросит
 			}
 		}
+		if npk > 0 {
+			s.sawPeer.Store(true)
+		}
 		oodbg("rx OK sender=%d npkts=%d rawlen=%d", sender, npk, len(raw))
 	}
 }
@@ -627,8 +723,8 @@ func (c *OnlyOfficePacketConn) Close() error {
 	return nil
 }
 
-func (c *OnlyOfficePacketConn) LocalAddr() net.Addr             { return kcpDialAddr }
-func (c *OnlyOfficePacketConn) SetDeadline(t time.Time) error   { c.rdDeadline.Store(&t); return nil }
+func (c *OnlyOfficePacketConn) LocalAddr() net.Addr               { return kcpDialAddr }
+func (c *OnlyOfficePacketConn) SetDeadline(t time.Time) error     { c.rdDeadline.Store(&t); return nil }
 func (c *OnlyOfficePacketConn) SetReadDeadline(t time.Time) error { c.rdDeadline.Store(&t); return nil }
 func (c *OnlyOfficePacketConn) SetWriteDeadline(time.Time) error  { return nil }
 
