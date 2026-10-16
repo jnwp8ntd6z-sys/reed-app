@@ -82,6 +82,9 @@ internal object DesktopNativeAssets {
         }
     }
 
+    /** Куда resolveSingBoxBinary кладёт sing-box (без копирования). */
+    fun singBoxRuntimePath(): Path = DesktopPaths.appDataDir().resolve("bin").resolve(singBoxFileName())
+
     fun resolveSingBoxBinary(): Path {
         val fileName = singBoxFileName()
         return resolveBinary(

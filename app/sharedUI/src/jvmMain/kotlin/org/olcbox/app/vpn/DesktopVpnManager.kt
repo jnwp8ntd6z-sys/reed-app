@@ -546,10 +546,14 @@ class DesktopVpnManager private constructor(
         socksSettings: DesktopSocksProxySettings,
         ownTun: Boolean = false
     ): Process {
+        if (ownTun) {
+            // ДО копирования бинарника: живой sing-box от прошлого запуска держит файл
+            // открытым, и Windows не даст его перезаписать.
+            WindowsSingBoxTun.killStaleProcesses(DesktopNativeAssets.singBoxRuntimePath(), ::addLog)
+        }
         val binary = DesktopNativeAssets.resolveSingBoxBinary()
         val serverConfig = SingBoxDesktopRunner.fetchConfig(location, socksSettings.port)
         val configJson = if (ownTun) {
-            WindowsSingBoxTun.killStaleProcesses(binary, ::addLog)
             WindowsSingBoxTun.toTunConfig(serverConfig, socksSettings.port)
         } else {
             serverConfig
