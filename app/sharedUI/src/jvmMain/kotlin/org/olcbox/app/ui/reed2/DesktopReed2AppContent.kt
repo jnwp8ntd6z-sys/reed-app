@@ -110,6 +110,9 @@ fun DesktopReed2AppContent(
     // ── Чат поддержки ──
     val reedPrefs = remember { DesktopPrefs }
     var showSupport by remember { mutableStateOf(false) }
+    // Тумблеры «РФ напрямую» / автоподключение — общие для центра главной и профиля.
+    var autoConnectUi by remember { mutableStateOf(ReedSession.autoConnect) }
+    var ruDirectUi by remember { mutableStateOf(ReedSession.splitRouting) }
     var chatEntries by remember { mutableStateOf<List<ChatEntry>>(emptyList()) }
     var chatLoaded by remember { mutableStateOf(false) }
     var chatDraft by rememberSaveable { mutableStateOf("") }
@@ -653,9 +656,36 @@ fun DesktopReed2AppContent(
                     name = codeName,
                     onNameChange = { codeName = it },
                 ) }
-                Stage.App -> ReedAppShell(selectedTab = tab, onSelectTab = { tab = it },
-                    contentMaxWidth = if (tab == ReedTab.Home) 1320.dp else 680.dp) {
+                Stage.App -> DesktopShell(
+                    items = ReedTab.entries.map { tb ->
+                        SidebarItem(tb.label, tb.icon, selected = tb == tab) { tab = tb }
+                    } + SidebarItem("Поддержка", DesktopIcons.support, selected = false, badge = supportUnread) { openSupport() },
+                    footerLabel = if (token != null && subActive) "Подписка" else "",
+                    footerTitle = when {
+                        token == null -> "Без аккаунта"
+                        subActive -> untilLabel(subInfo?.expires_at).trim()
+                        subLoaded -> "Подписка закончилась"
+                        else -> "Загружаем подписку…"
+                    },
+                    footerVersion = versionLabel,
+                    servers = if (token == null && realLocations.isEmpty()) null else ({
+                        DesktopServersPanel(
+                            servers = servers.filter { it.network == network },
+                            selectedKey = selectedId,
+                            connState = connState,
+                            onSelect = { selectServer(it) },
+                            onPing = { ping() },
+                            onRefresh = { refreshAll() },
+                            pinging = pingsState is PingsState.Loading,
+                            refreshing = refreshing,
+                            emptyText = if (token != null) "Загружаем твои серверы…" else "Серверов пока нет",
+                        )
+                    }),
+                ) {
                     Crossfade(targetState = tab, animationSpec = tween(260), label = "tab") { t ->
+                      // Семья/Профиль — телефонные экраны, в центре не шире 680 dp.
+                      Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.TopCenter) {
+                        Box(if (t == ReedTab.Home) Modifier.fillMaxSize() else Modifier.widthIn(max = 680.dp).fillMaxSize()) {
                         when (t) {
                             ReedTab.Home -> {
                                 if (token == null && realLocations.isEmpty()) {
@@ -668,7 +698,7 @@ fun DesktopReed2AppContent(
                                 } else {
                                     // Долго (~20 с) поднимается только надёжный обход (olcRTC).
                                     val selIsCell = selected?.city == ReedServerNaming.SUB_STABLE
-                                    ReedHomeScreen(
+                                    DesktopHomeCenter(
                                         connState = connState,
                                         statusWord = when (connState) {
                                             ReedConnState.On -> "Подключено"
@@ -679,6 +709,10 @@ fun DesktopReed2AppContent(
                                         locationSubtitle = selected?.let { s ->
                                             listOf(s.countryName, s.city).filter { it.isNotBlank() }.joinToString(" · ")
                                         } ?: "",
+                                        topLine = if (autoConnectUi) "Автоподключение включено" else "Автоподключение выключено",
+                                        hasUnread = unread,
+                                        onBell = { showNotifications = true },
+                                        onToggleConnect = { connectOrSelect() },
                                         subscription = if (token != null && subActive) subscriptionUi(sub!!) else null,
                                         subscriptionMessage = when {
                                             token == null -> null
@@ -704,24 +738,15 @@ fun DesktopReed2AppContent(
                                                 },
                                             )
                                         }) else null,
-                                        servers = servers,
-                                        selectedKey = selectedId,
-                                        network = network,
-                                        hasUnread = unread,
-                                        onToggleConnect = { connectOrSelect() },
-                                        onSelectServer = { selectServer(it) },
-                                        onSelectNetwork = { switchNetwork(it) },
-                                        showNetworkSwitch = false,
-                                        onBell = { showNotifications = true },
-                                        onPing = { ping() },
-                                        onRefresh = { refreshAll() },
                                         errorText = if (state.connectionErrorMessage != null && connState == ReedConnState.Off)
                                             "Не удалось подключиться. Попробуй ещё раз или выбери другой сервер." else null,
-                                        hintText = if (connState == ReedConnState.Connecting && selIsCell)
-                                            "Надёжный обход поднимается чуть дольше — около 20 секунд" else null,
-                                        refreshing = refreshing,
-                                        pinging = pingsState is PingsState.Loading,
-                                        emptyServersText = if (token != null) "Загружаем твои серверы…" else "Серверов пока нет",
+                                        ruDirect = ruDirectUi,
+                                        onRuDirect = {
+                                            ruDirectUi = it; ReedSession.splitRouting = it
+                                            homeViewModel.restartVpnIfRunning()
+                                        },
+                                        autoConnect = autoConnectUi,
+                                        onAutoConnect = { autoConnectUi = it; ReedSession.autoConnect = it },
                                     )
                                 }
                             }
@@ -853,8 +878,6 @@ fun DesktopReed2AppContent(
                                         !ReedSession.memberName.isNullOrBlank() -> ReedSession.memberName!!
                                         else -> "Аккаунт"
                                     }
-                                    var autoConnectUi by remember { mutableStateOf(ReedSession.autoConnect) }
-                                    var ruDirectUi by remember { mutableStateOf(ReedSession.splitRouting) }
                                     ReedProfileScreen(
                                         username = displayName,
                                         subLabel = when {
@@ -930,6 +953,8 @@ fun DesktopReed2AppContent(
                                 }
                             }
                         }
+                        }
+                      }
                     }
                 }
             }

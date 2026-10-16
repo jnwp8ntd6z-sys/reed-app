@@ -287,7 +287,8 @@ private fun reedApp(args: Array<String>) = application {
         }
     )
 
-    val windowState = rememberWindowState(width = 440.dp, height = 880.dp)
+    // Windows 3.0: раскладка под большой экран (боковая панель / центр / серверы).
+    val windowState = rememberWindowState(width = 1100.dp, height = 720.dp)
     Window(
         title = "Reed Client",
         icon = painterResource(trayIconResourceName()),
@@ -313,7 +314,9 @@ private fun reedApp(args: Array<String>) = application {
             isWindowVisible = false
         },
     ) {
-        window.minimumSize = Dimension(380, 640)
+        window.minimumSize = Dimension(900, 600)
+        // Тёмная системная полоса заголовка (Windows 10 20H1+/11), чтобы не выбивалась из интерфейса.
+        LaunchedEffect(Unit) { WindowsDarkTitleBar.apply(window) }
 
         DisposableEffect(Unit) {
             onDispose {
