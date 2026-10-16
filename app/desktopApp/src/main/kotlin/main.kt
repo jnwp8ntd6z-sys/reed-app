@@ -657,18 +657,13 @@ private fun runSelfTest() = kotlinx.coroutines.runBlocking {
         val body = c.inputStream.bufferedReader().readText()
         body.lineSequence().firstOrNull { it.startsWith("ip=") }?.removePrefix("ip=") ?: body.trim().take(60)
     } catch (e: Throwable) { "ошибка: ${e.javaClass.simpleName}" }
-    fun quicRule(): String = try {
+    // Windows 3.0: адаптер «Reed» поднимает сам sing-box и должен исчезнуть вместе с ним.
+    fun tunAdapter(): String = try {
         val pr = ProcessBuilder("powershell.exe", "-NoProfile", "-Command",
-            "(Get-NetFirewallRule -DisplayName 'Reed Client - QUIC' -ErrorAction SilentlyContinue | Measure-Object).Count")
+            "(Get-NetAdapter -Name 'Reed' -ErrorAction SilentlyContinue | Measure-Object).Count")
             .redirectErrorStream(true).start()
         pr.inputStream.bufferedReader().readText().trim().ifBlank { "?" }
     } catch (e: Throwable) { "ошибка ${e.javaClass.simpleName}" }
-    fun quicSend(): String = try {
-        java.net.DatagramSocket().use { ds ->
-            ds.connect(java.net.InetSocketAddress("142.250.74.100", 443))
-            ds.send(java.net.DatagramPacket(ByteArray(1200), 1200)); "отправлен (не заблокирован)"
-        }
-    } catch (e: Throwable) { "отказ сразу: ${e.javaClass.simpleName} ${e.message?.take(60)}" }
     fun probe(url: String): String = try {
         val t0 = System.nanoTime()
         val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
@@ -714,7 +709,7 @@ private fun runSelfTest() = kotlinx.coroutines.runBlocking {
             error("не подключилось")
         }
         kotlinx.coroutines.delay(3000)
-        log("правило QUIC во время подключения: ${quicRule()} шт; UDP 443: ${quicSend()}")
+        log("адаптер Reed во время подключения: ${tunAdapter()} шт")
         log("IP заграница (cloudflare) после подключения: ${ipVia("https://www.cloudflare.com/cdn-cgi/trace")}")
         log("IP Россия (yandex) после подключения: ${ipVia("https://ipv4-internet.yandex.net/api/v0/ip")}")
         for (u in listOf("https://www.gosuslugi.ru/", "https://www.nalog.gov.ru/", "https://online.sberbank.ru/",
@@ -730,7 +725,8 @@ private fun runSelfTest() = kotlinx.coroutines.runBlocking {
     } finally {
         try {
             if (deps.homeViewModel.state.value.isVpnConnected) { deps.homeViewModel.ToggleVpn(); kotlinx.coroutines.delay(5000) }
-            log("правило QUIC после отключения: ${quicRule()} шт; UDP 443: ${quicSend()}")
+            log("адаптер Reed после отключения: ${tunAdapter()} шт")
+            log("IP после отключения (интернет без туннеля): ${ipVia("https://www.cloudflare.com/cdn-cgi/trace")}")
             deps.close()
         } catch (e: Throwable) { }
         reportFile.writeText(out.toString())

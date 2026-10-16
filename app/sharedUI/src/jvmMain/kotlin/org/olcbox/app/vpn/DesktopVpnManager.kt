@@ -30,6 +30,7 @@ import org.olcbox.app.vpn.desktop.LinuxTunController
 import org.olcbox.app.vpn.desktop.OlcRtcCommand
 import org.olcbox.app.vpn.desktop.PacServer
 import org.olcbox.app.vpn.desktop.SingBoxDesktopRunner
+import org.olcbox.app.vpn.desktop.WindowsSingBoxTun
 import org.olcbox.app.vpn.desktop.WindowsTunController
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -216,27 +217,15 @@ class DesktopVpnManager private constructor(
                 windowsTunController.ensureAdministratorOrRequestRestart()
             }
 
-            // Адаптер спрашиваем ДО подъёма TUN, пока дефолтный маршрут ещё физический.
-            // К нему привязывается direct-трафик движка, иначе РФ-сайты и РФ-резолвер при
-            // включённом сплите зацикливаются в туннеле (см. bindDirectToInterface).
-            val bindInterface = if (desktopMode == DesktopMode.WindowsTun) {
-                windowsTunController.physicalInterfaceName().also { name ->
-                    if (name.isNullOrBlank()) {
-                        addLog("Windows: физический адаптер не определён, РФ-сплит будет отключён")
-                    } else {
-                        addLog("Windows: прямой трафик привязан к адаптеру $name")
-                    }
-                }
-            } else {
-                null
-            }
+            // Windows + VLESS: туннель держит сам sing-box (WindowsSingBoxTun), tun2socks не нужен.
+            val singBoxOwnsTun = desktopMode == DesktopMode.WindowsTun && location.isVless()
 
             if (location.isVless()) {
                 // VLESS-Reality: локальный SOCKS поднимает sing-box (как на мобильных).
                 process = startSingBoxProcess(
                     location = location,
                     socksSettings = socksSettings,
-                    bindInterface = bindInterface
+                    ownTun = singBoxOwnsTun
                 )
 
                 waitForSocksReady(
@@ -244,6 +233,12 @@ class DesktopVpnManager private constructor(
                     socksPort = socksSettings.port,
                     requestGeneration = requestGeneration
                 )
+                if (singBoxOwnsTun) {
+                    // Вход mixed открывается после TUN; убеждаемся, что движок не упал сразу за ним
+                    // (занят адаптер, нет прав) — иначе показали бы «подключено» без туннеля.
+                    delay(TUN_SETTLE_MS)
+                    if (process?.isAlive != true) error("sing-box exited after start (TUN)")
+                }
             } else {
                 val ready = CompletableDeferred<Unit>()
                 val startupFailure = CompletableDeferred<String>()
@@ -272,7 +267,10 @@ class DesktopVpnManager private constructor(
 
             when (desktopMode) {
                 DesktopMode.LinuxTun -> startLinuxTun(socksSettings.port, requestGeneration)
-                DesktopMode.WindowsTun -> startWindowsTun(socksSettings.port, requestGeneration, location.host)
+                DesktopMode.WindowsTun -> if (!singBoxOwnsTun) {
+                    // olcRTC отдаёт только SOCKS — для него остаётся старая схема с tun2socks.
+                    startWindowsTun(socksSettings.port, requestGeneration, location.host)
+                }
                 DesktopMode.SystemProxy -> startSystemProxy(socksSettings, requestGeneration)
             }
 
@@ -558,13 +556,20 @@ class DesktopVpnManager private constructor(
     private fun startSingBoxProcess(
         location: LocationConfig,
         socksSettings: DesktopSocksProxySettings,
-        bindInterface: String? = null
+        ownTun: Boolean = false
     ): Process {
         val binary = DesktopNativeAssets.resolveSingBoxBinary()
-        val configJson = SingBoxDesktopRunner.fetchConfig(location, socksSettings.port, bindInterface)
+        val serverConfig = SingBoxDesktopRunner.fetchConfig(location, socksSettings.port)
+        val configJson = if (ownTun) {
+            WindowsSingBoxTun.killStaleProcesses(binary, ::addLog)
+            WindowsSingBoxTun.toTunConfig(serverConfig, socksSettings.port)
+        } else {
+            serverConfig
+        }
         val configPath = writeSingBoxConfig(configJson)
         val command = SingBoxDesktopRunner.command(binary, configPath)
 
+        if (ownTun) addLog("Windows: TUN «${WindowsSingBoxTun.INTERFACE_NAME}» поднимает sing-box")
         addLog("Starting VLESS (sing-box) for ${location.id}, port=${socksSettings.port}")
 
         val processBuilder = ProcessBuilder(command).redirectErrorStream(true)
@@ -766,6 +771,7 @@ class DesktopVpnManager private constructor(
         const val OLC_READY_TIMEOUT_MS = 25_000L
         const val OLC_STARTUP_STABILITY_MS = 1_500L
         const val READY_POLL_INTERVAL_MS = 200L
+        const val TUN_SETTLE_MS = 700L
         const val TCP_CONNECT_TIMEOUT_MS = 250L
         const val PROCESS_STOP_TIMEOUT_MS = 3_000L
         const val PROCESS_KILL_TIMEOUT_MS = 1_000L

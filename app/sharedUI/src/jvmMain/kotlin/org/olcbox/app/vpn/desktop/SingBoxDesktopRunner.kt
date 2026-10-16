@@ -233,6 +233,7 @@ internal object SingBoxDesktopRunner {
             connectTimeout = CONNECT_TIMEOUT_MS
             readTimeout = READ_TIMEOUT_MS
             requestMethod = "GET"
+            CONFIG_USER_AGENT?.let { setRequestProperty("User-Agent", it) }
         }
         // На IP фронта имя в URL не совпадает с сертификатом, поэтому проверяем его сами:
         // цепочку по-прежнему валидирует системный доверенный список, а имя сверяем с
@@ -264,11 +265,26 @@ internal object SingBoxDesktopRunner {
     /** Файл кэша sing-box-конфига в каталоге настроек приложения. */
     private val RU_ZONES = listOf("ru", "su", "xn--p1ai") // xn--p1ai = .рф
 
+    /**
+     * Windows 3.0 держит TUN в самом sing-box, ему нужен ОБЫЧНЫЙ конфиг, как на Android
+     * (Автовыбор-urltest, РФ напрямую). Сервер по UA `Java/…` узнаёт старые Windows-сборки
+     * со схемой tun2socks и отдаёт им обходной вариант (без urltest, РФ через мост), поэтому
+     * представляемся по-своему. Остальные десктопы пока на старой схеме — UA не трогаем.
+     */
+    private val CONFIG_USER_AGENT: String? =
+        if (org.olcbox.app.desktop.DesktopPaths.os == org.olcbox.app.desktop.DesktopOs.Windows) {
+            "ReedClient-Windows/${System.getProperty("jpackage.app-version") ?: "dev"}"
+        } else {
+            null
+        }
+
     private fun cacheFile(serverId: String, socksPort: Int): File {
         val dir = File(System.getProperty("user.home"), ".reedvpn/cache").apply { mkdirs() }
         val safe = serverId.map { if (it.isLetterOrDigit()) it else '_' }.joinToString("")
         // Режим «РФ напрямую» — часть конфига: без него в кэше после переключения лежал бы старый вариант.
         val split = if (ReedSession.splitRouting) "s1" else "s0"
-        return File(dir, "singbox_cache_${safe}_${socksPort}_$split.json")
+        // «_w3»: кэш 2.0.x хранит обходной Windows-конфиг (UA Java/), новому клиенту он не годится.
+        val variant = if (CONFIG_USER_AGENT != null) "_w3" else ""
+        return File(dir, "singbox_cache_${safe}_${socksPort}_$split$variant.json")
     }
 }
