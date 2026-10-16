@@ -50,6 +50,10 @@ const (
 	// всегда бьёт уже брошенную сессию → канал не рвётся.
 	rotateEvery = 50 * time.Second
 	sessOverlap = 3 * time.Second
+	// Яндекс не отдаёт соавтору cursor, если текст socket.io-сообщения длиннее ~4096.
+	// Замер 16.10.2026: сырой кадр ~3012 доходит, ~3412 уже нет. Пачка в 40 КБ
+	// (общий batchMaxBytes) уходила в никуда: TCP до VLESS поднимался, ответ нет.
+	ooMaxFrame = 3000
 )
 
 var ooClientConfigRe = regexp.MustCompile(`(?s)<script[^>]*id="client-config"[^>]*>(.*?)</script>`)
@@ -631,21 +635,35 @@ func ooExtractPayload(msg string) string {
 // writeLoop: собирает пакеты из tx, склеивает в пачку (packBatch), заворачивает в один
 // cursor-кадр (MAGIC+selfID+batch → base64) и шлёт по WS.
 func (c *OnlyOfficePacketConn) writeLoop() {
+	var held []byte
 	for {
 		var first []byte
-		select {
-		case <-c.closed:
-			return
-		case first = <-c.tx:
+		if held != nil {
+			first = held
+			held = nil
+		} else {
+			select {
+			case <-c.closed:
+				return
+			case first = <-c.tx:
+			}
 		}
 		pkts := [][]byte{first}
 		total := 2 + len(first)
+		// len(frame) = magic + selfID + batch. Не выходим за ooMaxFrame, иначе
+		// Яндекс молча дропает кадр и KCP крутит одну и ту же пачку.
+		room := ooMaxFrame - (len(ooMagic) + 4)
 	drain:
-		for len(pkts) < batchMaxPkts && total < batchMaxBytes {
+		for len(pkts) < batchMaxPkts && total < room {
 			select {
 			case p := <-c.tx:
+				need := 2 + len(p)
+				if total+need > room {
+					held = p
+					break drain
+				}
 				pkts = append(pkts, p)
-				total += 2 + len(p)
+				total += need
 			default:
 				break drain
 			}
