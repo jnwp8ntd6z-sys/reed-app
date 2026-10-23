@@ -86,7 +86,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// выставил после такого зависания на устройстве. 8.8.8.8 и 1.1.1.1 — их DoT;
     /// у нас системный DNS в этом режиме смотрит на 198.18.0.1 внутри TUN, а эти
     /// адреса оставлены снаружи на случай прямого запроса ядра.
-    static let carrierBypassRoutes: [NEIPv4Route] = {
+    // Функция, не хранимое свойство: NEIPv4Route не Sendable, static let
+    // роняет сборку Swift 6 (shared mutable state).
+    private static func carrierBypassRoutes() -> [NEIPv4Route] {
         let cidrs: [(String, String)] = [
             ("5.45.192.0", "255.255.192.0"),
             ("5.255.192.0", "255.255.192.0"),
@@ -105,7 +107,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             ("1.1.1.1", "255.255.255.255"),
         ]
         return cidrs.map { NEIPv4Route(destinationAddress: $0.0, subnetMask: $0.1) }
-    }()
+    }
 
     /// В конфиге sing-box профиль ЛТЕ — это outbound type=covert.
     private static func configNeedsCarrierBypass(_ config: String) -> Bool {
@@ -122,7 +124,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         let ipv4 = NEIPv4Settings(addresses: ["172.19.0.1"], subnetMasks: ["255.255.255.0"])
         ipv4.includedRoutes = [NEIPv4Route.default()]   // весь трафик в TUN; split делает sing-box
         if bypassCarrier {
-            ipv4.excludedRoutes = Self.carrierBypassRoutes
+            ipv4.excludedRoutes = Self.carrierBypassRoutes()
         }
         settings.ipv4Settings = ipv4
         if bypassCarrier {
