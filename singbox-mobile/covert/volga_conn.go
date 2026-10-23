@@ -17,7 +17,9 @@ package covert
 // соединению). KCP толерантен к переупорядочиванию → параллельные POST безопасны.
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -129,17 +131,167 @@ type VolgaPacketConn struct {
 	running    atomic.Bool
 }
 
+// carrierBypassDNS — клиентский сокет носителя резолвит имена сам, мимо системного DNS.
+// На iOS после setTunnelNetworkSettings системный DNS смотрит в адрес внутри TUN.
+// Если носитель спросит имя документа через него, запрос заворачивается в туннель,
+// который этот же сокет ещё только поднимает.
+var carrierBypassDNS atomic.Bool
+
+func useCarrierBypassDNS() { carrierBypassDNS.Store(true) }
+
 // forceIPv4Dial — диалер, принудительно ходящий по IPv4. На сотовых сетях РФ IPv6
 // часто «no route to host» (видно в логе olcRTC: STUN udp6 no route to host), и часть
 // параллельных relay-соединений к Яндексу залипала на v6 → covert-данные не шли на
 // мобильном, хотя на WiFi (живой v6) всё работало. tcp→tcp4 убирает залипание.
 func forceIPv4Dial(ctx context.Context, network, addr string) (net.Conn, error) {
-	d := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
 	switch network {
 	case "tcp", "tcp6":
 		network = "tcp4"
+	case "udp", "udp6":
+		network = "udp4"
 	}
+	if carrierBypassDNS.Load() {
+		return dialCarrierBypass(ctx, network, addr)
+	}
+	d := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
 	return d.DialContext(ctx, network, addr)
+}
+
+// dialCarrierBypass резолвит хост через DoH Яндекса (77.88.8.8) и набирает IPv4 напрямую.
+// Этот адрес входит в excludedRoutes туннеля, поэтому и DNS, и TCP к документу уходят
+// в физический интерфейс, а не в utun.
+func dialCarrierBypass(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips, err := carrierResolveIPv4(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	var last error
+	d := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+	for _, ip := range ips {
+		c, derr := d.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if derr == nil {
+			return c, nil
+		}
+		last = derr
+	}
+	if last == nil {
+		last = errors.New("carrier: no ipv4")
+	}
+	return nil, last
+}
+
+// DoH Яндекса: сертификат выписан на сам IP, открытый UDP/53 с телефона режется.
+var carrierDoHClient = &http.Client{
+	Timeout: 8 * time.Second,
+	Transport: &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			var d net.Dialer
+			d.Timeout = 5 * time.Second
+			return d.DialContext(ctx, "tcp4", "77.88.8.8:443")
+		},
+		TLSClientConfig:   &tls.Config{ServerName: "77.88.8.8", MinVersion: tls.VersionTLS12},
+		ForceAttemptHTTP2: true,
+		IdleConnTimeout:   30 * time.Second,
+	},
+}
+
+func carrierResolveIPv4(ctx context.Context, host string) ([]net.IP, error) {
+	if ip := net.ParseIP(host); ip != nil {
+		if v4 := ip.To4(); v4 != nil {
+			return []net.IP{v4}, nil
+		}
+		return nil, fmt.Errorf("carrier: %s is not ipv4", host)
+	}
+	q := buildDNSQuery(host)
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://77.88.8.8/dns-query", bytes.NewReader(q))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/dns-message")
+	req.Header.Set("Accept", "application/dns-message")
+	resp, err := carrierDoHClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("carrier doh: http %d", resp.StatusCode)
+	}
+	ips := parseDNSA(body)
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("carrier doh: no A for %s", host)
+	}
+	return ips, nil
+}
+
+func buildDNSQuery(host string) []byte {
+	id := uint16(time.Now().UnixNano())
+	b := []byte{byte(id >> 8), byte(id), 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" {
+			continue
+		}
+		b = append(b, byte(len(label)))
+		b = append(b, label...)
+	}
+	return append(b, 0, 0, 1, 0, 1)
+}
+
+func parseDNSA(msg []byte) []net.IP {
+	if len(msg) < 12 {
+		return nil
+	}
+	qd := int(binary.BigEndian.Uint16(msg[4:6]))
+	an := int(binary.BigEndian.Uint16(msg[6:8]))
+	ns := int(binary.BigEndian.Uint16(msg[8:10]))
+	ar := int(binary.BigEndian.Uint16(msg[10:12]))
+	off := 12
+	for i := 0; i < qd; i++ {
+		off = skipDNSName(msg, off)
+		off += 4
+		if off > len(msg) {
+			return nil
+		}
+	}
+	var ips []net.IP
+	for i := 0; i < an+ns+ar; i++ {
+		off = skipDNSName(msg, off)
+		if off+10 > len(msg) {
+			return ips
+		}
+		typ := binary.BigEndian.Uint16(msg[off : off+2])
+		rdlen := int(binary.BigEndian.Uint16(msg[off+8 : off+10]))
+		off += 10
+		if off+rdlen > len(msg) {
+			return ips
+		}
+		if typ == 1 && rdlen == 4 {
+			ip := make(net.IP, 4)
+			copy(ip, msg[off:off+4])
+			ips = append(ips, ip)
+		}
+		off += rdlen
+	}
+	return ips
+}
+
+func skipDNSName(msg []byte, off int) int {
+	for off < len(msg) {
+		n := int(msg[off])
+		if n == 0 {
+			return off + 1
+		}
+		if n&0xC0 == 0xC0 {
+			return off + 2
+		}
+		off += 1 + n
+	}
+	return len(msg)
 }
 
 // sharedTransport — общий транспорт с большим пулом соединений и HTTP/2, чтобы

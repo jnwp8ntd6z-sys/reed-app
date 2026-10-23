@@ -93,6 +93,8 @@ func (o *Outbound) ensureSession(ctx context.Context) (*smux.Session, error) {
 		return o.sess, nil
 	}
 
+	// Резолв документа — своим DoH, не системным DNS туннеля. См. useCarrierBypassDNS.
+	useCarrierBypassDNS()
 	pc, err := newCarrier(ctx, false, o.publicURL, 45*time.Second)
 	if err != nil {
 		return nil, err

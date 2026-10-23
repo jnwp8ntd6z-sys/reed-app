@@ -69,7 +69,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         ExtLog.write("startTunnel: mode=\(mode)", reset: true)
 
         if mode == "olc" {
-            applyTunnelSettings(completionHandler: completionHandler) { [weak self] in
+            applyTunnelSettings(bypassCarrier: false, completionHandler: completionHandler) { [weak self] in
                 self?.startOlcTunnel(conf: conf, completionHandler: completionHandler)
             }
         } else {
@@ -80,14 +80,60 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
+    /// Сети, которые НЕ должны входить в туннель, пока носитель — документ Яндекса.
+    /// Иначе сокет расширения получает адрес TUN (172.19.0.1 → Яндекс:443) и канал
+    /// заворачивается в самого себя. Список — тот же, что PacketTunnelProvider OpenFlux
+    /// выставил после такого зависания на устройстве. 8.8.8.8 и 1.1.1.1 — их DoT;
+    /// у нас системный DNS в этом режиме смотрит на 198.18.0.1 внутри TUN, а эти
+    /// адреса оставлены снаружи на случай прямого запроса ядра.
+    static let carrierBypassRoutes: [NEIPv4Route] = {
+        let cidrs: [(String, String)] = [
+            ("5.45.192.0", "255.255.192.0"),
+            ("5.255.192.0", "255.255.192.0"),
+            ("37.9.64.0", "255.255.192.0"),
+            ("37.140.128.0", "255.255.192.0"),
+            ("77.88.0.0", "255.255.192.0"),
+            ("84.201.128.0", "255.255.192.0"),
+            ("87.250.224.0", "255.255.224.0"),
+            ("90.156.176.0", "255.255.252.0"),
+            ("93.158.128.0", "255.255.192.0"),
+            ("95.108.128.0", "255.255.128.0"),
+            ("100.43.64.0", "255.255.224.0"),
+            ("178.154.128.0", "255.255.128.0"),
+            ("213.180.192.0", "255.255.224.0"),
+            ("8.8.8.8", "255.255.255.255"),
+            ("1.1.1.1", "255.255.255.255"),
+        ]
+        return cidrs.map { NEIPv4Route(destinationAddress: $0.0, subnetMask: $0.1) }
+    }()
+
+    /// В конфиге sing-box профиль ЛТЕ — это outbound type=covert.
+    private static func configNeedsCarrierBypass(_ config: String) -> Bool {
+        config.contains("\"type\":\"covert\"") || config.contains("\"type\": \"covert\"")
+    }
+
     /// Сетевые настройки TUN (общие для обоих режимов).
-    private func applyTunnelSettings(completionHandler: @escaping (Error?) -> Void,
+    /// bypassCarrier — профиль ЛТЕ (в конфиге есть outbound type=covert): документ Яндекса
+    /// и DNS носителя идут мимо туннеля. Обычный VLESS маршруты не меняет.
+    private func applyTunnelSettings(bypassCarrier: Bool,
+                                     completionHandler: @escaping (Error?) -> Void,
                                      then next: @escaping () -> Void) {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
         let ipv4 = NEIPv4Settings(addresses: ["172.19.0.1"], subnetMasks: ["255.255.255.0"])
         ipv4.includedRoutes = [NEIPv4Route.default()]   // весь трафик в TUN; split делает sing-box
+        if bypassCarrier {
+            ipv4.excludedRoutes = Self.carrierBypassRoutes
+        }
         settings.ipv4Settings = ipv4
-        settings.dnsSettings = NEDNSSettings(servers: ["8.8.8.8", "1.1.1.1"])
+        if bypassCarrier {
+            // Фиктивный адрес внутри TUN. Запросы приложений перехватывает sing-box
+            // (hijack-dns). Настоящий резолвер носителя — DoH 77.88.8.8, он в excludedRoutes.
+            let dns = NEDNSSettings(servers: ["198.18.0.1"])
+            dns.matchDomains = [""]
+            settings.dnsSettings = dns
+        } else {
+            settings.dnsSettings = NEDNSSettings(servers: ["8.8.8.8", "1.1.1.1"])
+        }
         // Как у tun-inbound в конфиге с сервера (mtu 1500). Было 9000: система отдавала в TUN
         // пакеты крупнее, чем читает sing-box → «подключено, но тяжёлое не грузится».
         settings.mtu = 1500
@@ -172,7 +218,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                     userInfo: [NSLocalizedDescriptionKey: "config fetch failed"]))
                 return
             }
-            self.applyTunnelSettings(completionHandler: completionHandler) { [weak self] in
+            let bypass = Self.configNeedsCarrierBypass(configJson)
+            ExtLog.write("vless: carrierBypass=\(bypass)")
+            self.applyTunnelSettings(bypassCarrier: bypass, completionHandler: completionHandler) { [weak self] in
                 guard let self = self else { return }
                 let fd = self.tunnelFileDescriptor()
                 guard fd >= 0 else {
