@@ -1,6 +1,6 @@
 Unicode true
 !define APPNAME "Reed Client"
-!define VER "3.0.1"
+!define VER "3.0.2"
 Name "${APPNAME}"
 OutFile "Reed-Client-${VER}-setup.exe"
 Icon "reed.ico"
@@ -31,6 +31,8 @@ VIAddVersionKey /LANG=${LANG_RUSSIAN} "LegalCopyright" "© 2026 Reed"
 !macro KillRunning
   nsExec::Exec 'taskkill /F /IM "Reed Client.exe"'
   nsExec::Exec 'taskkill /F /FI "IMAGENAME eq javaw.exe" /FI "WINDOWTITLE eq Reed*"'
+  ; Клиент, свёрнутый в трей, окна не имеет — ищем javaw с reed.jar в командной строке.
+  nsExec::Exec `powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -Filter \"Name='javaw.exe'\" | Where-Object { $$_.CommandLine -like '*reed.jar*' } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force }"`
   nsExec::Exec 'taskkill /F /IM sing-box-windows-amd64.exe'
   nsExec::Exec 'taskkill /F /IM tun2socks-windows-amd64.exe'
 !macroend

@@ -68,6 +68,7 @@ import java.awt.Dimension
 import java.awt.FileDialog
 import java.awt.Frame
 import java.io.File
+import kotlin.concurrent.thread
 import java.security.SecureRandom
 import kotlin.math.min
 import kotlinx.coroutines.launch
@@ -151,6 +152,9 @@ fun main(args: Array<String>) {
     // Служба Windows (запускает WinSW под LocalSystem): без окна, только туннель.
     if ("--service" in args) { org.olcbox.app.vpn.desktop.ReedWindowsService.run(); return }
     if ("--selftest" in args) { runSelfTest(); return }
+    // Вторая копия не открывается: показываем окно уже запущенной и выходим.
+    // После запроса прав администратора старая копия ещё закрывается — даём ей до 15 с.
+    if (!SingleInstance.acquire(waitMs = if (WINDOWS_ELEVATED_START_ARGUMENT in args) 15_000 else 0)) return
     reedApp(args)
 }
 
@@ -167,6 +171,7 @@ private fun reedApp(args: Array<String>) = application {
     var currentScreen by remember { mutableStateOf<AppScreen>(AppScreen.Home) }
     var showDesktopSettings by remember { mutableStateOf(false) }
     var isWindowVisible by remember { mutableStateOf(true) }
+    var showRequest by remember { mutableStateOf(0) }
     var updateMessage by remember { mutableStateOf<String?>(null) }
     var updateSettings by remember { mutableStateOf(AppUpdateSettings()) }
     var updateProgress by remember { mutableStateOf<Float?>(null) }
@@ -319,6 +324,31 @@ private fun reedApp(args: Array<String>) = application {
         window.minimumSize = Dimension(900, 600)
         // Тёмная системная полоса заголовка (Windows 10 20H1+/11), чтобы не выбивалась из интерфейса.
         LaunchedEffect(Unit) { WindowsDarkTitleBar.apply(window) }
+
+        // Повторный запуск ярлыка: достаём окно из трея / свёрнутого состояния на передний план.
+        DisposableEffect(Unit) {
+            SingleInstance.onShow = { javax.swing.SwingUtilities.invokeLater { showRequest++ } }
+            SingleInstance.onReplace = {
+                // Запустили другую версию (после обновления) — уступаем ей место.
+                thread(isDaemon = true) { Thread.sleep(5_000); Runtime.getRuntime().halt(0) }
+                javax.swing.SwingUtilities.invokeLater {
+                    dependencies.close()
+                    exitApplication()
+                }
+            }
+            onDispose { SingleInstance.onShow = {}; SingleInstance.onReplace = {} }
+        }
+        LaunchedEffect(showRequest) {
+            if (showRequest == 0) return@LaunchedEffect
+            isWindowVisible = true
+            windowState.isMinimized = false
+            delay(100)
+            // Windows не даёт чужому процессу просто вытащить окно вперёд — кратко ставим «поверх всех».
+            window.isAlwaysOnTop = true
+            window.toFront()
+            window.requestFocus()
+            window.isAlwaysOnTop = false
+        }
 
         DisposableEffect(Unit) {
             onDispose {
