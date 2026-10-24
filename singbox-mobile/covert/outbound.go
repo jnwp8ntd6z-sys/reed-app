@@ -104,12 +104,12 @@ func (o *Outbound) ensureSession(ctx context.Context) (*smux.Session, error) {
 		pc.Close()
 		return nil, err
 	}
-	// KCP под высокую задержку/узкий канал: turbo NoDelay, окна побольше.
-	kcpConn.SetNoDelay(1, 30, 2, 1)
 	kcpConn.SetWindowSize(256, 256)
-	kcpConn.SetMtu(1200)
+	// Как у выхода: сегмент должен влезть в ooMaxFrame, иначе writeLoop держит его
+	// вечно. Крупный неприторможенный MTU 1200 с телефона забивает cursor и ловит 4004.
+	kcpConn.SetMtu(280)
 	kcpConn.SetStreamMode(true)
-	kcpConn.SetACKNoDelay(false)
+	tuneKCP(kcpConn)
 
 	sess, err := smux.Client(kcpConn, smuxConfig())
 	if err != nil {

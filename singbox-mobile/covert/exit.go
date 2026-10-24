@@ -44,14 +44,23 @@ func RunExit(ctx context.Context, publicURL string, logf func(string, ...any)) e
 		if err != nil {
 			return err
 		}
-		kcpSess.SetNoDelay(1, 30, 2, 1)
 		kcpSess.SetWindowSize(256, 256)
-		kcpSess.SetMtu(1200)
+		// Телефон получает мелкие cursor и не получает кадр с полным сегментом MTU 1200.
+		// Меньший MTU только на выходе: входящие сегменты телефона (до 1200) всё ещё
+		// помещаются в приёмный буфер kcp-go (1500).
+		kcpSess.SetMtu(280)
 		kcpSess.SetStreamMode(true)
-		kcpSess.SetACKNoDelay(false)
+		tuneKCP(kcpSess)
 		go serveKCP(kcpSess, logf)
 	}
 }
+
+// Восемь потоков, не один. Замер 23.10.2026: при одном слоте из шести Open
+// доезжает один ответ, остальные — EOF, и Телеграм так не поднимается.
+// Длинные кадры всё равно уходят не чаще ooSendEvery из общего writeLoop,
+// поэтому слоты не разгоняют cursor. Десятки не открываем: старый клиент
+// без паузы снова упирается в 4004.
+var streamGate = make(chan struct{}, 8)
 
 func serveKCP(kcpSess net.Conn, logf func(string, ...any)) {
 	defer kcpSess.Close()
@@ -66,17 +75,30 @@ func serveKCP(kcpSess net.Conn, logf func(string, ...any)) {
 		if err != nil {
 			return
 		}
-		go handleStream(stream, logf)
+		select {
+		case streamGate <- struct{}{}:
+			go func() {
+				defer func() { <-streamGate }()
+				handleStream(stream, logf)
+			}()
+		default:
+			stream.Close()
+		}
 	}
 }
 
 func handleStream(stream net.Conn, logf func(string, ...any)) {
 	defer stream.Close()
+	// Срок только на заголовок: иначе слот вечно держит зависшее рукопожатие.
+	// На саму передачу срок не ставим. 12 с на весь поток обрывали уже ~40 КБ
+	// при щадящем темпе, а KCP продолжал слать неподтверждённое и ловил drop.
+	_ = stream.SetDeadline(time.Now().Add(12 * time.Second))
 	dest, err := readConnectHeader(stream)
 	if err != nil {
 		logf("[covert-exit] header: %v", err)
 		return
 	}
+	_ = stream.SetDeadline(time.Time{})
 	remote, err := net.DialTimeout("tcp", dest, 15*time.Second)
 	if err != nil {
 		logf("[covert-exit] dial %s: %v", dest, err)

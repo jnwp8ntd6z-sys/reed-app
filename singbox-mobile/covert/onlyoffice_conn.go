@@ -50,10 +50,13 @@ const (
 	// всегда бьёт уже брошенную сессию → канал не рвётся.
 	rotateEvery = 50 * time.Second
 	sessOverlap = 3 * time.Second
-	// Яндекс не отдаёт соавтору cursor, если текст socket.io-сообщения длиннее ~4096.
-	// Замер 16.10.2026: сырой кадр ~3012 доходит, ~3412 уже нет. Пачка в 40 КБ
-	// (общий batchMaxBytes) уходила в никуда: TCP до VLESS поднимался, ответ нет.
-	ooMaxFrame = 3000
+	// Яндекс ретранслирует cursor с верным префиксом вплоть до ~2000 байт (замер
+	// 23.10.2026). Префикс «18» не ретранслируется. Непрерывные ~33 полных сегмента/с
+	// через ~5 с дают 4004 access deny. Пауза на КАЖДОМ кадре (включая короткие ACK)
+	// срывает RTO у KCP, и даже 8 КБ не доезжают. Поэтому ooSendEvery — только после
+	// длинного сегмента; короткие подтверждения уходят сразу.
+	ooMaxFrame  = 300
+	ooSendEvery = 70 * time.Millisecond
 )
 
 var ooClientConfigRe = regexp.MustCompile(`(?s)<script[^>]*id="client-config"[^>]*>(.*?)</script>`)
@@ -73,6 +76,8 @@ type ooSession struct {
 	conn    *websocket.Conn
 	writeMu sync.Mutex
 	key     string
+	userID  string // тот же id, что в auth этой сессии
+	excel   bool
 	opened  time.Time
 	sawPeer atomic.Bool // был чужой кадр: в этой комнате есть клиент, не закрывать
 }
@@ -155,6 +160,7 @@ func NewOnlyOfficePacketConn(ctx context.Context, exit bool, publicURL string, t
 	go c.sessionLoop()
 	go c.writeLoop()
 	go c.keepAliveLoop()
+	go c.editorLoop()
 
 	var tch <-chan time.Time
 	if timeout > 0 {
@@ -185,10 +191,15 @@ func (c *OnlyOfficePacketConn) writeAll(msg []byte) int {
 	ss := make([]*ooSession, len(c.sessions))
 	copy(ss, c.sessions)
 	c.mu.RUnlock()
+	n := 0
 	for _, s := range ss {
-		_ = s.write(msg)
+		if err := s.write(msg); err != nil {
+			oodbg("ws write err=%v", err)
+			continue
+		}
+		n++
 	}
-	return len(ss)
+	return n
 }
 
 func (c *OnlyOfficePacketConn) removeSession(o *ooSession) {
@@ -440,11 +451,10 @@ func (c *OnlyOfficePacketConn) launchWith(info ooDocInfo) (*ooSession, error) {
 	}
 	conn.SetReadDeadline(time.Time{})
 	conn.WriteMessage(websocket.TextMessage, []byte("5"))
-	s := &ooSession{conn: conn, key: info.key, opened: time.Now()}
-	// open doc (co-editing) — включает broadcast cursor между соавторами
 	// свой userID НА КАЖДУЮ сессию: при make-before-break старая и новая должны уживаться
 	// как РАЗНЫЕ соавторы (одинаковый userID → Яндекс кикнул бы старую сразу, был бы разрыв).
 	uid := fmt.Sprintf("%010d", rand.Intn(1000000000))
+	s := &ooSession{conn: conn, key: info.key, userID: uid, excel: ooExcel(info.fileType), opened: time.Now()}
 	openMsg, _ := json.Marshal([]interface{}{"message", map[string]interface{}{
 		"type":              "auth",
 		"docid":             info.key,
@@ -678,8 +688,31 @@ func (c *OnlyOfficePacketConn) writeLoop() {
 		// 11.10.2026). Яндекс.Диск с начала октября 2026 трактует префикс как позицию курсора и
 		// дропает cursor-кадр, если он не равен реальному размеру пакета → раньше с фиксированным
 		// "18" терялись ВСЕ пакеты, Session-handshake истекал по таймауту (ЛТЕ умерла ~04.10).
-		n := c.writeAll([]byte(fmt.Sprintf(`42["message",{"type":"cursor","cursor":"%d;%s"}]`, len(frame), b64)))
+		msg := []byte(fmt.Sprintf(`42["message",{"type":"cursor","cursor":"%d;%s"}]`, len(frame), b64))
+		// KCP без congestion control выдаёт сотни cursor/с. Держим кадр, пока есть
+		// живая сессия. Частоту длинных сегментов ограничивает пауза ниже.
+		var n int
+		for {
+			n = c.writeAll(msg)
+			if n > 0 {
+				break
+			}
+			select {
+			case <-c.closed:
+				return
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
 		oodbg("tx self=%d npkts=%d batch=%d b64=%d sessions=%d", c.selfID, len(pkts), len(batch), len(b64), n)
+		// Короткие кадры — это в основном ACK. Их задержка срывает KCP.
+		// Длинный сегмент троттлим: непрерывный поток полных кадров ловит 4004.
+		if len(batch) > 100 {
+			select {
+			case <-c.closed:
+				return
+			case <-time.After(ooSendEvery):
+			}
+		}
 	}
 }
 
@@ -692,6 +725,35 @@ func (c *OnlyOfficePacketConn) keepAliveLoop() {
 			return
 		case <-t.C:
 			c.writeAll([]byte(`42["message",{"type":"cursor","cursor":"18;---KA---"}]`))
+		}
+	}
+}
+
+// editorLoop шлёт saveChanges от каждой живой сессии. Без этого Яндекс рвёт
+// соавтора кодом 4007 примерно через 30 с после появления второго участника,
+// даже если cursor-трафика почти не было (замер 24.10.2026: 512 Б, 3 длинных
+// кадра, drop на 32-й секунде). Формат — как у редактора и у OpenFlux.
+func (c *OnlyOfficePacketConn) editorLoop() {
+	seq := 0
+	for {
+		wait := 1500*time.Millisecond + time.Duration(rand.Intn(2500))*time.Millisecond
+		select {
+		case <-c.closed:
+			return
+		case <-time.After(wait):
+		}
+		c.mu.RLock()
+		ss := make([]*ooSession, len(c.sessions))
+		copy(ss, c.sessions)
+		c.mu.RUnlock()
+		for _, s := range ss {
+			if s.userID == "" {
+				continue
+			}
+			seq++
+			if err := s.write(ooSaveChanges(s.userID, s.excel, seq)); err != nil {
+				oodbg("ws write err=%v", err)
+			}
 		}
 	}
 }
