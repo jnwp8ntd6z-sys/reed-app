@@ -181,16 +181,13 @@ func handleStream(stream net.Conn, logf func(string, ...any), release func()) {
 			_ = tc.CloseWrite()
 		}
 	}()
-	// Ответ xray пишем в канал всегда. Прошлая версия выбрасывала уже прочитанные
-	// 5 КБ, если клиент к этому моменту прислал меньше 800 байт (замер 12:12, up=780).
-	// Слот отпускаем, как только ответ ушёл в канал: клиентский hello часто ~517 Б
-	// и следующий кусок меньше 1500, пока приложение молчит. Раньше на 18-й секунде
-	// такой поток убивался, хотя рукопожатие уже прошло.
+	// Ответ xray пишем в канал всегда. Слот здесь не отпускаем: запись 5 КБ в smux
+	// ещё не значит, что телефон их получил. Иначе следующая пачка рукопожатий
+	// ложится в ту же комнату, сайт закрывает её без pong, и Телеграм видит
+	// только короткие куски. Слот освобождается, когда телефон прислал больше
+	// одного client hello (uploaded > 1500).
 	go func() {
-		w := progWriter{w: stream, n: &downloaded, mark: 1000, onProgress: func() {
-			clearDialGap()
-			release()
-		}}
+		w := progWriter{w: stream, n: &downloaded}
 		_, _ = io.Copy(&w, remote)
 	}()
 
@@ -198,7 +195,7 @@ func handleStream(stream net.Conn, logf func(string, ...any), release func()) {
 	defer timer.Stop()
 	select {
 	case <-clientDone:
-		if uploaded.Load() > 1500 || downloaded.Load() > 1000 {
+		if uploaded.Load() > 1500 {
 			clearDialGap()
 			release()
 			return
@@ -206,7 +203,7 @@ func handleStream(stream net.Conn, logf func(string, ...any), release func()) {
 		armDialGap()
 		logf("[covert-exit] client closed up=%d down=%d", uploaded.Load(), downloaded.Load())
 	case <-timer.C:
-		if uploaded.Load() > 1500 || downloaded.Load() > 1000 {
+		if uploaded.Load() > 1500 {
 			clearDialGap()
 			release()
 			logf("[covert-exit] handshake hold up=%d down=%d", uploaded.Load(), downloaded.Load())
@@ -231,8 +228,11 @@ type progWriter struct {
 
 func (p *progWriter) Write(b []byte) (int, error) {
 	n, err := p.w.Write(b)
-	if n > 0 && p.mark > 0 && p.n.Add(int64(n)) > p.mark && p.onProgress != nil {
-		p.once.Do(p.onProgress)
+	if n > 0 && p.n != nil {
+		total := p.n.Add(int64(n))
+		if p.mark > 0 && total > p.mark && p.onProgress != nil {
+			p.once.Do(p.onProgress)
+		}
 	}
 	return n, err
 }

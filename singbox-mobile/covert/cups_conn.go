@@ -93,6 +93,7 @@ type CupsPacketConn struct {
 
 	tx     chan []byte
 	rx     chan []byte
+	pongCh chan struct{}
 	closed chan struct{}
 	once   sync.Once
 
@@ -138,6 +139,7 @@ func NewCupsPacketConn(ctx context.Context, exit bool, publicURL string, timeout
 		stop:   stop,
 		tx:     make(chan []byte, txQueue),
 		rx:     make(chan []byte, rxQueue),
+		pongCh: make(chan struct{}, 1),
 		closed: make(chan struct{}),
 	}
 	if !exit && roomIDFromPublicURL(c.publicURL) == "" {
@@ -435,6 +437,15 @@ func (c *CupsPacketConn) readLines(ws *websocket.Conn, deadline time.Time) ([][]
 
 func (c *CupsPacketConn) consume(ws *websocket.Conn, line []byte) error {
 	if string(line) == "{}" {
+		// Пока в комнату лиются кадры, прямой ответ на ping встаёт за записью
+		// и сайт закрывает сокет 3012. Пишем pong из цикла записи, впереди данных.
+		if c.connected.Load() {
+			select {
+			case c.pongCh <- struct{}{}:
+			default:
+			}
+			return nil
+		}
 		return c.writeRaw(ws, []byte("{}"))
 	}
 	var obj map[string]any
@@ -512,9 +523,16 @@ func (c *CupsPacketConn) writeLoop() {
 	defer tick.Stop()
 	var last time.Time
 	for {
+		if !c.flushPong() {
+			return
+		}
 		select {
 		case <-c.closed:
 			return
+		case <-c.pongCh:
+			if err := c.sendPong(); err != nil {
+				c.kick()
+			}
 		case pkt := <-c.tx:
 			if !c.waitReady() {
 				return
@@ -534,6 +552,30 @@ func (c *CupsPacketConn) writeLoop() {
 			}
 		}
 	}
+}
+
+// flushPong выталкивает ответ на ping раньше кадров KCP.
+func (c *CupsPacketConn) flushPong() bool {
+	for {
+		select {
+		case <-c.closed:
+			return false
+		case <-c.pongCh:
+			if err := c.sendPong(); err != nil {
+				c.kick()
+			}
+		default:
+			return true
+		}
+	}
+}
+
+func (c *CupsPacketConn) sendPong() error {
+	ws := c.currentWS()
+	if ws == nil {
+		return nil
+	}
+	return c.writeRaw(ws, []byte("{}"))
 }
 
 func (c *CupsPacketConn) waitReady() bool {
