@@ -13,7 +13,7 @@ enum ReedTunnelCache {
         let group = DispatchGroup()
         for server in servers {
             let target = TunnelConfigStore.fileURL(dir: dir, server: server, split: split, direct: direct)
-            if !force, FileManager.default.fileExists(atPath: target.path) { continue }
+            if !force, FileManager.default.fileExists(atPath: target.path), !Self.swedenFileIsStale(server: server, file: target) { continue }
             group.enter()
             TunnelConfigStore.fetchConfig(token: token, server: server, split: split, direct: direct, timeout: 12) { body, _ in
                 defer { group.leave() }
@@ -23,6 +23,15 @@ enum ReedTunnelCache {
         }
         _ = group.wait(timeout: .now() + 90)
         return saved.value
+    }
+
+    /// Файл «Швеции», в котором ещё документ, а не комната. Его надо скачать заново
+    /// до включения туннеля, иначе extension поднимет старый кэш.
+    private static func swedenFileIsStale(server: String, file: URL) -> Bool {
+        let upper = server.uppercased()
+        guard upper.contains("ШВЕЦИЯ") || upper.contains("SWEDEN") else { return false }
+        guard let s = try? String(contentsOf: file, encoding: .utf8) else { return true }
+        return !s.contains("cups.online")
     }
 
     /// Пошаговый лог extension из общего контейнера App Group (диагностика, «Экспорт логов»).

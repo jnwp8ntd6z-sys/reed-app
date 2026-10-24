@@ -411,14 +411,19 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                                     completion: @escaping (String?, Bool) -> Void) {
         if let dir = TunnelConfigStore.directory(),
            let data = try? Data(contentsOf: TunnelConfigStore.fileURL(dir: dir, server: server, split: split, direct: direct)),
-           TunnelConfigStore.isValidConfig(data), let s = String(data: data, encoding: .utf8) {
+           TunnelConfigStore.isValidConfig(data), let s = String(data: data, encoding: .utf8),
+           !Self.swedenCacheIsStale(server: server, body: s) {
             ExtLog.write("vless: config from App Group cache server=\(server) split=\(split)")
             completion(s, true); return
         }
         if direct.isEmpty, let data = try? Data(contentsOf: configCacheURL(server: server, split: split)),
-           TunnelConfigStore.isValidConfig(data), let s = String(data: data, encoding: .utf8) {
+           TunnelConfigStore.isValidConfig(data), let s = String(data: data, encoding: .utf8),
+           !Self.swedenCacheIsStale(server: server, body: s) {
             ExtLog.write("vless: config from legacy extension cache server=\(server)")
             completion(s, true); return
+        }
+        if Self.swedenCacheIsStale(server: server, body: "") {
+            ExtLog.write("vless: sweden cache is the old document, fetching room config")
         }
         ExtLog.write("vless: no cache, fetching config BEFORE tun server=\(server)…")
         TunnelConfigStore.fetchConfig(token: token, server: server, split: split, direct: direct, timeout: 10) { body, via in
@@ -488,6 +493,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private func olcConfigCacheURL(split: Bool) -> URL {
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         return dir.appendingPathComponent("olcsingbox_tun_\(split ? "1" : "0").json")
+    }
+
+    /// Кэш «Швеции» со сборки 45 — это Яндекс-документ. Его нельзя поднимать:
+    /// первый запуск снова пойдёт в старый носитель.
+    private static func swedenCacheIsStale(server: String, body: String) -> Bool {
+        let upper = server.uppercased()
+        guard upper.contains("ШВЕЦИЯ") || upper.contains("SWEDEN") else { return false }
+        return !body.contains("cups.online")
     }
 }
 

@@ -165,9 +165,10 @@ func handleStream(stream net.Conn, logf func(string, ...any), release func()) {
 	logf("[covert-exit] -> %s", dest)
 
 	var uploaded atomic.Int64
+	var downloaded atomic.Int64
 	clientDone := make(chan struct{})
 	go func() {
-		w := progWriter{w: remote, n: &uploaded, onProgress: func() {
+		w := progWriter{w: remote, n: &uploaded, mark: 1500, onProgress: func() {
 			clearDialGap()
 			release()
 		}}
@@ -182,46 +183,55 @@ func handleStream(stream net.Conn, logf func(string, ...any), release func()) {
 	}()
 	// Ответ xray пишем в канал всегда. Прошлая версия выбрасывала уже прочитанные
 	// 5 КБ, если клиент к этому моменту прислал меньше 800 байт (замер 12:12, up=780).
+	// Слот отпускаем, как только ответ ушёл в канал: клиентский hello часто ~517 Б
+	// и следующий кусок меньше 1500, пока приложение молчит. Раньше на 18-й секунде
+	// такой поток убивался, хотя рукопожатие уже прошло.
 	go func() {
-		io.Copy(stream, remote)
+		w := progWriter{w: stream, n: &downloaded, mark: 1000, onProgress: func() {
+			clearDialGap()
+			release()
+		}}
+		_, _ = io.Copy(&w, remote)
 	}()
 
 	timer := time.NewTimer(handshakeWait)
 	defer timer.Stop()
 	select {
 	case <-clientDone:
-		if uploaded.Load() > 1500 {
+		if uploaded.Load() > 1500 || downloaded.Load() > 1000 {
 			clearDialGap()
+			release()
 			return
 		}
 		armDialGap()
-		logf("[covert-exit] client closed up=%d", uploaded.Load())
+		logf("[covert-exit] client closed up=%d down=%d", uploaded.Load(), downloaded.Load())
 	case <-timer.C:
-		if uploaded.Load() > 1500 {
+		if uploaded.Load() > 1500 || downloaded.Load() > 1000 {
 			clearDialGap()
-			// Рукопожатие уже пошло, слот отпущен. Ждём конца потока.
+			release()
+			logf("[covert-exit] handshake hold up=%d down=%d", uploaded.Load(), downloaded.Load())
 			<-clientDone
 			return
 		}
 		armDialGap()
-		logf("[covert-exit] handshake timeout up=%d", uploaded.Load())
+		logf("[covert-exit] handshake timeout up=%d down=%d", uploaded.Load(), downloaded.Load())
 		remote.Close()
 		stream.Close()
 	}
 }
 
-// progWriter считает байты клиента и, когда рукопожатие пошло дальше client hello,
-// отпускает слот: телефон уже получил ответ и прислал следующий кусок.
+// progWriter считает байты и один раз зовёт onProgress, когда счётчик перешёл mark.
 type progWriter struct {
 	w          io.Writer
 	n          *atomic.Int64
+	mark       int64
 	onProgress func()
 	once       sync.Once
 }
 
 func (p *progWriter) Write(b []byte) (int, error) {
 	n, err := p.w.Write(b)
-	if n > 0 && p.n.Add(int64(n)) > 1500 {
+	if n > 0 && p.mark > 0 && p.n.Add(int64(n)) > p.mark && p.onProgress != nil {
 		p.once.Do(p.onProgress)
 	}
 	return n, err
