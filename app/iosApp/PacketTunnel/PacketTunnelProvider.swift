@@ -1,6 +1,7 @@
 import NetworkExtension
 import Foundation
 import Security
+import Darwin
 import ReedCore   // Singboxmobile* (sing-box/libbox + covert) + Mobile* (olcRTC) — одна XCFramework
 
 /// Packet Tunnel Provider — системный VPN Reed на iOS.
@@ -69,7 +70,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         ExtLog.write("startTunnel: mode=\(mode)", reset: true)
 
         if mode == "olc" {
-            applyTunnelSettings(bypassCarrier: false, completionHandler: completionHandler) { [weak self] in
+            applyTunnelSettings(bypassCarrier: false, carrierConfig: "", completionHandler: completionHandler) { [weak self] in
                 self?.startOlcTunnel(conf: conf, completionHandler: completionHandler)
             }
         } else {
@@ -88,8 +89,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// адреса оставлены снаружи на случай прямого запроса ядра.
     // Функция, не хранимое свойство: NEIPv4Route не Sendable, static let
     // роняет сборку Swift 6 (shared mutable state).
-    private static func carrierBypassRoutes() -> [NEIPv4Route] {
-        let cidrs: [(String, String)] = [
+    private static func carrierBypassRoutes(config: String) -> [NEIPv4Route] {
+        var cidrs: [(String, String)] = [
             ("5.45.192.0", "255.255.192.0"),
             ("5.255.192.0", "255.255.192.0"),
             ("37.9.64.0", "255.255.192.0"),
@@ -106,7 +107,41 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             ("8.8.8.8", "255.255.255.255"),
             ("1.1.1.1", "255.255.255.255"),
         ]
+        // Комната cups.online. DoH 77.88.8.8 уже внутри списка Яндекса.
+        // Адрес хостинга может смениться, поэтому резолвим сейчас и держим
+        // известный /32, если резолв пустой.
+        if config.contains("\"carrier\":\"cups\"") || config.contains("\"carrier\": \"cups\"") || config.contains("cups.online") {
+            var ips = ["95.163.40.140"]
+            ips.append(contentsOf: resolveIPv4("interview.cups.online"))
+            var seen = Set<String>()
+            for ip in ips where seen.insert(ip).inserted {
+                cidrs.append((ip, "255.255.255.255"))
+            }
+        }
         return cidrs.map { NEIPv4Route(destinationAddress: $0.0, subnetMask: $0.1) }
+    }
+
+    /// IPv4 имени до подъёма TUN. После него системный DNS уже смотрит внутрь туннеля.
+    private static func resolveIPv4(_ host: String) -> [String] {
+        var hints = addrinfo()
+        hints.ai_family = AF_INET
+        hints.ai_socktype = SOCK_STREAM
+        var info: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, nil, &hints, &info) == 0, let info else { return [] }
+        defer { freeaddrinfo(info) }
+        var ips: [String] = []
+        var cursor: UnsafeMutablePointer<addrinfo>? = info
+        while let cur = cursor {
+            if cur.pointee.ai_family == AF_INET, let sa = cur.pointee.ai_addr {
+                var sin = sa.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee }
+                var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+                if inet_ntop(AF_INET, &sin.sin_addr, &buf, socklen_t(INET_ADDRSTRLEN)) != nil {
+                    ips.append(String(cString: buf))
+                }
+            }
+            cursor = cur.pointee.ai_next
+        }
+        return ips
     }
 
     /// В конфиге sing-box профиль ЛТЕ — это outbound type=covert.
@@ -118,13 +153,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     /// bypassCarrier — профиль ЛТЕ (в конфиге есть outbound type=covert): документ Яндекса
     /// и DNS носителя идут мимо туннеля. Обычный VLESS маршруты не меняет.
     private func applyTunnelSettings(bypassCarrier: Bool,
+                                     carrierConfig: String,
                                      completionHandler: @escaping (Error?) -> Void,
                                      then next: @escaping () -> Void) {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
         let ipv4 = NEIPv4Settings(addresses: ["172.19.0.1"], subnetMasks: ["255.255.255.0"])
         ipv4.includedRoutes = [NEIPv4Route.default()]   // весь трафик в TUN; split делает sing-box
         if bypassCarrier {
-            ipv4.excludedRoutes = Self.carrierBypassRoutes()
+            ipv4.excludedRoutes = Self.carrierBypassRoutes(config: carrierConfig)
         }
         settings.ipv4Settings = ipv4
         if bypassCarrier {
@@ -222,7 +258,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             let bypass = Self.configNeedsCarrierBypass(configJson)
             ExtLog.write("vless: carrierBypass=\(bypass)")
-            self.applyTunnelSettings(bypassCarrier: bypass, completionHandler: completionHandler) { [weak self] in
+            self.applyTunnelSettings(bypassCarrier: bypass, carrierConfig: configJson, completionHandler: completionHandler) { [weak self] in
                 guard let self = self else { return }
                 let fd = self.tunnelFileDescriptor()
                 guard fd >= 0 else {
@@ -521,6 +557,7 @@ enum TunnelConfigStore {
             URLQueryItem(name: "server", value: server),
             URLQueryItem(name: "split", value: split ? "1" : "0"),
             URLQueryItem(name: "inbound", value: "tun"),
+            URLQueryItem(name: "cups", value: "1"),
         ]
         if !direct.isEmpty { items.append(URLQueryItem(name: "direct", value: direct)) }
         comps?.queryItems = items

@@ -8,9 +8,12 @@ package covert
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	kcp "github.com/xtaci/kcp-go/v5"
@@ -23,7 +26,8 @@ func RunExit(ctx context.Context, publicURL string, logf func(string, ...any)) e
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	pc, err := newCarrier(ctx, true, publicURL, 0)
+	kind := resolveKind("", publicURL)
+	pc, err := newCarrierKind(ctx, true, publicURL, 0, kind)
 	if err != nil {
 		return err
 	}
@@ -45,22 +49,65 @@ func RunExit(ctx context.Context, publicURL string, logf func(string, ...any)) e
 			return err
 		}
 		kcpSess.SetWindowSize(256, 256)
-		// Телефон получает мелкие cursor и не получает кадр с полным сегментом MTU 1200.
-		// Меньший MTU только на выходе: входящие сегменты телефона (до 1200) всё ещё
-		// помещаются в приёмный буфер kcp-go (1500).
-		kcpSess.SetMtu(280)
+		// Яндекс: телефон не получает кадр крупнее ooMaxFrame, MTU 280.
+		// Cups вмещает сегмент 1200. Входящий буфер kcp-go всё равно 1500.
+		kcpSess.SetMtu(mtuForCarrier(kind))
 		kcpSess.SetStreamMode(true)
 		tuneKCP(kcpSess)
 		go serveKCP(kcpSess, logf)
 	}
 }
 
-// Восемь потоков, не один. Замер 23.10.2026: при одном слоте из шести Open
-// доезжает один ответ, остальные — EOF, и Телеграм так не поднимается.
-// Длинные кадры всё равно уходят не чаще ooSendEvery из общего writeLoop,
-// поэтому слоты не разгоняют cursor. Десятки не открываем: старый клиент
-// без паузы снова упирается в 4004.
-var streamGate = make(chan struct{}, 8)
+// Одно рукопожатие за раз. Остальные ждут в очереди и не закрываются сразу:
+// замер 23.10.2026 показал, что мгновенный EOF на лишних потоках не даёт
+// поднять несколько соединений. Замер 24.10.2026 на телефоне: слот отпускался
+// через 4 с, выход открывал следующую пачку, пока первая ещё не доехала,
+// и все сокеты замирали на 517/5033. Слот занят, пока поток жив.
+// Таймер «20 с без новых байт» убран: io.Copy в smux принимает пачку сразу,
+// и таймер убивал уже идущую передачу, пока кадры ещё ехали в документ.
+const (
+	streamSlots = 1
+	streamWait  = 90 * time.Second
+	// Пауза после зависшего рукопожатия, чтобы следующий ответ не лёг поверх
+	// предыдущих 5 КБ. Короткая: сам зависший поток закрывается по таймауту.
+	dialGap = 4 * time.Second
+	// Телефон закрывал поток через ~17 с, не дождавшись ответа. Дольше держать
+	// единственный слот нельзя: 24.10 один сокет провисел 517/5033 больше минуты,
+	// а очередь из остальных потоков умерла по таймауту.
+	handshakeWait = 18 * time.Second
+)
+
+var streamGate = make(chan struct{}, streamSlots)
+
+var dialMu sync.Mutex
+var nextDial time.Time
+
+func waitDialGap() {
+	for {
+		dialMu.Lock()
+		wait := time.Until(nextDial)
+		dialMu.Unlock()
+		if wait <= 0 {
+			return
+		}
+		if wait > 200*time.Millisecond {
+			wait = 200 * time.Millisecond
+		}
+		time.Sleep(wait)
+	}
+}
+
+func armDialGap() {
+	dialMu.Lock()
+	nextDial = time.Now().Add(dialGap)
+	dialMu.Unlock()
+}
+
+func clearDialGap() {
+	dialMu.Lock()
+	nextDial = time.Time{}
+	dialMu.Unlock()
+}
 
 func serveKCP(kcpSess net.Conn, logf func(string, ...any)) {
 	defer kcpSess.Close()
@@ -75,19 +122,23 @@ func serveKCP(kcpSess net.Conn, logf func(string, ...any)) {
 		if err != nil {
 			return
 		}
-		select {
-		case streamGate <- struct{}{}:
-			go func() {
-				defer func() { <-streamGate }()
-				handleStream(stream, logf)
-			}()
-		default:
-			stream.Close()
-		}
+		go func(stream net.Conn) {
+			select {
+			case streamGate <- struct{}{}:
+			case <-time.After(streamWait):
+				logf("[covert-exit] stream queue timeout")
+				stream.Close()
+				return
+			}
+			var once sync.Once
+			release := func() { once.Do(func() { <-streamGate }) }
+			defer release()
+			handleStream(stream, logf, release)
+		}(stream)
 	}
 }
 
-func handleStream(stream net.Conn, logf func(string, ...any)) {
+func handleStream(stream net.Conn, logf func(string, ...any), release func()) {
 	defer stream.Close()
 	// Срок только на заголовок: иначе слот вечно держит зависшее рукопожатие.
 	// На саму передачу срок не ставим. 12 с на весь поток обрывали уже ~40 КБ
@@ -99,6 +150,12 @@ func handleStream(stream net.Conn, logf func(string, ...any)) {
 		return
 	}
 	_ = stream.SetDeadline(time.Time{})
+	// Уже закрытый поток не дозвоняем: иначе мёртвая очередь снимает по 5 КБ.
+	prefix, alive := streamAlive(stream)
+	if !alive {
+		return
+	}
+	waitDialGap()
 	remote, err := net.DialTimeout("tcp", dest, 15*time.Second)
 	if err != nil {
 		logf("[covert-exit] dial %s: %v", dest, err)
@@ -106,8 +163,88 @@ func handleStream(stream net.Conn, logf func(string, ...any)) {
 	}
 	defer remote.Close()
 	logf("[covert-exit] -> %s", dest)
-	go func() { io.Copy(remote, stream); remote.Close() }()
-	io.Copy(stream, remote)
+
+	var uploaded atomic.Int64
+	clientDone := make(chan struct{})
+	go func() {
+		w := progWriter{w: remote, n: &uploaded, onProgress: func() {
+			clearDialGap()
+			release()
+		}}
+		if len(prefix) > 0 {
+			_, _ = w.Write(prefix)
+		}
+		_, _ = io.Copy(&w, stream)
+		close(clientDone)
+		if tc, ok := remote.(*net.TCPConn); ok {
+			_ = tc.CloseWrite()
+		}
+	}()
+	// Ответ xray пишем в канал всегда. Прошлая версия выбрасывала уже прочитанные
+	// 5 КБ, если клиент к этому моменту прислал меньше 800 байт (замер 12:12, up=780).
+	go func() {
+		io.Copy(stream, remote)
+	}()
+
+	timer := time.NewTimer(handshakeWait)
+	defer timer.Stop()
+	select {
+	case <-clientDone:
+		if uploaded.Load() > 1500 {
+			clearDialGap()
+			return
+		}
+		armDialGap()
+		logf("[covert-exit] client closed up=%d", uploaded.Load())
+	case <-timer.C:
+		if uploaded.Load() > 1500 {
+			clearDialGap()
+			// Рукопожатие уже пошло, слот отпущен. Ждём конца потока.
+			<-clientDone
+			return
+		}
+		armDialGap()
+		logf("[covert-exit] handshake timeout up=%d", uploaded.Load())
+		remote.Close()
+		stream.Close()
+	}
+}
+
+// progWriter считает байты клиента и, когда рукопожатие пошло дальше client hello,
+// отпускает слот: телефон уже получил ответ и прислал следующий кусок.
+type progWriter struct {
+	w          io.Writer
+	n          *atomic.Int64
+	onProgress func()
+	once       sync.Once
+}
+
+func (p *progWriter) Write(b []byte) (int, error) {
+	n, err := p.w.Write(b)
+	if n > 0 && p.n.Add(int64(n)) > 1500 {
+		p.once.Do(p.onProgress)
+	}
+	return n, err
+}
+
+// streamAlive читает один байт. EOF — поток уже закрыт. Таймаут — клиент жив,
+// данных ещё нет. Байт возвращается, чтобы не потерять начало client hello.
+func streamAlive(stream net.Conn) ([]byte, bool) {
+	_ = stream.SetReadDeadline(time.Now().Add(80 * time.Millisecond))
+	var b [1]byte
+	n, err := stream.Read(b[:])
+	_ = stream.SetReadDeadline(time.Time{})
+	if n == 1 {
+		return b[:], true
+	}
+	if err == nil {
+		return nil, true
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return nil, true
+	}
+	return nil, false
 }
 
 func readConnectHeader(stream net.Conn) (string, error) {

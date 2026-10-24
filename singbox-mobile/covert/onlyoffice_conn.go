@@ -107,6 +107,11 @@ type OnlyOfficePacketConn struct {
 	rdDeadline atomic.Pointer[time.Time]
 	running    atomic.Bool
 	connected  atomic.Bool
+	// Сколько байт длинных кадров выход ещё шлёт быстро. Пауза в длинных кадрах
+	// снова даёт быстрые ~8 КБ: это один ответ Reality. Дальше редкий темп,
+	// чтобы не ловить 4004. На ровных 150 мс телефон закрывал поток раньше.
+	fastLeft int
+	lastLong time.Time
 }
 
 type ooDocInfo struct {
@@ -144,10 +149,15 @@ func NewOnlyOfficePacketConn(ctx context.Context, exit bool, publicURL string, t
 			log.Printf("[covert/oo] seeded %d cookies from YANDEX_COOKIE", len(cks))
 		}
 	}
+	fast := 0
+	if exit {
+		fast = 8000
+	}
 	c := &OnlyOfficePacketConn{
 		exit:      exit,
 		publicURL: publicURL,
 		selfID:    rand.Uint32(),
+		fastLeft:  fast,
 		follow: &http.Client{Jar: jar, Timeout: 25 * time.Second, Transport: &http.Transport{
 			DialContext: forceIPv4Dial, ForceAttemptHTTP2: true, TLSHandshakeTimeout: 15 * time.Second,
 			MaxIdleConns: 32, IdleConnTimeout: 90 * time.Second,
@@ -706,11 +716,29 @@ func (c *OnlyOfficePacketConn) writeLoop() {
 		oodbg("tx self=%d npkts=%d batch=%d b64=%d sessions=%d", c.selfID, len(pkts), len(batch), len(b64), n)
 		// Короткие кадры — это в основном ACK. Их задержка срывает KCP.
 		// Длинный сегмент троттлим: непрерывный поток полных кадров ловит 4004.
+		// Выход шлёт реже клиента: 24.10 телефон на gHHP, выход выдавал ~13 полных
+		// кадров/с и Яндекс отвечал 4004 каждые 17 с. 5 КБ ответа Reality при
+		// таком темпе не успевает доехать до телефона.
 		if len(batch) > 100 {
+			pace := ooSendEvery
+			if c.exit {
+				now := time.Now()
+				// Быстрый кусок только после паузы: один ответ Reality, не весь поток.
+				if c.fastLeft <= 0 && (c.lastLong.IsZero() || now.Sub(c.lastLong) > 2*time.Second) {
+					c.fastLeft = 8000
+				}
+				c.lastLong = now
+				if c.fastLeft > 0 {
+					pace = 20 * time.Millisecond
+					c.fastLeft -= len(batch)
+				} else {
+					pace = 150 * time.Millisecond
+				}
+			}
 			select {
 			case <-c.closed:
 				return
-			case <-time.After(ooSendEvery):
+			case <-time.After(pace):
 			}
 		}
 	}
@@ -729,18 +757,31 @@ func (c *OnlyOfficePacketConn) keepAliveLoop() {
 	}
 }
 
-// editorLoop шлёт saveChanges от каждой живой сессии. Без этого Яндекс рвёт
-// соавтора кодом 4007 примерно через 30 с после появления второго участника,
-// даже если cursor-трафика почти не было (замер 24.10.2026: 512 Б, 3 длинных
-// кадра, drop на 32-й секунде). Формат — как у редактора и у OpenFlux.
+// editorEvery — как часто слать saveChanges. 4007 приходит примерно на 30-й
+// секунде, если соавтор шлёт только cursor (замер 24.10.2026). Каждые 1.5–4 с
+// с обоих концов раздувают историю документа до сотен КБ и вместе с полными
+// cursor-кадрами дают 4004 access deny (телефон на gHHP, 24.10.2026, шесть
+// обрывов за две минуты). 12 с укладывается в окно 4007 и не кормит 4004.
+// COVERT_EDITOR_EVERY — для прогона, который повторяет старый клиент.
+func editorEvery() time.Duration {
+	base := 12 * time.Second
+	if v := os.Getenv("COVERT_EDITOR_EVERY"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= time.Second {
+			base = d
+		}
+	}
+	return base + time.Duration(rand.Intn(3000))*time.Millisecond
+}
+
+// editorLoop шлёт saveChanges от каждой живой сессии. Формат — как у редактора
+// и у OpenFlux: без этого Яндекс рвёт соавтора кодом 4007.
 func (c *OnlyOfficePacketConn) editorLoop() {
 	seq := 0
 	for {
-		wait := 1500*time.Millisecond + time.Duration(rand.Intn(2500))*time.Millisecond
 		select {
 		case <-c.closed:
 			return
-		case <-time.After(wait):
+		case <-time.After(editorEvery()):
 		}
 		c.mu.RLock()
 		ss := make([]*ooSession, len(c.sessions))
@@ -815,11 +856,19 @@ func (c *OnlyOfficePacketConn) SetDeadline(t time.Time) error     { c.rdDeadline
 func (c *OnlyOfficePacketConn) SetReadDeadline(t time.Time) error { c.rdDeadline.Store(&t); return nil }
 func (c *OnlyOfficePacketConn) SetWriteDeadline(time.Time) error  { return nil }
 
-// newCarrier выбирает носитель covert-канала. По умолчанию — OnlyOffice-WS (быстрый,
-// ~5 Mbps). COVERT_CARRIER=volga возвращает старый volga-relay (медленный фолбэк, НЕ удалён).
+// newCarrier выбирает носитель. По умолчанию — OnlyOffice. volga — старый фолбэк.
+// cups — комната cups.online (поле carrier, COVERT_CARRIER или адрес cups.online).
 func newCarrier(ctx context.Context, exit bool, publicURL string, timeout time.Duration) (net.PacketConn, error) {
-	if os.Getenv("COVERT_CARRIER") == "volga" {
+	return newCarrierKind(ctx, exit, publicURL, timeout, resolveKind("", publicURL))
+}
+
+func newCarrierKind(ctx context.Context, exit bool, publicURL string, timeout time.Duration, kind string) (net.PacketConn, error) {
+	switch resolveKind(kind, publicURL) {
+	case "volga":
 		return NewVolgaPacketConn(ctx, exit, publicURL, timeout)
+	case "cups":
+		return NewCupsPacketConn(ctx, exit, publicURL, timeout)
+	default:
+		return NewOnlyOfficePacketConn(ctx, exit, publicURL, timeout)
 	}
-	return NewOnlyOfficePacketConn(ctx, exit, publicURL, timeout)
 }

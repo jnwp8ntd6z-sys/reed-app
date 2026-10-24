@@ -21,7 +21,8 @@ type Client struct {
 
 // Dial поднимает covert-сессию (клиент) и мультиплексор поверх неё.
 func Dial(ctx context.Context, publicURL string) (*Client, error) {
-	pc, err := newCarrier(ctx, false, publicURL, 45*time.Second)
+	kind := resolveKind("", publicURL)
+	pc, err := newCarrierKind(ctx, false, publicURL, 45*time.Second, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -31,7 +32,7 @@ func Dial(ctx context.Context, publicURL string) (*Client, error) {
 		return nil, err
 	}
 	kcpConn.SetWindowSize(256, 256)
-	kcpConn.SetMtu(280)
+	kcpConn.SetMtu(mtuForCarrier(kind))
 	kcpConn.SetStreamMode(true)
 	tuneKCP(kcpConn)
 	sess, err := smux.Client(kcpConn, smuxConfig())

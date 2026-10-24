@@ -899,6 +899,9 @@ final class ReedAppModel: ObservableObject {
         var iso = flagISO(raw) ?? ""
         let stripped = displayName(raw)
         let upper = raw.uppercased()
+        if upper.contains("КАПС") || upper.contains("CUPS") {
+            return ("SE", "Капс", "Комната, без Яндекса", "cell")
+        }
         let fast = !olc && (upper.contains("ЛТЕ") || upper.contains("LTE"))
         if fast && (iso.isEmpty || iso == "EU") { iso = upper.contains("GCP") ? "PL" : "DE" }
         if iso.isEmpty { iso = countryNames.first(where: { stripped.hasPrefix($0.value) })?.key ?? "" }

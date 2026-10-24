@@ -41,6 +41,9 @@ type CovertOutboundOptions struct {
 	// клиент заходил в док авторизованно и не упирался в captcha cc=1 на дата-центровых IP.
 	// Пусто → анонимный заход (как раньше). onlyoffice_conn читает её через env YANDEX_COOKIE.
 	Cookie string `json:"cookie"`
+	// Carrier — носитель: пусто или "onlyoffice" (Яндекс), "cups" (комната).
+	// Старый клиент поле игнорирует и всегда открывает public_url как документ.
+	Carrier string `json:"carrier,omitempty"`
 }
 
 // RegisterOutbound добавляет тип "covert" в реестр outbound'ов sing-box.
@@ -53,6 +56,7 @@ type Outbound struct {
 	ctx       context.Context
 	logger    log.ContextLogger
 	publicURL string
+	carrier   string
 
 	mu   sync.Mutex
 	sess *smux.Session
@@ -64,7 +68,8 @@ func NewCovertOutbound(ctx context.Context, router adapter.Router, logger log.Co
 	}
 	// Куки из профиля прокидываем в env, который читает onlyoffice_conn при заходе в док.
 	// Так серверный профиль управляет авторизацией без правки Swift/Kotlin-обёртки.
-	if options.Cookie != "" {
+	kind := resolveKind(options.Carrier, options.PublicURL)
+	if options.Cookie != "" && kind != "cups" {
 		os.Setenv("YANDEX_COOKIE", options.Cookie)
 	}
 	return &Outbound{
@@ -72,6 +77,7 @@ func NewCovertOutbound(ctx context.Context, router adapter.Router, logger log.Co
 		ctx:       ctx,
 		logger:    logger,
 		publicURL: options.PublicURL,
+		carrier:   kind,
 	}, nil
 }
 
@@ -95,7 +101,8 @@ func (o *Outbound) ensureSession(ctx context.Context) (*smux.Session, error) {
 
 	// Резолв документа — своим DoH, не системным DNS туннеля. См. useCarrierBypassDNS.
 	useCarrierBypassDNS()
-	pc, err := newCarrier(ctx, false, o.publicURL, 45*time.Second)
+	kind := resolveKind(o.carrier, o.publicURL)
+	pc, err := newCarrierKind(ctx, false, o.publicURL, 45*time.Second, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -105,9 +112,9 @@ func (o *Outbound) ensureSession(ctx context.Context) (*smux.Session, error) {
 		return nil, err
 	}
 	kcpConn.SetWindowSize(256, 256)
-	// Как у выхода: сегмент должен влезть в ooMaxFrame, иначе writeLoop держит его
-	// вечно. Крупный неприторможенный MTU 1200 с телефона забивает cursor и ловит 4004.
-	kcpConn.SetMtu(280)
+	// Яндекс: сегмент должен влезть в ooMaxFrame (280), иначе cursor ловит 4004.
+	// Cups вмещает до 8 КБ, там MTU 1200.
+	kcpConn.SetMtu(mtuForCarrier(kind))
 	kcpConn.SetStreamMode(true)
 	tuneKCP(kcpConn)
 

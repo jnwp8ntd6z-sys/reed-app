@@ -36,6 +36,9 @@ object ReedServerNaming {
         var iso = flagIso(fullName)
         val stripped = stripName(fullName)
         val upper = fullName.uppercase()
+        if (upper.contains("КАПС") || upper.contains("CUPS")) {
+            return Display("SE", "Капс", "Комната, без Яндекса", "cell", Kind.FastBypass)
+        }
         val isFast = !isOlcRtc && (upper.contains("ЛТЕ") || upper.contains("LTE"))
         if (isFast && (iso.isEmpty() || iso == "EU")) {
             // Быстрые обходы: выход GCP — Польша (Варшава), остальные — Германия.

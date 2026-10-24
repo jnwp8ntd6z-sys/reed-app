@@ -206,7 +206,7 @@ final class ReedAPI: NSObject, Sendable {
         return d
     }
     func subscriptions(_ t: String) async throws -> RSubscriptions { try await get("/app/subscriptions", ["token": t], as: RSubscriptions.self) }
-    func locations(_ t: String) async throws -> RLocations { try await get("/app/locations", ["token": t], as: RLocations.self) }
+    func locations(_ t: String) async throws -> RLocations { try await get("/app/locations", ["token": t, "cups": "1"], as: RLocations.self) }
     func olcconf(_ t: String) async throws -> String {
         let (d, code) = try await raw("/app/olcconf", query: ["token": t])
         guard code == 200 else { throw ReedAPIError.badStatus(code) }

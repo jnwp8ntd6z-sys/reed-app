@@ -99,6 +99,7 @@ enum TunnelConfigStore {
             URLQueryItem(name: "server", value: server),
             URLQueryItem(name: "split", value: split ? "1" : "0"),
             URLQueryItem(name: "inbound", value: "tun"),
+            URLQueryItem(name: "cups", value: "1"),
         ]
         if !direct.isEmpty { items.append(URLQueryItem(name: "direct", value: direct)) }
         comps?.queryItems = items
