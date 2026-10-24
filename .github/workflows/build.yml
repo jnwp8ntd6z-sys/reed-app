@@ -6,7 +6,7 @@ name: build
 
 on:
   push:
-    branches: [ main, redesign/2.0 ]
+    branches: [ main ]
     paths: [ "app/**", "singbox-mobile/**", ".github/workflows/build.yml" ]
   workflow_dispatch:
     inputs:
@@ -33,7 +33,7 @@ env:
 jobs:
   android:
     runs-on: ubuntu-latest
-    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || inputs.platforms == 'all' || inputs.platforms == 'android' }}
+    if: ${{ github.event_name == 'push' || inputs.platforms == 'all' || inputs.platforms == 'android' }}
     steps:
       - uses: actions/checkout@v4
       - name: Checkout olcrtc
@@ -143,7 +143,7 @@ jobs:
 
   ios:
     runs-on: macos-latest
-    if: ${{ (github.event_name == 'workflow_dispatch' && (inputs.platforms == 'all' || inputs.platforms == 'ios')) || (github.event_name == 'push' && github.ref == 'refs/heads/redesign/2.0' && contains(github.event.head_commit.message, 'ios-build-now')) }}
+    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.platforms == 'all' || inputs.platforms == 'ios') }}
     steps:
       - uses: actions/checkout@v4
       - name: Checkout olcrtc
