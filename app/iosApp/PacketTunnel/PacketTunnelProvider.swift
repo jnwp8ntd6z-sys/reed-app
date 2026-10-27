@@ -112,13 +112,45 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         // известный /32, если резолв пустой.
         if config.contains("\"carrier\":\"cups\"") || config.contains("\"carrier\": \"cups\"") || config.contains("cups.online") {
             var ips = ["95.163.40.140"]
-            ips.append(contentsOf: resolveIPv4("interview.cups.online"))
+            var hosts = cupsHosts(in: config)
+            if !hosts.contains("interview.cups.online") {
+                hosts.append("interview.cups.online")
+            }
+            for host in hosts {
+                ips.append(contentsOf: resolveIPv4(host))
+            }
             var seen = Set<String>()
             for ip in ips where seen.insert(ip).inserted {
                 cidrs.append((ip, "255.255.255.255"))
             }
         }
         return cidrs.map { NEIPv4Route(destinationAddress: $0.0, subnetMask: $0.1) }
+    }
+
+    /// Все имена *.cups.online из конфига, не только interview: сокет Centrifugo
+    /// может быть на другом хосте того же сайта.
+    private static func cupsHosts(in config: String) -> [String] {
+        var out: [String] = []
+        var seen = Set<String>()
+        var rest = Substring(config)
+        while let range = rest.range(of: ".cups.online") {
+            var start = range.lowerBound
+            while start > rest.startIndex {
+                let prev = rest.index(before: start)
+                let ch = rest[prev]
+                if ch.isLetter || ch.isNumber || ch == "." || ch == "-" {
+                    start = prev
+                    continue
+                }
+                break
+            }
+            let host = String(rest[start..<range.upperBound])
+            if seen.insert(host).inserted {
+                out.append(host)
+            }
+            rest = rest[range.upperBound...]
+        }
+        return out
     }
 
     /// IPv4 имени до подъёма TUN. После него системный DNS уже смотрит внутрь туннеля.
