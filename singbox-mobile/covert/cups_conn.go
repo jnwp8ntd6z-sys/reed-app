@@ -6,7 +6,10 @@ package covert
 // внутренние пакеты с длиной uint16. Оба конца — наш клиент и наш выход,
 // Яндекс-документ этот носитель не открывает.
 //
-// Темп 12 мс между сообщениями курсора: чаще сайт отвечает 403.
+// Темп 12 мс между сообщениями курсора.
+// Замер 24.10.2026 с датацентра: один MTU за интервал, около 95 КБ/с.
+// Интервал 4 мс сайт не закрывал кодом 403, но кадры терялись и передача
+// становилась медленнее. Быстрее этого темпа канал не разгоняется.
 // Одно сообщение несёт до 8000 байт полезной нагрузки, поэтому KCP на этом
 // носителе может держать MTU 1200. На Яндексе MTU остаётся 280.
 
@@ -243,14 +246,18 @@ func (c *CupsPacketConn) pageURL() string {
 }
 
 func (c *CupsPacketConn) authorize(page string) (*cupsAuth, error) {
-	req, err := http.NewRequestWithContext(c.ctx, http.MethodGet, page, nil)
+	return cupsAuthorize(c.ctx, c.http, page)
+}
+
+func cupsAuthorize(ctx context.Context, client *http.Client, page string) (*cupsAuth, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, page, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", cupsUserAgent)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml")
 	req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en;q=0.8")
-	resp, err := c.http.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -271,13 +278,13 @@ func (c *CupsPacketConn) authorize(page string) (*cupsAuth, error) {
 	if connURL == "" || connToken == "" || subURL == "" {
 		return nil, errors.New("centrifuge fields missing")
 	}
-	csrf := cookieValue(c.http.Jar, page, "csrftoken")
+	csrf := cookieValue(client.Jar, page, "csrftoken")
 	if csrf == "" {
 		return nil, errors.New("csrftoken missing")
 	}
 	channel := "$shared_editor:room-" + room
 	payload, _ := json.Marshal(map[string]string{"channel": channel})
-	req2, err := http.NewRequestWithContext(c.ctx, http.MethodPost, subURL, strings.NewReader(string(payload)))
+	req2, err := http.NewRequestWithContext(ctx, http.MethodPost, subURL, strings.NewReader(string(payload)))
 	if err != nil {
 		return nil, err
 	}
@@ -287,7 +294,7 @@ func (c *CupsPacketConn) authorize(page string) (*cupsAuth, error) {
 	req2.Header.Set("X-CSRFToken", csrf)
 	req2.Header.Set("Origin", origin)
 	req2.Header.Set("Referer", page)
-	resp2, err := c.http.Do(req2)
+	resp2, err := client.Do(req2)
 	if err != nil {
 		return nil, err
 	}
@@ -537,8 +544,9 @@ func (c *CupsPacketConn) writeLoop() {
 			if !c.waitReady() {
 				return
 			}
-			c.pace(&last)
-			if err := c.sendDatagram(pkt); err != nil {
+			// Одно сообщение курсора — пачка кадров до 8000 байт, темп тот же 12 мс.
+			// Иначе каждый ACK KCP занимает слот, и 200 КБ едут около 20 с.
+			if err := c.drainTx(pkt, &last); err != nil {
 				log.Printf("[covert/cups] send: %v", err)
 				c.kick()
 			}
@@ -600,13 +608,46 @@ func (c *CupsPacketConn) pace(last *time.Time) {
 	*last = time.Now()
 }
 
-func (c *CupsPacketConn) sendDatagram(pkt []byte) error {
-	if len(pkt) == 0 || len(pkt) > 65535 {
-		return fmt.Errorf("cups: bad datagram %d", len(pkt))
+// drainTx забирает кадры, которые уже лежат в очереди, в одно сообщение.
+func (c *CupsPacketConn) drainTx(first []byte, last *time.Time) error {
+	pkts := [][]byte{first}
+	total := 2 + len(first)
+	for {
+		if !c.flushPong() {
+			return net.ErrClosed
+		}
+		select {
+		case pkt := <-c.tx:
+			need := 2 + len(pkt)
+			if total+need > cupsMaxChunk {
+				c.pace(last)
+				if err := c.sendDatagrams(pkts); err != nil {
+					return err
+				}
+				pkts = [][]byte{pkt}
+				total = need
+				continue
+			}
+			pkts = append(pkts, pkt)
+			total += need
+		default:
+			c.pace(last)
+			return c.sendDatagrams(pkts)
+		}
 	}
-	inner := make([]byte, 2+len(pkt))
-	binary.BigEndian.PutUint16(inner[:2], uint16(len(pkt)))
-	copy(inner[2:], pkt)
+}
+
+func (c *CupsPacketConn) sendDatagrams(pkts [][]byte) error {
+	var inner []byte
+	for _, pkt := range pkts {
+		if len(pkt) == 0 || len(pkt) > 65535 {
+			return fmt.Errorf("cups: bad datagram %d", len(pkt))
+		}
+		var hdr [2]byte
+		binary.BigEndian.PutUint16(hdr[:], uint16(len(pkt)))
+		inner = append(inner, hdr[:]...)
+		inner = append(inner, pkt...)
+	}
 	return c.sendStream(inner)
 }
 

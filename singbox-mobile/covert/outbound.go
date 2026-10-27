@@ -17,6 +17,7 @@ package covert
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"sync"
@@ -58,8 +59,9 @@ type Outbound struct {
 	publicURL string
 	carrier   string
 
-	mu   sync.Mutex
-	sess *smux.Session
+	mu          sync.Mutex
+	sess        *smux.Session
+	carrierConn io.Closer
 }
 
 func NewCovertOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options CovertOutboundOptions) (adapter.Outbound, error) {
@@ -91,17 +93,34 @@ func smuxConfig() *smux.Config {
 	return cfg
 }
 
-// ensureSession лениво поднимает covert-сессию (packetconn → KCP → smux).
+// ensureSession лениво поднимает covert-сессию.
+// Cups — полосы комнат и smux, без KCP: второй повтор лечил бы кадры,
+// которые сервер комнаты уже выбросил. Яндекс по-прежнему packetconn → KCP → smux.
 func (o *Outbound) ensureSession(ctx context.Context) (*smux.Session, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.sess != nil && !o.sess.IsClosed() {
 		return o.sess, nil
 	}
+	o.dropCarrierLocked()
 
 	// Резолв документа — своим DoH, не системным DNS туннеля. См. useCarrierBypassDNS.
 	useCarrierBypassDNS()
 	kind := resolveKind(o.carrier, o.publicURL)
+	if kind == "cups" {
+		st, err := NewCupsStripe(ctx, false, o.publicURL, 45*time.Second)
+		if err != nil {
+			return nil, err
+		}
+		sess, err := smux.Client(st, smuxConfig())
+		if err != nil {
+			st.Close()
+			return nil, err
+		}
+		o.sess = sess
+		o.carrierConn = st
+		return sess, nil
+	}
 	pc, err := newCarrierKind(ctx, false, o.publicURL, 45*time.Second, kind)
 	if err != nil {
 		return nil, err
@@ -113,7 +132,6 @@ func (o *Outbound) ensureSession(ctx context.Context) (*smux.Session, error) {
 	}
 	kcpConn.SetWindowSize(256, 256)
 	// Яндекс: сегмент должен влезть в ooMaxFrame (280), иначе cursor ловит 4004.
-	// Cups вмещает до 8 КБ, там MTU 1200.
 	kcpConn.SetMtu(mtuForCarrier(kind))
 	kcpConn.SetStreamMode(true)
 	tuneKCP(kcpConn)
@@ -125,7 +143,19 @@ func (o *Outbound) ensureSession(ctx context.Context) (*smux.Session, error) {
 		return nil, err
 	}
 	o.sess = sess
+	o.carrierConn = pc
 	return sess, nil
+}
+
+func (o *Outbound) dropCarrierLocked() {
+	if o.sess != nil {
+		o.sess.Close()
+		o.sess = nil
+	}
+	if o.carrierConn != nil {
+		o.carrierConn.Close()
+		o.carrierConn = nil
+	}
 }
 
 func (o *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
@@ -143,7 +173,7 @@ func (o *Outbound) DialContext(ctx context.Context, network string, destination 
 		// сессия могла умереть — сбросим, следующий Dial поднимет заново.
 		o.mu.Lock()
 		if o.sess == sess {
-			o.sess = nil
+			o.dropCarrierLocked()
 		}
 		o.mu.Unlock()
 		sess.Close()

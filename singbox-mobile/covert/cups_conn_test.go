@@ -70,6 +70,49 @@ func TestCupsPageFields(t *testing.T) {
 	}
 }
 
+func TestCupsBatchTwoPackets(t *testing.T) {
+	pkts := [][]byte{[]byte("abc"), []byte("defg")}
+	var inner []byte
+	for _, pkt := range pkts {
+		var hdr [2]byte
+		binary.BigEndian.PutUint16(hdr[:], uint16(len(pkt)))
+		inner = append(inner, hdr[:]...)
+		inner = append(inner, pkt...)
+	}
+	wire := make([]byte, 2+len(inner))
+	binary.BigEndian.PutUint16(wire[:2], uint16(len(inner)))
+	copy(wire[2:], inner)
+	raw, err := json.Marshal(cupsCursorPairs(wire))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pairs []map[string]any
+	if err := json.Unmarshal(raw, &pairs); err != nil {
+		t.Fatal(err)
+	}
+	asAny := make([]any, len(pairs))
+	for i := range pairs {
+		asAny[i] = pairs[i]
+	}
+	chunk, ok := cupsChunkFromCursors(asAny)
+	if !ok || !bytes.Equal(chunk, inner) {
+		t.Fatalf("chunk ok=%v", ok)
+	}
+	var got [][]byte
+	buf := append([]byte(nil), chunk...)
+	for len(buf) >= 2 {
+		n := int(binary.BigEndian.Uint16(buf[:2]))
+		if n == 0 || 2+n > len(buf) {
+			t.Fatal("split")
+		}
+		got = append(got, append([]byte(nil), buf[2:2+n]...))
+		buf = buf[2+n:]
+	}
+	if len(got) != 2 || !bytes.Equal(got[0], pkts[0]) || !bytes.Equal(got[1], pkts[1]) {
+		t.Fatalf("pkts %q", got)
+	}
+}
+
 func TestRoomIDFromPublicURL(t *testing.T) {
 	id := "11111111-2222-3333-4444-555555555555"
 	if roomIDFromPublicURL("https://interview.cups.online/live-coding/?room="+id) != id {

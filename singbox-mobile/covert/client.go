@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"time"
 
@@ -15,13 +16,16 @@ import (
 )
 
 type Client struct {
-	sess *smux.Session
-	pc   net.PacketConn
+	sess   *smux.Session
+	closer io.Closer
 }
 
 // Dial поднимает covert-сессию (клиент) и мультиплексор поверх неё.
 func Dial(ctx context.Context, publicURL string) (*Client, error) {
 	kind := resolveKind("", publicURL)
+	if kind == "cups" {
+		return DialCups(ctx, publicURL)
+	}
 	pc, err := newCarrierKind(ctx, false, publicURL, 45*time.Second, kind)
 	if err != nil {
 		return nil, err
@@ -41,7 +45,7 @@ func Dial(ctx context.Context, publicURL string) (*Client, error) {
 		pc.Close()
 		return nil, err
 	}
-	return &Client{sess: sess, pc: pc}, nil
+	return &Client{sess: sess, closer: pc}, nil
 }
 
 // Open открывает поток к dest ("host:port") через covert-канал.
@@ -61,8 +65,8 @@ func (c *Client) Close() error {
 	if c.sess != nil {
 		c.sess.Close()
 	}
-	if c.pc != nil {
-		c.pc.Close()
+	if c.closer != nil {
+		c.closer.Close()
 	}
 	return nil
 }
