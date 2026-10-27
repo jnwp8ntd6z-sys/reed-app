@@ -1,6 +1,7 @@
 package covert
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -70,6 +71,65 @@ func TestStripeForeignNonce(t *testing.T) {
 	s.onFrame(dataFrame(3, 0, "ZZ"))
 	if s.failed == nil || !strings.Contains(s.failed.Error(), "peer replaced") {
 		t.Fatalf("quiet foreign nonce: %v", s.failed)
+	}
+}
+
+func TestOldFrameDoesNotYieldRoom(t *testing.T) {
+	s := testStripe()
+	s.onFrame(dataFrame(2, 0, "AA"))
+	s.mu.Lock()
+	s.sent[0] = &stripeSent{seq: 0, payload: []byte("x"), first: time.Now().Add(-stripePeerDead - time.Second)}
+	s.gate.last = time.Now().Add(-20 * time.Second)
+	s.mu.Unlock()
+	s.onFrame(dataFrame(3, 0, "ZZ"))
+	if s.failed != nil {
+		t.Fatalf("old frame yielded a live room: %v", s.failed)
+	}
+	if string(s.rbuf) != "AA" {
+		t.Fatalf("foreign bytes landed: %q", s.rbuf)
+	}
+	s.mu.Lock()
+	s.gate.last = time.Now().Add(-stripeQuiet - time.Second)
+	s.mu.Unlock()
+	s.onFrame(dataFrame(3, 0, "ZZ"))
+	if s.failed == nil || !strings.Contains(s.failed.Error(), "peer replaced") {
+		t.Fatalf("quiet peer kept the rooms: %v", s.failed)
+	}
+}
+
+func TestForeignNonceWaitsOutLivePeer(t *testing.T) {
+	s := testStripe()
+	s.onFrame(dataFrame(2, 0, "AA"))
+	s.mu.Lock()
+	s.sent[0] = &stripeSent{seq: 0, payload: []byte("x"), first: time.Now().Add(-stripePeerDead - time.Second)}
+	s.gate.last = time.Now().Add(-time.Second)
+	s.mu.Unlock()
+	s.onFrame(dataFrame(3, 0, "ZZ"))
+	if s.failed != nil {
+		t.Fatal(s.failed)
+	}
+	if string(s.rbuf) != "AA" {
+		t.Fatalf("live peer lost its bytes: %q", s.rbuf)
+	}
+
+	quiet := testStripe()
+	quiet.onFrame(dataFrame(2, 0, "AA"))
+	quiet.mu.Lock()
+	quiet.gate.last = time.Now().Add(-10 * time.Second)
+	quiet.mu.Unlock()
+	quiet.onFrame(dataFrame(3, 0, "ZZ"))
+	if quiet.failed != nil {
+		t.Fatal(quiet.failed)
+	}
+
+	gone := testStripe()
+	gone.onFrame(dataFrame(2, 0, "AA"))
+	gone.mu.Lock()
+	gone.gate.last = time.Now().Add(-stripeStall - time.Second)
+	gone.mu.Unlock()
+	gone.onFrame(dataFrame(3, 0, "ZZ"))
+	if gone.failed != nil {
+		t.Fatalf("one missed keepalive yielded the room: %v", gone.failed)
 	}
 }
 
@@ -174,6 +234,23 @@ func TestTakePongNotBehindData(t *testing.T) {
 	}
 }
 
+func TestAckUnknownNonceStillClears(t *testing.T) {
+	s := testStripe()
+	s.sent[0] = &stripeSent{seq: 0, payload: []byte("x"), first: time.Now()}
+	s.onFrame(stripeFrame{flags: stripeFlagAck, nonce: 2, ack: 1})
+	if _, ok := s.sent[0]; ok {
+		t.Fatal("ack without peer nonce left the frame in flight")
+	}
+
+	other := testStripe()
+	other.sent[0] = &stripeSent{seq: 0, payload: []byte("x"), first: time.Now()}
+	other.onFrame(dataFrame(2, 0, "AA"))
+	other.onFrame(stripeFrame{flags: stripeFlagAck, nonce: 2, ack: 1, ackNonce: 99})
+	if _, ok := other.sent[0]; !ok {
+		t.Fatal("foreign ack nonce cleared our frame")
+	}
+}
+
 func TestStripeCodec(t *testing.T) {
 	in := stripeFrame{flags: stripeFlagData | stripeFlagAck, nonce: 9, seq: 3, ack: 1, ackNonce: 4, payload: []byte("hi")}
 	out, ok := decodeStripe(encodeStripe(in))
@@ -206,7 +283,7 @@ func TestStripeStallIdleVersusStuck(t *testing.T) {
 	stuckBuf.mu.Lock()
 	stuckBuf.gate.have = true
 	stuckBuf.gate.cur = 2
-	stuckBuf.prog = time.Now().Add(-stripeStall - time.Second)
+	stuckBuf.peerAt = time.Now().Add(-stripePeerDead - time.Second)
 	stuckBuf.obuf = []byte("x")
 	stuckBuf.mu.Unlock()
 	stuckBuf.pump()
@@ -217,9 +294,108 @@ func TestStripeStallIdleVersusStuck(t *testing.T) {
 	stuckSent := testStripe()
 	stuckSent.gate.have = true
 	stuckSent.gate.cur = 2
-	stuckSent.sent[0] = &stripeSent{seq: 0, payload: []byte("x"), first: time.Now().Add(-stripeStall - time.Second)}
+	stuckSent.peerAt = time.Now().Add(-stripePeerDead - time.Second)
+	stuckSent.sent[0] = &stripeSent{seq: 0, payload: []byte("x"), first: time.Now().Add(-stripePeerDead - time.Second)}
 	stuckSent.pump()
 	if stuckSent.failed == nil || !strings.Contains(stuckSent.failed.Error(), "stall") {
 		t.Fatalf("inflight: %v", stuckSent.failed)
+	}
+
+	// 15:49:36: старый кадр ещё в полёте, но пара только что подтвердила другие.
+	// Такой сессии обрыв не нужен.
+	live := testStripe()
+	live.gate.have = true
+	live.gate.cur = 2
+	live.peerAt = time.Now()
+	live.sent[0] = &stripeSent{seq: 0, payload: []byte("x"), first: time.Now().Add(-stripeStall - time.Second)}
+	live.pump()
+	if live.failed != nil {
+		t.Fatalf("live peer: %v", live.failed)
+	}
+}
+
+func testLanes(s *CupsStripe, n int) {
+	for i := 0; i < n; i++ {
+		s.lanes = append(s.lanes, &cupsLane{sendCh: make(chan laneJob, stripeWindow)})
+		s.lanes[i].connected.Store(true)
+	}
+}
+
+func TestHandshakeDoesNotFlood(t *testing.T) {
+	s := testStripe()
+	testLanes(s, stripeLanes)
+	s.obuf = bytes.Repeat([]byte("a"), stripePayloadMax()*20)
+	s.pump()
+	if got := len(s.sent); got == 0 || got > stripeFlightProbe {
+		t.Fatalf("handshake offered %d frames, want 1..%d", got, stripeFlightProbe)
+	}
+}
+
+func TestFlightOpensAfterAcks(t *testing.T) {
+	s := testStripe()
+	testLanes(s, stripeLanes)
+	s.acked.Store(4)
+	s.obuf = bytes.Repeat([]byte("a"), stripePayloadMax()*40)
+	s.pump()
+	if got := len(s.sent); got <= stripeFlightProbe {
+		t.Fatalf("open window offered %d", got)
+	}
+}
+
+func TestSlowRTOShrinksFlight(t *testing.T) {
+	s := testStripe()
+	testLanes(s, stripeLanes)
+	s.acked.Store(8)
+	s.rtoNanos.Store(int64(3 * time.Second))
+	s.obuf = bytes.Repeat([]byte("a"), stripePayloadMax()*20)
+	s.pump()
+	if got := len(s.sent); got == 0 || got > stripeFlightProbe {
+		t.Fatalf("slow link offered %d", got)
+	}
+}
+
+func TestPartialWriteWaitsToFill(t *testing.T) {
+	s := testStripe()
+	testLanes(s, 1)
+	s.acked.Store(4)
+	if _, err := s.Write([]byte("hi")); err != nil {
+		t.Fatal(err)
+	}
+	if s.obufSince.IsZero() {
+		t.Fatal("write did not start the coalesce clock")
+	}
+	s.pump()
+	if len(s.sent) != 0 {
+		t.Fatal("fresh partial frame was sent")
+	}
+	s.mu.Lock()
+	s.obufSince = time.Now().Add(-stripeCoalesce - time.Millisecond)
+	s.mu.Unlock()
+	s.pump()
+	if len(s.sent) != 1 || string(s.sent[0].payload) != "hi" {
+		t.Fatalf("partial after wait: %d", len(s.sent))
+	}
+}
+
+func TestFullFrameDoesNotWait(t *testing.T) {
+	s := testStripe()
+	testLanes(s, 1)
+	s.acked.Store(4)
+	s.obuf = bytes.Repeat([]byte("a"), stripePayloadMax())
+	s.obufSince = time.Now()
+	s.pump()
+	if len(s.sent) != 1 {
+		t.Fatalf("full frame waited: %d", len(s.sent))
+	}
+}
+
+func TestRPCSuccessRestartsRetxClock(t *testing.T) {
+	s := testStripe()
+	old := time.Now().Add(-2 * time.Second)
+	s.sent[0] = &stripeSent{seq: 0, payload: []byte("x"), first: old, sent: old, busy: true}
+	s.rpcFinished(0, nil)
+	f := s.sent[0]
+	if f.busy || time.Since(f.sent) > time.Second {
+		t.Fatalf("busy=%v age=%s", f.busy, time.Since(f.sent))
 	}
 }

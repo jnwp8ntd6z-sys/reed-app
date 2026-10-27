@@ -37,6 +37,10 @@ const (
 	// повтор бьёт по тем же кадрам. 32 кадра держат темп при RTT до ~0,4 с
 	// и не заливают комнату.
 	stripeFlight = 32
+	// Рукопожатие и плохой RTT. 27.10.2026 мобильный набрал 52 кадра в полёте
+	// при RTO 3 с и умер, не дописав hello. Пока пара не подтвердила хотя бы
+	// несколько кадров, и когда RTO снова у потолка, держим короткое окно.
+	stripeFlightProbe = 6
 
 	stripeStall = 20 * time.Second
 
@@ -44,7 +48,17 @@ const (
 	// а пачка сразу на все 8 комнат он молча выбрасывает. 20 мс на кадр
 	// со всех полос — около 400 КБ/с, без залпа.
 	stripeGlobalPace = 20 * time.Millisecond
-	stripeQuiet      = 60 * time.Second
+	// smux режет hello на короткие записи. Без паузы каждая запись — свой RPC,
+	// и мобильный тонет в вызовах. Полный кадр эта пауза не держит.
+	stripeCoalesce = 30 * time.Millisecond
+	// Чужой nonce ждёт полную тишину. Короче нельзя: keepalive smux раз в 15 с,
+	// и пауза между ними — не смерть пары.
+	stripeQuiet = 60 * time.Second
+	// Пара молчит дольше трёх keepalive. Один застрявший кадр и дырка LTE
+	// короче этого сессию не рвут: 27.10.2026 в 16:54 UTC живой Wi‑Fi
+	// (немецкий IP, 915 подтверждений) умер, потому что 8 с без кадра
+	// плюс старый неподтверждённый кадр отдавали комнаты чужому nonce.
+	stripePeerDead = 45 * time.Second
 )
 
 type stripeFrame struct {
@@ -129,7 +143,7 @@ type nonceGate struct {
 	have bool
 }
 
-func (g *nonceGate) accept(nonce uint32, now time.Time) (ok bool, reset bool) {
+func (g *nonceGate) accept(nonce uint32, now time.Time, quiet time.Duration) (ok bool, reset bool) {
 	if !g.have {
 		g.cur = nonce
 		g.last = now
@@ -140,7 +154,10 @@ func (g *nonceGate) accept(nonce uint32, now time.Time) (ok bool, reset bool) {
 		g.last = now
 		return true, false
 	}
-	if now.Sub(g.last) < stripeQuiet {
+	if quiet <= 0 {
+		quiet = stripeQuiet
+	}
+	if now.Sub(g.last) < quiet {
 		return false, false
 	}
 	g.cur = nonce

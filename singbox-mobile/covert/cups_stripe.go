@@ -54,20 +54,25 @@ type CupsStripe struct {
 	lanes  []*cupsLane
 	nonce  uint32
 
-	mu       sync.Mutex
-	obuf     []byte
-	sent     map[uint32]*stripeSent
-	next     uint32
-	asm      stripeAssembler
-	gate     nonceGate
-	failed   error
-	rd, wd   time.Time
-	rbuf     []byte
-	needAck  bool
-	lastAck  time.Time
-	prog     time.Time
-	rr       int
-	rtoNanos atomic.Int64
+	mu        sync.Mutex
+	obuf      []byte
+	obufSince time.Time
+	sent      map[uint32]*stripeSent
+	next      uint32
+	asm       stripeAssembler
+	gate      nonceGate
+	failed    error
+	rd, wd    time.Time
+	rbuf      []byte
+	needAck   bool
+	lastAck   time.Time
+	prog      time.Time
+	// peerAt — последний кадр пары. Свой повтор сюда не пишется:
+	// иначе тишина пары маскируется нашей же отправкой.
+	peerAt     time.Time
+	foreignLog time.Time
+	rr         int
+	rtoNanos   atomic.Int64
 
 	kick     chan struct{}
 	readable chan struct{}
@@ -391,6 +396,9 @@ func (s *CupsStripe) Write(p []byte) (int, error) {
 			if n > len(p)-off {
 				n = len(p) - off
 			}
+			if len(s.obuf) == 0 {
+				s.obufSince = time.Now()
+			}
 			s.obuf = append(s.obuf, p[off:off+n]...)
 			off += n
 			s.mu.Unlock()
@@ -426,6 +434,22 @@ func (s *CupsStripe) flightCap() int {
 	// Окно одно: шлёт одна комната. Множитель на число комнат раздувал
 	// повтор, когда кадры уходили во все восемь сразу.
 	return stripeFlight * stripePayloadMax()
+}
+
+// flightCountCap режет число кадров, а не только байты. Короткие кадры
+// рукопожатия иначе проходят мимо байтового окна: 52 штуки при RTO 3 с.
+func (s *CupsStripe) flightCountCap() int {
+	if s.acked.Load() < 4 {
+		return stripeFlightProbe
+	}
+	rto := time.Duration(s.rtoNanos.Load())
+	if rto >= 3*time.Second {
+		return stripeFlightProbe
+	}
+	if rto >= 2*time.Second {
+		return 12
+	}
+	return stripeFlight
 }
 
 func (s *CupsStripe) Err() error {
@@ -526,20 +550,14 @@ func (s *CupsStripe) pump() {
 	}
 	// Пока пару не слышно, smux уже шлёт пустые keepalive. Их некому подтвердить,
 	// и обрыв здесь пересоздавал сессию каждые ~35 с, не дождавшись клиента.
-	// После первого кадра пары неподтверждённые данные старше 20 с сессию рвут.
-	if s.gate.have {
-		stalled := len(s.obuf) > 0 && now.Sub(s.prog) > stripeStall
-		for _, f := range s.sent {
-			if !f.first.IsZero() && now.Sub(f.first) > stripeStall {
-				stalled = true
-				break
-			}
-		}
-		if stalled {
-			s.failLocked(errors.New("cups: peer stall"))
-			s.wake()
-			return
-		}
+	// Обрыв по возрасту одного кадра (20 с, потом 8 с) убивал живой Wi‑Fi и
+	// не давал мобильному дописать рукопожатие. Рвём только когда пара молчит
+	// дольше stripePeerDead, а не когда один кадр ещё в полёте.
+	if s.gate.have && !s.peerAt.IsZero() && now.Sub(s.peerAt) > stripePeerDead &&
+		(len(s.obuf) > 0 || len(s.sent) > 0) {
+		s.failLocked(errors.New("cups: peer stall"))
+		s.wake()
+		return
 	}
 	// Повторяем только самый старый кадр и только когда вышел его срок.
 	// Повтор всей пачки сразу удваивал поток в одну комнату: подтверждения
@@ -557,12 +575,15 @@ func (s *CupsStripe) pump() {
 		}
 	}
 	for len(s.obuf) > 0 {
-		if s.flightBytes() >= s.flightCap() {
+		if s.flightBytes() >= s.flightCap() || len(s.sent) >= s.flightCountCap() {
 			break
 		}
 		n := len(s.obuf)
 		if n > stripePayloadMax() {
 			n = stripePayloadMax()
+		}
+		if n < stripePayloadMax() && !s.obufSince.IsZero() && now.Sub(s.obufSince) < stripeCoalesce {
+			break
 		}
 		payload := append([]byte(nil), s.obuf[:n]...)
 		f := &stripeSent{seq: s.next, payload: payload, lane: -1}
@@ -736,6 +757,11 @@ func (s *CupsStripe) rpcFinished(seq uint32, err error) {
 		f.busy = false
 		if err != nil {
 			f.sent = time.Time{}
+		} else {
+			// Повтор считаем от приёма комнатой, не от постановки в очередь.
+			// RPC на 1–2 с иначе сам выглядел потерей, и кадр уходил второй раз
+			// ещё до подтверждения телефона.
+			f.sent = time.Now()
 		}
 	}
 	s.mu.Unlock()
@@ -751,17 +777,31 @@ func (s *CupsStripe) onFrame(f stripeFrame) {
 	if s.failed != nil {
 		return
 	}
-	ok, reset := s.gate.accept(f.nonce, time.Now())
+	now := time.Now()
+	var silence time.Duration
+	if s.gate.have && !s.gate.last.IsZero() {
+		silence = now.Sub(s.gate.last)
+	}
+	ok, reset := s.gate.accept(f.nonce, now, s.quietFor(now))
 	if !ok {
+		// Чужой nonce при живой паре — не повод рвать сокет. Иначе повтор
+		// телефона после дырки на LTE сносит сессию, которая ещё несёт трафик.
+		if silence > 5*time.Second && (s.foreignLog.IsZero() || now.Sub(s.foreignLog) > 10*time.Second) {
+			s.foreignLog = now
+			log.Printf("[covert/cups] foreign nonce ignored silence=%s", silence.Round(time.Millisecond))
+		}
 		return
 	}
 	if reset {
+		log.Printf("[covert/cups] peer replaced silence=%s", silence.Round(time.Millisecond))
 		s.failLocked(errors.New("cups: peer replaced"))
 		s.wake()
 		return
 	}
-	now := time.Now()
-	if f.flags&stripeFlagAck != 0 && f.ackNonce == s.nonce {
+	s.peerAt = now
+	// ackNonce 0 — клиент ещё не видел наш nonce, но номер подтверждения верный.
+	// Иначе первые кадры висят, и телефон на сборке 50 рвёт сессию через 20 с.
+	if f.flags&stripeFlagAck != 0 && (f.ackNonce == s.nonce || f.ackNonce == 0) {
 		if s.applyAckLocked(f.ack, now) {
 			s.prog = now
 		}
@@ -788,6 +828,13 @@ func (s *CupsStripe) onFrame(f stripeFrame) {
 		}
 	}
 	s.wake()
+}
+
+// quietFor — чужой nonce занимает комнаты только после полной тишины.
+// Старый неподтверждённый кадр окно не сокращает: 27.10.2026 в 16:54 UTC
+// это отдало живую пару (915 подтверждений) следующему nonce через 8 с.
+func (s *CupsStripe) quietFor(time.Time) time.Duration {
+	return stripeQuiet
 }
 
 func (s *CupsStripe) applyAckLocked(cum uint32, now time.Time) bool {

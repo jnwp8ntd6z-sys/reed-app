@@ -82,15 +82,18 @@ const (
 type exitTune struct {
 	gate     chan struct{}
 	wait     time.Duration
+	header   time.Duration
 	progress int64
 	gap      bool
 }
 
 func tuneFor(kind string) exitTune {
 	if kind == "cups" {
-		return exitTune{gate: make(chan struct{}, cupsSlots), wait: cupsWait, progress: cupsProgress}
+		// Заголовок на LTE доезжает дольше 12 с: кадр теряется, повтор ждёт RTO.
+		// Яндекс остаётся на 12 с.
+		return exitTune{gate: make(chan struct{}, cupsSlots), wait: cupsWait, header: 25 * time.Second, progress: cupsProgress}
 	}
-	return exitTune{gate: make(chan struct{}, streamSlots), wait: streamWait, progress: yandexProgress, gap: true}
+	return exitTune{gate: make(chan struct{}, streamSlots), wait: streamWait, header: 12 * time.Second, progress: yandexProgress, gap: true}
 }
 
 var dialMu sync.Mutex
@@ -158,7 +161,11 @@ func handleStream(stream net.Conn, logf func(string, ...any), release func(), tu
 	// Срок только на заголовок: иначе слот вечно держит зависшее рукопожатие.
 	// На саму передачу срок не ставим. 12 с на весь поток обрывали уже ~40 КБ
 	// при щадящем темпе, а KCP продолжал слать неподтверждённое и ловил drop.
-	_ = stream.SetDeadline(time.Now().Add(12 * time.Second))
+	headerWait := tune.header
+	if headerWait <= 0 {
+		headerWait = 12 * time.Second
+	}
+	_ = stream.SetDeadline(time.Now().Add(headerWait))
 	dest, err := readConnectHeader(stream)
 	if err != nil {
 		logf("[covert-exit] header: %v", err)
