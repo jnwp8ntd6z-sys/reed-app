@@ -527,12 +527,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         return dir.appendingPathComponent("olcsingbox_tun_\(split ? "1" : "0").json")
     }
 
-    /// Кэш «Швеции» со сборки 45 — это Яндекс-документ. Его нельзя поднимать:
-    /// первый запуск снова пойдёт в старый носитель.
+    /// Кэш «Швеции» без rooms= — это Яндекс-документ или одна комната KCP.
+    /// Полосы говорят только с набором комнат. Одна комната снова упирается в сокет.
     private static func swedenCacheIsStale(server: String, body: String) -> Bool {
         let upper = server.uppercased()
         guard upper.contains("ШВЕЦИЯ") || upper.contains("SWEDEN") else { return false }
-        return !body.contains("cups.online")
+        return !body.contains("rooms=")
     }
 }
 

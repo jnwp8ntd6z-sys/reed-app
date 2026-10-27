@@ -25,13 +25,13 @@ enum ReedTunnelCache {
         return saved.value
     }
 
-    /// Файл «Швеции», в котором ещё документ, а не комната. Его надо скачать заново
-    /// до включения туннеля, иначе extension поднимет старый кэш.
+    /// Файл «Швеции» без rooms= — документ или одна комната. Скачать заново
+    /// до включения туннеля, иначе полосы откроют один сокет.
     private static func swedenFileIsStale(server: String, file: URL) -> Bool {
         let upper = server.uppercased()
         guard upper.contains("ШВЕЦИЯ") || upper.contains("SWEDEN") else { return false }
         guard let s = try? String(contentsOf: file, encoding: .utf8) else { return true }
-        return !s.contains("cups.online")
+        return !s.contains("rooms=")
     }
 
     /// Пошаговый лог extension из общего контейнера App Group (диагностика, «Экспорт логов»).
