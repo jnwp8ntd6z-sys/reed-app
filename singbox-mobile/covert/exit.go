@@ -12,6 +12,9 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -51,12 +54,16 @@ func RunExit(ctx context.Context, publicURL string, logf func(string, ...any)) e
 		if err != nil {
 			return err
 		}
-		kcpSess.SetWindowSize(256, 256)
+		win := 256
+		if kind == "cups" {
+			win = 128
+		}
+		kcpSess.SetWindowSize(win, win)
 		// Яндекс: телефон не получает кадр крупнее ooMaxFrame, MTU 280.
 		// Cups вмещает сегмент 1200. Входящий буфер kcp-go всё равно 1500.
 		kcpSess.SetMtu(mtuForCarrier(kind))
 		kcpSess.SetStreamMode(true)
-		tuneKCP(kcpSess)
+		tuneKCPFor(kcpSess, kind)
 		go serveKCP(kcpSess, logf, tuneFor(kind))
 	}
 }
@@ -66,15 +73,21 @@ func RunExit(ctx context.Context, publicURL string, logf func(string, ...any)) e
 // до конца соединения, если телефон прислал больше hello, но меньше 1500.
 // За пару минут 80 потоков умерли в очереди, пока живой звонок занимал слот.
 const (
-	streamSlots    = 1
-	streamWait     = 90 * time.Second
-	cupsSlots      = 24
-	cupsWait       = 25 * time.Second
-	cupsProgress   = 600
-	yandexProgress = 1500
+	streamSlots = 1
+	streamWait  = 90 * time.Second
+	// Reality до моста доделывает сам выход, в комнату уходит короткий
+	// кадр. Слоты больше не держат одно 5 КБ hello: параллельные потоки
+	// телефона (мессенджер открывает их пачкой) идут вместе.
+	cupsSlots       = 32
+	cupsWait        = 45 * time.Second
+	cupsProgress    = 1
+	cupsReleaseDown = 16000
+	yandexProgress  = 1500
 	// Пауза после зависшего рукопожатия, чтобы следующий ответ не лёг поверх
-	// предыдущих 5 КБ.
+	// предыдущих 5 КБ. Только Яндекс.
 	dialGap = 4 * time.Second
+	// Cups больше не разводит рукопожатия по секунде: в комнате нет ответа xray.
+	cupsDialGap = time.Duration(0)
 	// Телефон закрывал поток через ~17 с, не дождавшись ответа.
 	handshakeWait = 18 * time.Second
 )
@@ -85,19 +98,39 @@ type exitTune struct {
 	header   time.Duration
 	progress int64
 	gap      bool
+	pace     time.Duration
 }
 
 func tuneFor(kind string) exitTune {
 	if kind == "cups" {
 		// Заголовок на LTE доезжает дольше 12 с: кадр теряется, повтор ждёт RTO.
 		// Яндекс остаётся на 12 с.
-		return exitTune{gate: make(chan struct{}, cupsSlots), wait: cupsWait, header: 25 * time.Second, progress: cupsProgress}
+		return exitTune{gate: make(chan struct{}, cupsSlots), wait: cupsWait, header: 25 * time.Second, progress: cupsProgress, pace: cupsDialGap}
 	}
 	return exitTune{gate: make(chan struct{}, streamSlots), wait: streamWait, header: 12 * time.Second, progress: yandexProgress, gap: true}
 }
 
 var dialMu sync.Mutex
 var nextDial time.Time
+
+// paceDial разводит старты рукопожатий. Два потока, пришедшие вместе,
+// не начинают набор в одну и ту же миллисекунду.
+func paceDial(d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	dialMu.Lock()
+	wait := time.Until(nextDial)
+	base := time.Now()
+	if wait > 0 {
+		base = nextDial
+	}
+	nextDial = base.Add(d)
+	dialMu.Unlock()
+	if wait > 0 {
+		time.Sleep(wait)
+	}
+}
 
 func waitDialGap() {
 	for {
@@ -112,6 +145,83 @@ func waitDialGap() {
 		}
 		time.Sleep(wait)
 	}
+}
+
+// dialUpstream звонит напрямую или через локальный SOCKS, если задан
+// COVERT_UPLINK_SOCKS. Через него выход на №2 сам договаривается с мостом №1,
+// и телефон в комнату кладёт только короткий кадр, не рукопожатие Reality.
+func dialUpstream(dest string) (net.Conn, error) {
+	socks := strings.TrimSpace(os.Getenv("COVERT_UPLINK_SOCKS"))
+	if socks == "" {
+		return net.DialTimeout("tcp", dest, 15*time.Second)
+	}
+	conn, err := net.DialTimeout("tcp", socks, 15*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	if err := socks5Connect(conn, dest); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
+func socks5Connect(conn net.Conn, dest string) error {
+	host, portStr, err := net.SplitHostPort(dest)
+	if err != nil {
+		return err
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("cups: bad port %q", portStr)
+	}
+	if len(host) == 0 || len(host) > 255 {
+		return fmt.Errorf("cups: bad host")
+	}
+	_ = conn.SetDeadline(time.Now().Add(15 * time.Second))
+	if _, err := conn.Write([]byte{0x05, 0x01, 0x00}); err != nil {
+		return err
+	}
+	greet := make([]byte, 2)
+	if _, err := io.ReadFull(conn, greet); err != nil {
+		return err
+	}
+	if greet[0] != 0x05 || greet[1] != 0x00 {
+		return fmt.Errorf("socks auth %d", greet[1])
+	}
+	req := make([]byte, 0, 5+len(host)+2)
+	req = append(req, 0x05, 0x01, 0x00, 0x03, byte(len(host)))
+	req = append(req, host...)
+	req = append(req, byte(port>>8), byte(port))
+	if _, err := conn.Write(req); err != nil {
+		return err
+	}
+	hdr := make([]byte, 4)
+	if _, err := io.ReadFull(conn, hdr); err != nil {
+		return err
+	}
+	if hdr[1] != 0 {
+		return fmt.Errorf("socks connect %d", hdr[1])
+	}
+	var skip int64
+	switch hdr[3] {
+	case 0x01:
+		skip = 4 + 2
+	case 0x04:
+		skip = 16 + 2
+	case 0x03:
+		var n [1]byte
+		if _, err := io.ReadFull(conn, n[:]); err != nil {
+			return err
+		}
+		skip = int64(n[0]) + 2
+	default:
+		return fmt.Errorf("socks atyp %d", hdr[3])
+	}
+	if _, err := io.CopyN(io.Discard, conn, skip); err != nil {
+		return err
+	}
+	return conn.SetDeadline(time.Time{})
 }
 
 func armDialGap() {
@@ -177,10 +287,13 @@ func handleStream(stream net.Conn, logf func(string, ...any), release func(), tu
 	if !alive {
 		return
 	}
+	if tune.pace > 0 {
+		paceDial(tune.pace)
+	}
 	if tune.gap {
 		waitDialGap()
 	}
-	remote, err := net.DialTimeout("tcp", dest, 15*time.Second)
+	remote, err := dialUpstream(dest)
 	if err != nil {
 		logf("[covert-exit] dial %s: %v", dest, err)
 		return
@@ -207,10 +320,15 @@ func handleStream(stream net.Conn, logf func(string, ...any), release func(), tu
 			_ = tc.CloseWrite()
 		}
 	}()
-	// Ответ xray пишем в канал всегда. Слот не отпускаем, пока телефон не прислал
-	// байты сверх client hello: запись 5 КБ в smux ещё не значит, что он их получил.
+	// Ответ xray пишем в канал всегда. Слот не отпускаем на 5 КБ hello:
+	// запись в smux ещё не значит, что телефон их прочитал. Большое тело
+	// вниз — уже живой ответ, слот можно отдать следующему потоку.
 	go func() {
-		w := progWriter{w: stream, n: &downloaded}
+		w := progWriter{w: stream, n: &downloaded, mark: cupsReleaseDown, onProgress: func() {
+			if tune.pace > 0 {
+				release()
+			}
+		}}
 		_, _ = io.Copy(&w, remote)
 	}()
 

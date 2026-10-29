@@ -49,7 +49,8 @@ const (
 
 var cupsUUID = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-// mtuForCarrier — размер сегмента KCP. Cups вмещает кадр целиком, Яндекс нет.
+// mtuForCarrier — размер сегмента KCP. Cups вмещает кадр OpenFlux (около 8 КБ),
+// Яндекс — нет, там потолок 280, иначе cursor ловит 4004.
 func mtuForCarrier(kind string) int {
 	if strings.EqualFold(strings.TrimSpace(kind), "cups") {
 		return 1200

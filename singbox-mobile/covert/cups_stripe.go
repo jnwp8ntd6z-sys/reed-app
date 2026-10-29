@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	kcp "github.com/xtaci/kcp-go/v5"
 	"github.com/xtaci/smux"
 )
 
@@ -1335,7 +1336,7 @@ func runExitCups(ctx context.Context, publicURL string, logf func(string, ...any
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		st, err := NewCupsStripe(ctx, true, publicURL, 45*time.Second)
+		pc, err := NewCupsFlux(ctx, true, publicURL, 45*time.Second)
 		if err != nil {
 			logf("[covert-exit] cups: %v", err)
 			if !sleepCtx(ctx, 2*time.Second) {
@@ -1343,13 +1344,38 @@ func runExitCups(ctx context.Context, publicURL string, logf func(string, ...any
 			}
 			continue
 		}
-		logf("[covert-exit] cups lanes %d", st.upLanes())
-		err = serveKCP(st, logf, tune)
-		reason := st.Err()
-		st.Close()
-		logf("[covert-exit] cups session: %v (%v)", err, reason)
-		if ctx.Err() != nil {
-			return ctx.Err()
+		logf("[covert-exit] cups rooms %d", pc.upLanes())
+		listener, err := kcp.ServeConn(nil, 0, 0, pc)
+		if err != nil {
+			pc.Close()
+			return err
+		}
+		done := make(chan struct{})
+		go func() {
+			select {
+			case <-ctx.Done():
+				_ = listener.Close()
+				_ = pc.Close()
+			case <-done:
+			}
+		}()
+		for {
+			kcpSess, err := listener.AcceptKCP()
+			if err != nil {
+				close(done)
+				_ = listener.Close()
+				_ = pc.Close()
+				logf("[covert-exit] cups kcp: %v", err)
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				break
+			}
+			kcpSess.SetWindowSize(128, 128)
+			kcpSess.SetMtu(mtuForCarrier("cups"))
+			kcpSess.SetStreamMode(true)
+			tuneKCPFor(kcpSess, "cups")
+			go serveKCP(kcpSess, logf, tune)
 		}
 		if !sleepCtx(ctx, time.Second) {
 			return ctx.Err()
@@ -1357,16 +1383,27 @@ func runExitCups(ctx context.Context, publicURL string, logf func(string, ...any
 	}
 }
 
-// DialCups открывает клиентский smux поверх полос. KCP на этом носителе нет.
+// DialCups открывает клиентский KCP+smux поверх комнат. Подтверждения внутри
+// комнаты нет: потерянный батч выбрасывается, повтор делает KCP.
 func DialCups(ctx context.Context, publicURL string) (*Client, error) {
-	st, err := NewCupsStripe(ctx, false, publicURL, 45*time.Second)
+	pc, err := NewCupsFlux(ctx, false, publicURL, 45*time.Second)
 	if err != nil {
 		return nil, err
 	}
-	sess, err := smux.Client(st, smuxConfig())
+	kcpConn, err := kcp.NewConn2(kcpDialAddr, nil, 0, 0, pc)
 	if err != nil {
-		st.Close()
+		pc.Close()
 		return nil, err
 	}
-	return &Client{sess: sess, closer: st}, nil
+	kcpConn.SetWindowSize(128, 128)
+	kcpConn.SetMtu(mtuForCarrier("cups"))
+	kcpConn.SetStreamMode(true)
+	tuneKCPFor(kcpConn, "cups")
+	sess, err := smux.Client(kcpConn, smuxConfig())
+	if err != nil {
+		kcpConn.Close()
+		pc.Close()
+		return nil, err
+	}
+	return &Client{sess: sess, closer: pc}, nil
 }

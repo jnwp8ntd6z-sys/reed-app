@@ -94,8 +94,8 @@ func smuxConfig() *smux.Config {
 }
 
 // ensureSession лениво поднимает covert-сессию.
-// Cups — полосы комнат и smux, без KCP: второй повтор лечил бы кадры,
-// которые сервер комнаты уже выбросил. Яндекс по-прежнему packetconn → KCP → smux.
+// Cups — комнаты OpenFlux (батч выбрасывается, повтор не внутри комнаты)
+// и сверху KCP → smux. Яндекс по-прежнему packetconn → KCP → smux.
 func (o *Outbound) ensureSession(ctx context.Context) (*smux.Session, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -107,21 +107,13 @@ func (o *Outbound) ensureSession(ctx context.Context) (*smux.Session, error) {
 	// Резолв документа — своим DoH, не системным DNS туннеля. См. useCarrierBypassDNS.
 	useCarrierBypassDNS()
 	kind := resolveKind(o.carrier, o.publicURL)
+	var pc net.PacketConn
+	var err error
 	if kind == "cups" {
-		st, err := NewCupsStripe(ctx, false, o.publicURL, 45*time.Second)
-		if err != nil {
-			return nil, err
-		}
-		sess, err := smux.Client(st, smuxConfig())
-		if err != nil {
-			st.Close()
-			return nil, err
-		}
-		o.sess = sess
-		o.carrierConn = st
-		return sess, nil
+		pc, err = NewCupsFlux(ctx, false, o.publicURL, 45*time.Second)
+	} else {
+		pc, err = newCarrierKind(ctx, false, o.publicURL, 45*time.Second, kind)
 	}
-	pc, err := newCarrierKind(ctx, false, o.publicURL, 45*time.Second, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -130,11 +122,16 @@ func (o *Outbound) ensureSession(ctx context.Context) (*smux.Session, error) {
 		pc.Close()
 		return nil, err
 	}
-	kcpConn.SetWindowSize(256, 256)
+	win := 256
+	if kind == "cups" {
+		win = 128
+	}
+	kcpConn.SetWindowSize(win, win)
 	// Яндекс: сегмент должен влезть в ooMaxFrame (280), иначе cursor ловит 4004.
+	// Cups вмещает 1200 в одно сообщение комнаты.
 	kcpConn.SetMtu(mtuForCarrier(kind))
 	kcpConn.SetStreamMode(true)
-	tuneKCP(kcpConn)
+	tuneKCPFor(kcpConn, kind)
 
 	sess, err := smux.Client(kcpConn, smuxConfig())
 	if err != nil {

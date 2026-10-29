@@ -25,6 +25,21 @@ func tuneKCP(sess *kcp.UDPSession) {
 	}
 }
 
+// tuneKCPFor на Cups ставит повтор чаще, чем на Яндексе. Комната выбрасывает
+// батч и не наказывает за повтор, а 2 с пола RTO длиннее, чем телефон держит
+// первое соединение. На Яндексе пол остаётся 2 с: частый повтор ловит 4004.
+func tuneKCPFor(sess *kcp.UDPSession, kind string) {
+	if kind != "cups" {
+		tuneKCP(sess)
+		return
+	}
+	sess.SetNoDelay(1, 20, 2, 1)
+	sess.SetACKNoDelay(true)
+	if !setKCPMinRTO(sess, 200) {
+		log.Printf("[covert] kcp min-rto layout mismatch, left default")
+	}
+}
+
 func setKCPMinRTO(sess *kcp.UDPSession, ms uint32) bool {
 	base := unsafe.Pointer(sess)
 	kptr := *(*unsafe.Pointer)(unsafe.Add(base, 24))
