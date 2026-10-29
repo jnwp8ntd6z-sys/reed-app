@@ -528,11 +528,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     /// Кэш «Швеции» без rooms= — это Яндекс-документ или одна комната KCP.
-    /// Полосы говорят только с набором комнат. Одна комната снова упирается в сокет.
+    /// Кэш с covert-out — рукопожатие к мосту внутри комнаты. Оба качать заново.
     private static func swedenCacheIsStale(server: String, body: String) -> Bool {
         let upper = server.uppercased()
         guard upper.contains("ШВЕЦИЯ") || upper.contains("SWEDEN") else { return false }
-        return !body.contains("rooms=")
+        return !body.contains("rooms=") || body.contains("covert-out")
     }
 }
 

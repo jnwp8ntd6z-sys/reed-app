@@ -25,13 +25,14 @@ enum ReedTunnelCache {
         return saved.value
     }
 
-    /// Файл «Швеции» без rooms= — документ или одна комната. Скачать заново
-    /// до включения туннеля, иначе полосы откроют один сокет.
+    /// Файл «Швеции» без rooms= — документ или одна комната.
+    /// Файл с covert-out — рукопожатие к мосту внутри комнаты. Скачать заново
+    /// до включения туннеля. Та же проверка, что в PacketTunnelProvider.
     private static func swedenFileIsStale(server: String, file: URL) -> Bool {
         let upper = server.uppercased()
         guard upper.contains("ШВЕЦИЯ") || upper.contains("SWEDEN") else { return false }
         guard let s = try? String(contentsOf: file, encoding: .utf8) else { return true }
-        return !s.contains("rooms=")
+        return !s.contains("rooms=") || s.contains("covert-out")
     }
 
     /// Пошаговый лог extension из общего контейнера App Group (диагностика, «Экспорт логов»).
